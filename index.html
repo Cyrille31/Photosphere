@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="description" content="Gérez, redressez et reliez vos photosphères Gear 360, puis visitez-les au doigt, à bout de bras ou dans un casque VR.">
+  <title>PhotoSphère</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="player.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <img src="assets/logo.svg" alt="" width="40" height="40">
+      <span>Photo<b>Sphère</b></span>
+    </a>
+    <nav class="top-actions">
+      <button class="btn ghost" id="btn-help" title="Aide">?</button>
+      <button class="btn ghost" id="btn-settings" title="Réglages">⚙</button>
+    </nav>
+  </header>
+  <main id="app"></main>
+  <div id="toasts"></div>
+  <noscript>PhotoSphère a besoin de JavaScript.</noscript>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

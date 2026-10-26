@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>PhotoSphère</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101b45"/>
+      <stop offset="1" stop-color="#2b1260"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.55">
+      <stop offset="0" stop-color="#3aa8ff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#3aa8ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sphere" cx="0.36" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#9ff3ff"/>
+      <stop offset="0.35" stop-color="#22c1ee"/>
+      <stop offset="0.75" stop-color="#4b5cf0"/>
+      <stop offset="1" stop-color="#6a2fd6"/>
+    </radialGradient>
+    <radialGradient id="lens" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#4a5a8a"/>
+      <stop offset="0.55" stop-color="#121a36"/>
+      <stop offset="1" stop-color="#05070f"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff7a59"/>
+    </linearGradient>
+    <clipPath id="clip"><circle cx="256" cy="256" r="150"/></clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="250" r="230" fill="url(#glow)"/>
+
+  <!-- orbite (partie arrière) : les liens entre photosphères -->
+  <path d="M 62 300 A 200 70 -18 0 1 444 182" fill="none" stroke="url(#ring)" stroke-width="12" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- sphère -->
+  <circle cx="256" cy="256" r="150" fill="url(#sphere)"/>
+  <g clip-path="url(#clip)" fill="none" stroke="#ffffff" stroke-opacity="0.38" stroke-width="5">
+    <ellipse cx="256" cy="256" rx="150" ry="46"/>
+    <ellipse cx="256" cy="176" rx="128" ry="34"/>
+    <ellipse cx="256" cy="336" rx="128" ry="34"/>
+    <ellipse cx="256" cy="256" rx="52" ry="150"/>
+    <ellipse cx="256" cy="256" rx="112" ry="150"/>
+  </g>
+  <!-- reflet -->
+  <ellipse cx="205" cy="180" rx="62" ry="34" fill="#ffffff" opacity="0.28" transform="rotate(-28 205 180)"/>
+
+  <!-- objectif façon Gear 360 -->
+  <circle cx="256" cy="262" r="66" fill="#0a1128" stroke="#e8f6ff" stroke-width="8"/>
+  <circle cx="256" cy="262" r="50" fill="url(#lens)"/>
+  <circle cx="256" cy="262" r="22" fill="#1d2b5c"/>
+  <circle cx="240" cy="246" r="11" fill="#ffffff" opacity="0.85"/>
+  <circle cx="272" cy="280" r="5" fill="#ffffff" opacity="0.45"/>
+
+  <!-- orbite (partie avant) avec trois nœuds -->
+  <path d="M 444 182 A 200 70 -18 0 1 62 300" fill="none" stroke="url(#ring)" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="99" cy="328" r="22" fill="#ffd166" stroke="#101b45" stroke-width="6"/>
+  <circle cx="434" cy="213" r="22" fill="#ff7a59" stroke="#101b45" stroke-width="6"/>
+  <circle cx="380" cy="260" r="16" fill="#ff9e5e" stroke="#101b45" stroke-width="5"/>
+</svg>

@@ -1,0 +1,15 @@
+{
+  "name": "photosphere",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gestion de photosphères Gear 360 : import, assemblage 7776x3888, redressement, liens, visionneuse VR",
+  "type": "module",
+  "scripts": {
+    "start": "node tests/serve.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node tests/browser-check.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}
