@@ -1,12 +1,12 @@
 // Outils WebGL communs : programmes, quad plein écran, chargement de la source en deux moitiés.
 import { levelMatrix, mat3Transpose, DEG } from './math.js';
 
-// Calibrage moyen mesuré sur une Gear 360 (2016, SM-C200), affiné ensuite photo par photo.
+// Calibrage moyen mesuré sur quatre photos de Gear 360 (2016, SM-C200), affiné ensuite photo par photo.
 export const DEFAULT_LENS_PARAMS = {
   fov: 195,
   blend: 2,
-  lensA: { cx: 0.5, cy: 0.5, r: 0.503, rot: 0 },
-  lensB: { cx: 0.4938, cy: 0.4967, r: 0.4979, rot: 0.05 },
+  lensA: { cx: 0.5, cy: 0.5, r: 0.5048, rot: 0 },
+  lensB: { cx: 0.4938, cy: 0.4968, r: 0.4978, rot: 0.24 },
 };
 
 const NO_GAIN = new Float32Array(36 * 3).fill(1);
