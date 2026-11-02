@@ -10,7 +10,36 @@ export const DEFAULT_LENS_PARAMS = {
 };
 
 const NO_GAIN = new Float32Array(36 * 3).fill(1);
-const NO_SEAM = new Float32Array(72);
+const SEAM_BINS = 180;
+const seamTextures = new WeakMap(); // contexte WebGL -> { tex, key }
+
+// Tracé de la couture et parallaxe, par tranche d'azimut, dans une petite texture flottante.
+function bindSeamTexture(gl, seam, disparity) {
+  let entry = seamTextures.get(gl);
+  if (!entry) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    entry = { tex, key: null };
+    seamTextures.set(gl, entry);
+  }
+  gl.bindTexture(gl.TEXTURE_2D, entry.tex);
+  const ok = (a) => Array.isArray(a) && a.length === SEAM_BINS;
+  const key = (ok(seam) ? seam.join() : '') + '|' + (ok(disparity) ? disparity.join() : '');
+  if (key !== entry.key) {
+    const data = new Float32Array(SEAM_BINS * 2);
+    for (let i = 0; i < SEAM_BINS; i++) {
+      data[i * 2] = ok(seam) ? seam[i] * DEG : 0;
+      data[i * 2 + 1] = ok(disparity) ? disparity[i] * DEG : 0;
+    }
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, SEAM_BINS, 1, 0, gl.RG, gl.FLOAT, data);
+    entry.key = key;
+  }
+}
 
 function gainArray(list) {
   if (!list || list.length !== 36) return NO_GAIN;
@@ -147,6 +176,8 @@ export function setSourceUniforms(gl, u, source, srcType, params) {
   const g = srcType === 'fisheye' && p.gains;
   gl.uniform3fv(u.uGainA, gainArray(g && g.a));
   gl.uniform3fv(u.uGainB, gainArray(g && g.b));
-  const seam = srcType === 'fisheye' && p.seam && p.seam.length === 72 ? new Float32Array(p.seam.map((v) => v * DEG)) : NO_SEAM;
-  gl.uniform1fv(u.uSeam, seam);
+  gl.activeTexture(gl.TEXTURE2);
+  bindSeamTexture(gl, srcType === 'fisheye' && p.seam, srcType === 'fisheye' && p.disparity);
+  gl.uniform1i(u.uSeamTex, 2);
+  gl.activeTexture(gl.TEXTURE0);
 }

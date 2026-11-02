@@ -2,7 +2,7 @@
 import { decodeImage, DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { readExif, extractExifSegment, buildXmpSegment } from './metadata.js';
 import { renderPanorama } from './exporter.js';
-import { autoCalibrate } from './calibrate.js';
+import { autoCalibrate, CALIB_VERSION } from './calibrate.js';
 import * as db from './db.js';
 
 export function newId() {
@@ -138,7 +138,7 @@ export async function importFiles(files, onProgress) {
 export async function convertPhoto(photo, settings, onProgress) {
   const orig = await db.getBlob(photo.id + ':orig');
   if (!orig) throw new Error('Fichier original introuvable');
-  if (photo.srcType === 'fisheye' && !photo.params.autoCalibrated) {
+  if (photo.srcType === 'fisheye' && (!photo.params.autoCalibrated || photo.params.calibVersion !== CALIB_VERSION)) {
     const patch = await calibrateFromBlob(orig, photo.params);
     const cur = await db.getPhoto(photo.id);
     photo = { ...cur, params: { ...cur.params, ...patch, autoCalibrated: true } };

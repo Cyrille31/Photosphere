@@ -5,6 +5,7 @@ import { createPlayer } from './player.js';
 import { openEditor } from './editor.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
 import { toast, escapeHtml, dialog } from './ui.js';
+import { CALIB_VERSION } from './calibrate.js';
 
 const app = document.getElementById('app');
 const state = {
@@ -395,7 +396,7 @@ async function showSettings() {
   dialog(
     `<h2>Réglages</h2>
     <label class="field">Taille des photos converties<select name="outWidth">
-      ${[7776, 5472, 4096].map((w) => `<option value="${w}" ${w === state.settings.outWidth ? 'selected' : ''}>${w} × ${w / 2}${w === 7776 ? ' (Gear 360, recommandé)' : ''}</option>`).join('')}
+      ${[7776, 7200, 5472, 4096].map((w) => `<option value="${w}" ${w === state.settings.outWidth ? 'selected' : ''}>${w} × ${w / 2}${{ 7776: ' (pleine résolution Gear 360)', 7200: ' (comme le logiciel Samsung)' }[w] || ''}</option>`).join('')}
     </select></label>
     <label class="field">Qualité JPEG : <output>${state.settings.quality}</output><input type="range" name="quality" min="75" max="100" value="${state.settings.quality}"></label>
     ${est ? `<p class="note">Stockage utilisé : ${mb(est.usage || 0)} sur ${mb(est.quota || 0)} disponibles.</p>` : ''}
@@ -517,7 +518,15 @@ window.addEventListener('hashchange', route);
 async function migratePhotos() {
   let n = 0;
   for (const p of await db.listPhotos()) {
-    if (p.srcType !== 'fisheye' || p.layout === 2) continue;
+    if (p.srcType !== 'fisheye') continue;
+    if (p.layout === 2) {
+      // Calibrage d'une version précédente : refait (couture et parallaxe plus fines).
+      if (p.params.autoCalibrated && p.params.calibVersion !== CALIB_VERSION) {
+        await db.putPhoto({ ...p, status: 'pending' });
+        n++;
+      }
+      continue;
+    }
     const params = { ...p.params, pitch: -(p.params.pitch || 0), roll: -(p.params.roll || 0) };
     delete params.autoCalibrated;
     const hotspots = (p.hotspots || []).map((h) => ({ ...h, yaw: ((h.yaw + 360) % 360) - 180 }));
