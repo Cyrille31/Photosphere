@@ -2,6 +2,7 @@
 import { decodeImage, DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { readExif, extractExifSegment, buildXmpSegment } from './metadata.js';
 import { renderPanorama } from './exporter.js';
+import { autoCalibrate } from './calibrate.js';
 import * as db from './db.js';
 
 export function newId() {
@@ -14,6 +15,7 @@ function sample(img, w, h) {
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, w, h);
   return { canvas: c, data: ctx.getImageData(0, 0, w, h).data };
 }
@@ -29,7 +31,7 @@ function meanLum(data, w, x0, y0, size) {
   return s / (size * size);
 }
 
-// Détecte un double fisheye (coins noirs autour de deux cercles) et estime les cercles.
+// Détecte un double fisheye (coins noirs autour de deux cercles).
 export function analyzeImage(img) {
   const W = 512, H = 256, S = 256, c = 18;
   const { data } = sample(img, W, H);
@@ -38,42 +40,31 @@ export function analyzeImage(img) {
     for (const [x, y] of [[0, 0], [S - c, 0], [0, H - c], [S - c, H - c]]) maxCorner = Math.max(maxCorner, meanLum(data, W, ox + x, y, c));
     minCenter = Math.min(minCenter, meanLum(data, W, ox + S / 2 - 30, H / 2 - 30, 60));
   }
-  const fisheye = maxCorner < 20 && minCenter > maxCorner + 12;
-  return { type: fisheye ? 'fisheye' : 'equirect', lenses: fisheye ? detectCircles(data, W, H) : null };
+  return { type: maxCorner < 20 && minCenter > maxCorner + 12 ? 'fisheye' : 'equirect' };
 }
 
-export function detectCircles(data, W, H) {
-  const S = H;
-  const res = [];
-  for (const ox of [0, S]) {
-    let minX = S, maxX = -1, minY = S, maxY = -1;
-    for (let y = 0; y < S; y++) {
-      let first = -1, last = -1, count = 0;
-      for (let x = 0; x < S; x++) {
-        if (lumAt(data, W, ox + x, y) > 22) {
-          if (first < 0) first = x;
-          last = x;
-          count++;
-        }
-      }
-      if (count > 4) {
-        minX = Math.min(minX, first);
-        maxX = Math.max(maxX, last);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-      }
+// Les deux moitiés de l'image en RGB flottant, réduites à `size` pixels de côté.
+function rgbHalves(img, size) {
+  const { data } = sample(img, size * 2, size);
+  const halves = [0, 1].map(() => ({ size, data: new Float32Array(size * size * 3) }));
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size * 2; x++) {
+      const h = halves[x < size ? 0 : 1];
+      const i = (y * size * 2 + x) * 4, o = (y * size + (x % size)) * 3;
+      h.data[o] = data[i];
+      h.data[o + 1] = data[i + 1];
+      h.data[o + 2] = data[i + 2];
     }
-    if (maxX < 0) return null;
-    const lens = {
-      cx: (minX + maxX + 1) / 2 / S,
-      cy: (minY + maxY + 1) / 2 / S,
-      r: Math.max(maxX - minX + 1, maxY - minY + 1) / 2 / S,
-      rot: 0,
-    };
-    if (lens.r < 0.35 || lens.r > 0.56 || Math.abs(lens.cx - 0.5) > 0.08 || Math.abs(lens.cy - 0.5) > 0.08) return null;
-    res.push(lens);
   }
-  return { lensA: res[0], lensB: res[1] };
+  return halves;
+}
+
+// Calibrage automatique (objectifs + exposition) à partir de la photo brute.
+export async function calibrateFromBlob(blob, params) {
+  const img = await decodeImage(blob);
+  const [A, B] = rgbHalves(img, 1000);
+  if (img.close) img.close();
+  return autoCalibrate(A, B, { ...DEFAULT_LENS_PARAMS, ...params });
 }
 
 export async function lensDefaults(model) {
@@ -127,7 +118,8 @@ export async function importFiles(files, onProgress) {
         srcType: analysis.type,
         srcWidth: w,
         srcHeight: h,
-        params: { yaw: 0, pitch: 0, roll: 0, ...lens, ...(analysis.lenses || {}) },
+        params: { yaw: 0, pitch: 0, roll: 0, ...lens },
+        layout: 2,
         hotspots: [],
         status: 'pending',
       };
@@ -146,6 +138,12 @@ export async function importFiles(files, onProgress) {
 export async function convertPhoto(photo, settings, onProgress) {
   const orig = await db.getBlob(photo.id + ':orig');
   if (!orig) throw new Error('Fichier original introuvable');
+  if (photo.srcType === 'fisheye' && !photo.params.autoCalibrated) {
+    const patch = await calibrateFromBlob(orig, photo.params);
+    const cur = await db.getPhoto(photo.id);
+    photo = { ...cur, params: { ...cur.params, ...patch, autoCalibrated: true } };
+    await db.putPhoto(photo);
+  }
   const head = new Uint8Array(await orig.slice(0, 256 * 1024).arrayBuffer());
   const segments = [];
   const exif = extractExifSegment(head);

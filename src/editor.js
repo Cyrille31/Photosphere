@@ -2,8 +2,8 @@
 import * as db from './db.js';
 import { PanoRenderer } from './renderer.js';
 import { ViewController } from './controls.js';
-import { DEFAULT_LENS_PARAMS, decodeImage } from './gl-source.js';
-import { analyzeImage } from './importer.js';
+import { DEFAULT_LENS_PARAMS } from './gl-source.js';
+import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg } from './math.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { newId } from './importer.js';
@@ -77,14 +77,14 @@ export async function openEditor(container, photo, { photos, onDone }) {
           <div class="fisheye-only">
             ${slider('fov', 'Champ de vision des objectifs (°)', 180, 220, 0.1)}
             ${slider('blend', 'Largeur du fondu de couture (°)', 0.5, 10, 0.1)}
-            ${lensFields('lensA', 'Objectif avant (moitié gauche)')}
-            ${lensFields('lensB', 'Objectif arrière (moitié droite)')}
+            ${lensFields('lensA', 'Objectif de la moitié gauche')}
+            ${lensFields('lensB', 'Objectif de la moitié droite')}
             <div class="tools">
-              <button class="btn small" data-autodetect>🎯 Détecter les cercles</button>
+              <button class="btn small primary" data-autodetect>🎯 Calibrage automatique</button>
               <button class="btn small" data-lens-default>⭐ Calibrage par défaut</button>
               <button class="btn small" data-lens-reset>↺ Valeurs d’usine</button>
             </div>
-            <p class="note">Si la couture entre les deux objectifs est visible (objets dédoublés ou coupés), ajustez d’abord le champ de vision (≈ 195° pour la Gear 360 2016, ≈ 190–195° pour la 2017), puis la rotation et les centres. « Calibrage par défaut » mémorise ces valeurs pour les prochains imports de cet appareil${p.model ? ' (' + escapeHtml(p.model) + ')' : ''}.</p>
+            <p class="note">Le calibrage automatique est fait à l’import : il aligne les deux objectifs sur la couture et égalise leur exposition. Relancez-le après une modification, ou si la couture reste visible ajustez à la main le rayon et la rotation (les objets très proches de la caméra, comme la main, restent légèrement dédoublés : c’est la parallaxe entre les deux objectifs). « Calibrage par défaut » mémorise ces valeurs pour les prochains imports de cet appareil${p.model ? ' (' + escapeHtml(p.model) + ')' : ''}.</p>
           </div>
         </section>
         <section data-panel="links" hidden>
@@ -399,18 +399,22 @@ export async function openEditor(container, photo, { photos, onDone }) {
     bindPlaceCancel();
   });
 
-  $('[data-autodetect]').addEventListener('click', async () => {
-    const img = await decodeImage(await db.getBlob(p.id + ':orig'));
-    const a = analyzeImage(img);
-    if (img.close) img.close();
-    if (a.lenses) {
-      Object.assign(p.params, clone(a.lenses));
-      p.params.lensA.rot = p.params.lensA.rot || 0;
+  $('[data-autodetect]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    hint('Calibrage en cours…');
+    try {
+      const patch = await calibrateFromBlob(await db.getBlob(p.id + ':orig'), p.params);
+      Object.assign(p.params, clone(patch), { autoCalibrated: true });
       dirty = true;
       syncInputs();
       redraw();
-      toast('Cercles détectés.');
-    } else toast('Cercles non détectés (photo trop sombre ?). Réglez-les à la main.', true);
+      toast('Objectifs calibrés et exposition égalisée.');
+    } catch (err) {
+      toast('Calibrage impossible : ' + err.message, true);
+    }
+    hint('');
+    btn.disabled = false;
   });
 
   $('[data-lens-default]').addEventListener('click', async () => {
