@@ -41,10 +41,10 @@ function sampleBoth(A, B, lensA, kA, lensB, kB, dirs) {
   const n = dirs.length;
   const ca = new Float32Array(n * 3), cb = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
-    const [x, y, z] = dirs[i];
+    const [x, y, z, , disp = 0] = dirs[i];
     const tf = Math.acos(Math.max(-1, Math.min(1, z)));
-    const pa = lensPixel(lensA, kA, x, y, tf, A.size);
-    const pb = lensPixel(lensB, kB, -x, y, Math.PI - tf, B.size);
+    const pa = lensPixel(lensA, kA, x, y, tf - disp / 2, A.size);
+    const pb = lensPixel(lensB, kB, -x, y, Math.PI - tf - disp / 2, B.size);
     bilinear(A, pa[0], pa[1], ca, i * 3);
     bilinear(B, pb[0], pb[1], cb, i * 3);
   }
@@ -125,11 +125,11 @@ export function fitLenses(A, B, start) {
 }
 
 // Gains de couleur (par tranche d'azimut) qui égalisent les deux objectifs sur la couture.
-export function seamGains(A, B, params) {
+export function seamGains(A, B, params, disparity) {
   const fovHalf = (params.fov / 2) * DEG;
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
-  const dirs = ringDirections([88, 90, 92], 720);
+  const dirs = withDisparity(ringDirections([88, 90, 92], 720), disparity);
   const [ca, cb] = sampleBoth(A, B, lensA, params.lensA.r / fovHalf, lensB, params.lensB.r / fovHalf, dirs);
   const N = GAIN_BINS;
   const sa = new Float64Array(N * 3), sb = new Float64Array(N * 3);
@@ -159,16 +159,19 @@ export function seamGains(A, B, params) {
 export function autoCalibrate(A, B, start) {
   const lenses = fitLenses(A, B, start);
   const params = { ...start, ...lenses };
-  const gains = seamGains(A, B, params);
-  return { ...lenses, gains, seam: seamPath(A, B, params, gains) };
+  const disparity = seamDisparity(A, B, params);
+  const gains = seamGains(A, B, params, disparity);
+  return { ...lenses, blend: 1, gains, disparity, seam: seamPath(A, B, params, gains, disparity), calibVersion: CALIB_VERSION };
 }
 
-const SEAM_BINS = 72;
+// Résolution des tracés le long de la couture (tranches de 2°), identique dans le shader.
+export const SEAM_BINS = 180;
+export const CALIB_VERSION = 3;
 
 // Couture optimale : pour chaque tranche d'azimut, on décale la couture (±5°) vers l'endroit où les
 // deux objectifs concordent le mieux, avec un tracé régulier (programmation dynamique). Les objets
 // proches (parallaxe) ne sont alors plus dédoublés par le fondu.
-export function seamPath(A, B, params, gains) {
+export function seamPath(A, B, params, gains, disparity) {
   const fovHalf = (params.fov / 2) * DEG;
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
@@ -176,7 +179,7 @@ export function seamPath(A, B, params, gains) {
   const maxOff = Math.max(0, Math.min(5, params.fov / 2 - 90 - params.blend - 0.5));
   const offsets = [];
   for (let o = -maxOff; o <= maxOff + 1e-9; o += 0.5) offsets.push(o);
-  const N = SEAM_BINS, M = offsets.length, PER = 8;
+  const N = SEAM_BINS, M = offsets.length, PER = 4;
   const cost = new Float64Array(N * M);
   for (let k = 0; k < N; k++) {
     const g = Math.floor((k / N) * GAIN_BINS);
@@ -187,7 +190,7 @@ export function seamPath(A, B, params, gains) {
         const az = -Math.PI + ((k + (j + 0.5) / PER) / N) * 2 * Math.PI;
         for (const dt of [-1, 0, 1]) {
           const th = (90 + offsets[m] + dt) * DEG;
-          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th)]);
+          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, dispAt(disparity, az)]);
         }
       }
       const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs);
@@ -223,4 +226,83 @@ export function seamPath(A, B, params, gains) {
     m = from[t * M + m];
   }
   return path;
+}
+
+
+// Disparité (degrés, par tranche d'azimut) entre les deux objectifs le long de la couture, interpolée
+// comme dans le shader.
+function dispAt(disparity, az) {
+  if (!disparity) return 0;
+  const x = ((((az + Math.PI) / (2 * Math.PI)) * SEAM_BINS - 0.5) % SEAM_BINS + SEAM_BINS) % SEAM_BINS;
+  const i0 = Math.floor(x), i1 = (i0 + 1) % SEAM_BINS, f = x - i0;
+  return (disparity[i0] * (1 - f) + disparity[i1] * f) * DEG;
+}
+
+function withDisparity(dirs, disparity) {
+  return dirs.map((d) => [d[0], d[1], d[2], d[3], dispAt(disparity, d[3])]);
+}
+
+// Parallaxe : les deux objectifs sont à quelques centimètres l'un de l'autre, un objet proche n'est
+// donc pas vu sous le même angle par chacun. Pour chaque tranche d'azimut on cherche le décalage
+// radial qui fait coïncider les deux images sur la couture (tracé régulier par programmation
+// dynamique) ; le shader décale ensuite les deux images d'autant au voisinage de la couture.
+export function seamDisparity(A, B, params) {
+  const fovHalf = (params.fov / 2) * DEG;
+  const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
+  const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
+  const kA = params.lensA.r / fovHalf, kB = params.lensB.r / fovHalf;
+  const maxD = Math.max(0, Math.min(4, 2 * (params.fov / 2 - 95.5)));
+  const cands = [];
+  for (let v = -maxD; v <= maxD + 1e-9; v += 0.25) cands.push(v);
+  const N = SEAM_BINS, M = cands.length, PER = 4;
+  const thetas = [85, 87, 89, 91, 93, 95];
+  const cost = new Float64Array(N * M);
+  for (let k = 0; k < N; k++) {
+    for (let m = 0; m < M; m++) {
+      const dirs = [];
+      for (let j = 0; j < PER; j++) {
+        const az = -Math.PI + ((k + (j + 0.5) / PER) / N) * 2 * Math.PI;
+        for (const t of thetas) {
+          const th = t * DEG;
+          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, cands[m] * DEG]);
+        }
+      }
+      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs);
+      let sa = 0, sb = 0;
+      for (let i = 0; i < ca.length; i++) {
+        sa += ca[i];
+        sb += cb[i];
+      }
+      const ratio = (sa + 1) / (sb + 1);
+      let e = 0;
+      for (let i = 0; i < ca.length; i++) e += Math.abs(ca[i] - cb[i] * ratio);
+      cost[k * M + m] = e / ca.length + 0.3 * Math.abs(cands[m]);
+    }
+  }
+  const L = N * 2, lam = 1.5;
+  const acc = new Float64Array(L * M), from = new Int32Array(L * M);
+  for (let m = 0; m < M; m++) acc[m] = cost[m];
+  for (let t = 1; t < L; t++) {
+    const k = t % N;
+    for (let m = 0; m < M; m++) {
+      let best = Infinity, bi = 0;
+      for (let q = Math.max(0, m - 3); q <= Math.min(M - 1, m + 3); q++) {
+        const v = acc[(t - 1) * M + q] + lam * Math.abs(q - m);
+        if (v < best) {
+          best = v;
+          bi = q;
+        }
+      }
+      acc[t * M + m] = best + cost[k * M + m];
+      from[t * M + m] = bi;
+    }
+  }
+  let m = 0;
+  for (let q = 1; q < M; q++) if (acc[(L - 1) * M + q] < acc[(L - 1) * M + m]) m = q;
+  const out = new Array(N);
+  for (let t = L - 1; t >= N; t--) {
+    out[t % N] = cands[m];
+    m = from[t * M + m];
+  }
+  return out;
 }

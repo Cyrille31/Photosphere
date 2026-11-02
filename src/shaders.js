@@ -19,7 +19,7 @@ uniform vec4 uLensA;        // cx, cy, rayon, rotation (objectif avant)
 uniform vec4 uLensB;        // idem objectif arrière
 uniform vec3 uGainA[36];    // correction d'exposition le long de la couture (par azimut)
 uniform vec3 uGainB[36];
-uniform float uSeam[72];    // décalage de la couture (radians) par azimut
+uniform sampler2D uSeamTex; // par tranche d'azimut : R = décalage de la couture, G = parallaxe (radians)
 
 vec2 lensUv(vec4 lens, vec2 p, float theta) {
   float r = lens.z * theta / uFovHalf;
@@ -42,14 +42,20 @@ vec4 sampleSource(vec3 dOut, float pixAng) {
   float tf = acos(clamp(d.z, -1.0, 1.0));
   float tb = PI - tf;
   float az = (atan(d.y, d.x) + PI) / (2.0 * PI);
-  float sbin = mod(az * 72.0 - 0.5, 72.0);
+  float sbin = mod(az * 180.0 - 0.5, 180.0);
   int s0 = int(floor(sbin));
-  float seam = PI * 0.5 + mix(uSeam[s0], uSeam[(s0 + 1) % 72], fract(sbin));
+  vec2 sd = mix(texelFetch(uSeamTex, ivec2(s0, 0), 0).rg, texelFetch(uSeamTex, ivec2((s0 + 1) % 180, 0), 0).rg, fract(sbin));
+  float seam = PI * 0.5 + sd.r;
+  // Correction de parallaxe : décalage radial des deux images, maximal sur la couture et nul à 30°.
+  float ramp = 1.0 - smoothstep(0.13, 0.53, abs(tf - PI * 0.5));
+  float disp = 0.5 * ramp * sd.g;
+  float tfs = tf - disp;
+  float tbs = tb - disp;
   float wf = 1.0 - smoothstep(seam - uBlend, seam + uBlend, tf);
-  if (tf >= uFovHalf) wf = 0.0;
-  if (tb >= uFovHalf) wf = 1.0;
-  vec4 cf = wf > 0.0 ? textureLod(uTexA, lensUv(uLensA, d.xy, tf), lod) : vec4(0.0);
-  vec4 cb = wf < 1.0 ? textureLod(uTexB, lensUv(uLensB, vec2(-d.x, d.y), tb), lod) : vec4(0.0);
+  if (tfs >= uFovHalf) wf = 0.0;
+  if (tbs >= uFovHalf) wf = 1.0;
+  vec4 cf = wf > 0.0 ? textureLod(uTexA, lensUv(uLensA, d.xy, tfs), lod) : vec4(0.0);
+  vec4 cb = wf < 1.0 ? textureLod(uTexB, lensUv(uLensB, vec2(-d.x, d.y), tbs), lod) : vec4(0.0);
   // Gains interpolés selon l'azimut autour de l'axe, appliqués progressivement vers la couture.
   float bin = mod(az * 36.0 - 0.5, 36.0);
   int i0 = int(floor(bin));

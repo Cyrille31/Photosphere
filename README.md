@@ -8,9 +8,9 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
 ## Fonctions
 
 - **Import** depuis la carte micro SD (fichiers ou dossier `DCIM/100PHOTO`, glisser-déposer), ou depuis la galerie du téléphone.
-- **Conversion** en équirectangulaire **7776 × 3888** (réglable) :
+- **Conversion** en équirectangulaire **7776 × 3888**, ou **7200 × 3600** comme le logiciel Samsung (réglable) :
   - les photos brutes **double fisheye** de la Gear 360 (2016 : 7776 × 3888, 2017 : 5472 × 2736) sont détectées et assemblées, avec la même orientation que le logiciel Samsung ;
-  - **calibrage automatique** de chaque photo : alignement des deux objectifs sur la zone de recouvrement, **égalisation de l’exposition** le long de la couture, et **couture optimale** qui contourne les objets proches pour éviter les dédoublements (parallaxe). Réglages manuels possibles dans l’éditeur ;
+  - **calibrage automatique** de chaque photo : alignement des deux objectifs sur la zone de recouvrement, **égalisation de l’exposition** le long de la couture, **correction de parallaxe** le long de la couture (les objets proches, vus sous un angle légèrement différent par chaque objectif, sont recalés) et **couture optimale** qui passe là où les deux images concordent. Réglages manuels possibles dans l’éditeur ;
   - les photos déjà assemblées (application Samsung) sont remises à la bonne taille ;
   - le JPEG produit contient les métadonnées **XMP GPano** (reconnu comme photosphère par Google Photos, Facebook, les visionneuses VR…) et conserve l’EXIF d’origine (date, GPS).
 - **Redressement** des photos prises de travers : curseurs bascule avant/arrière, gauche/droite et cap, ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
