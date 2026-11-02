@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { serve } from './serve.mjs';
+import { DEFAULT_LENS_PARAMS } from '../src/gl-source.js';
 import { levelMatrix, mat3Apply, mat3Transpose, dirFromLonLat, lonLatFromDir } from '../src/math.js';
 
 const require = createRequire(import.meta.url);
@@ -40,9 +41,9 @@ const SCENE = `
 
 async function makeFisheye(w) {
   return page.evaluate(
-    async ({ w, SCENE }) => {
+    async ({ w, SCENE, lenses }) => {
       eval(SCENE + ';window.scene = scene;');
-      const h = w / 2, S = h, fovHalf = (195 / 2) * Math.PI / 180;
+      const h = w / 2, S = h, fovHalf = (lenses.fov / 2) * Math.PI / 180;
       const c = document.createElement('canvas');
       c.width = w;
       c.height = h;
@@ -50,13 +51,14 @@ async function makeFisheye(w) {
       const img = ctx.createImageData(w, h);
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const back = x >= S;
-          const dx = ((x % S) + 0.5 - S / 2) / (S / 2), dy = (y + 0.5 - S / 2) / (S / 2);
-          const r = Math.hypot(dx, dy);
+          const back = x < S; // comme Samsung : le centre de la photo = moitié droite
+          const L = back ? lenses.lensA : lenses.lensB;
+          const dx = ((x % S) + 0.5) / S - L.cx, dy = (y + 0.5) / S - L.cy;
+          const r = Math.hypot(dx, dy) / L.r;
           const i = (y * w + x) * 4;
           img.data[i + 3] = 255;
           if (r > 1) continue;
-          const th = r * fovHalf, a = Math.atan2(-dy, dx);
+          const th = r * fovHalf, a = Math.atan2(-dy, dx) - (L.rot * Math.PI) / 180;
           const st = Math.sin(th);
           const d = back ? [-st * Math.cos(a), st * Math.sin(a), -Math.cos(th)] : [st * Math.cos(a), st * Math.sin(a), Math.cos(th)];
           const col = window.scene(Math.atan2(d[0], d[2]), Math.asin(d[1]));
@@ -70,7 +72,7 @@ async function makeFisheye(w) {
       for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
       return btoa(s);
     },
-    { w, SCENE }
+    { w, SCENE, lenses: DEFAULT_LENS_PARAMS }
   );
 }
 
@@ -114,15 +116,15 @@ try {
         const err = Math.max(...exp.map((v, i) => Math.abs(v - px[i])));
         maxErr = Math.max(maxErr, err);
         total++;
-        if (err > 30) bad++;
+        if (err > 12) bad++;
       }
     }
-    return { w: bmp.width, h: bmp.height, bad, total, maxErr, xmp: meta.readXmp(bytes), size: out.size, id: p.id, lens: p.params.lensA };
+    return { w: bmp.width, h: bmp.height, bad, total, maxErr, xmp: meta.readXmp(bytes), size: out.size, id: p.id, calibrated: !!p.params.autoCalibrated };
   }, SCENE);
   check(result.w === 7776 && result.h === 3888, `JPEG décodable, ${result.w} × ${result.h}, ${(result.size / 1e6).toFixed(1)} Mo`);
   check(result.bad === 0, `assemblage fidèle à la scène (${result.total - result.bad}/${result.total} points, écart max ${result.maxErr})`);
   check(/GPano:ProjectionType="equirectangular"/.test(result.xmp || ''), 'métadonnées XMP photosphère présentes');
-  check(Math.abs(result.lens.r - 0.5) < 0.02, `cercle de l’objectif détecté (r = ${result.lens.r.toFixed(3)})`);
+  check(result.calibrated, 'calibrage automatique des objectifs effectué');
 
   console.log('Import d’une photo déjà équirectangulaire (téléphone)');
   const eqFile = path.join(shots, 'phone_360.jpg');

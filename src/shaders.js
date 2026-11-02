@@ -17,6 +17,9 @@ uniform float uFovHalf;     // demi-champ des objectifs fisheye (radians)
 uniform float uBlend;       // demi-largeur de la couture (radians)
 uniform vec4 uLensA;        // cx, cy, rayon, rotation (objectif avant)
 uniform vec4 uLensB;        // idem objectif arrière
+uniform vec3 uGainA[36];    // correction d'exposition le long de la couture (par azimut)
+uniform vec3 uGainB[36];
+uniform float uSeam[72];    // décalage de la couture (radians) par azimut
 
 vec2 lensUv(vec4 lens, vec2 p, float theta) {
   float r = lens.z * theta / uFovHalf;
@@ -33,14 +36,31 @@ vec4 sampleSource(vec3 dOut, float pixAng) {
     if (u < 0.5) return textureLod(uTexA, vec2(u * 2.0, v), lod);
     return textureLod(uTexB, vec2(u * 2.0 - 1.0, v), lod);
   }
+  // Comme le logiciel Samsung : le centre de la photo correspond à la moitié droite de l'image brute.
+  d = vec3(-d.x, d.y, -d.z);
   float lod = log2(max(pixAng * uLensA.z * uTexSize.x / uFovHalf, 1.0));
   float tf = acos(clamp(d.z, -1.0, 1.0));
   float tb = PI - tf;
-  float wf = 1.0 - smoothstep(PI * 0.5 - uBlend, PI * 0.5 + uBlend, tf);
+  float az = (atan(d.y, d.x) + PI) / (2.0 * PI);
+  float sbin = mod(az * 72.0 - 0.5, 72.0);
+  int s0 = int(floor(sbin));
+  float seam = PI * 0.5 + mix(uSeam[s0], uSeam[(s0 + 1) % 72], fract(sbin));
+  float wf = 1.0 - smoothstep(seam - uBlend, seam + uBlend, tf);
   if (tf >= uFovHalf) wf = 0.0;
   if (tb >= uFovHalf) wf = 1.0;
   vec4 cf = wf > 0.0 ? textureLod(uTexA, lensUv(uLensA, d.xy, tf), lod) : vec4(0.0);
   vec4 cb = wf < 1.0 ? textureLod(uTexB, lensUv(uLensB, vec2(-d.x, d.y), tb), lod) : vec4(0.0);
+  // Gains interpolés selon l'azimut autour de l'axe, appliqués progressivement vers la couture.
+  float bin = mod(az * 36.0 - 0.5, 36.0);
+  int i0 = int(floor(bin));
+  int i1 = (i0 + 1) % 36;
+  float fr = fract(bin);
+  vec3 ga = mix(uGainA[i0], uGainA[i1], fr);
+  vec3 gb = mix(uGainB[i0], uGainB[i1], fr);
+  float ra = smoothstep(PI * 0.25, PI * 0.5, tf);
+  float rb = smoothstep(PI * 0.25, PI * 0.5, tb);
+  cf.rgb *= mix(vec3(1.0), ga, ra);
+  cb.rgb *= mix(vec3(1.0), gb, rb);
   return mix(cb, cf, wf);
 }
 `;

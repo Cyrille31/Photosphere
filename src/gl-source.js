@@ -1,12 +1,21 @@
 // Outils WebGL communs : programmes, quad plein écran, chargement de la source en deux moitiés.
 import { levelMatrix, mat3Transpose, DEG } from './math.js';
 
+// Calibrage moyen mesuré sur une Gear 360 (2016, SM-C200), affiné ensuite photo par photo.
 export const DEFAULT_LENS_PARAMS = {
   fov: 195,
-  blend: 3,
-  lensA: { cx: 0.5, cy: 0.5, r: 0.5, rot: 0 },
-  lensB: { cx: 0.5, cy: 0.5, r: 0.5, rot: 0 },
+  blend: 2,
+  lensA: { cx: 0.5, cy: 0.5, r: 0.503, rot: 0 },
+  lensB: { cx: 0.4938, cy: 0.4967, r: 0.4979, rot: 0.05 },
 };
+
+const NO_GAIN = new Float32Array(36 * 3).fill(1);
+const NO_SEAM = new Float32Array(72);
+
+function gainArray(list) {
+  if (!list || list.length !== 36) return NO_GAIN;
+  return new Float32Array(list.flat());
+}
 
 export function compileProgram(gl, vsSrc, fsSrc) {
   const make = (type, src) => {
@@ -135,4 +144,9 @@ export function setSourceUniforms(gl, u, source, srcType, params) {
   const la = p.lensA, lb = p.lensB;
   gl.uniform4f(u.uLensA, la.cx, la.cy, la.r, la.rot * DEG);
   gl.uniform4f(u.uLensB, lb.cx, lb.cy, lb.r, lb.rot * DEG);
+  const g = srcType === 'fisheye' && p.gains;
+  gl.uniform3fv(u.uGainA, gainArray(g && g.a));
+  gl.uniform3fv(u.uGainB, gainArray(g && g.b));
+  const seam = srcType === 'fisheye' && p.seam && p.seam.length === 72 ? new Float32Array(p.seam.map((v) => v * DEG)) : NO_SEAM;
+  gl.uniform1fv(u.uSeam, seam);
 }

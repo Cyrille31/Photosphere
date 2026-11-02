@@ -512,8 +512,24 @@ async function route() {
 
 window.addEventListener('hashchange', route);
 
+// Photos double fisheye importées avec la première version : nouvelle orientation (comme Samsung,
+// centre = moitié droite), redressement et liens convertis, puis recalibrage et reconversion.
+async function migratePhotos() {
+  let n = 0;
+  for (const p of await db.listPhotos()) {
+    if (p.srcType !== 'fisheye' || p.layout === 2) continue;
+    const params = { ...p.params, pitch: -(p.params.pitch || 0), roll: -(p.params.roll || 0) };
+    delete params.autoCalibrated;
+    const hotspots = (p.hotspots || []).map((h) => ({ ...h, yaw: ((h.yaw + 360) % 360) - 180 }));
+    await db.putPhoto({ ...p, params, hotspots, layout: 2, status: 'pending' });
+    n++;
+  }
+  if (n) toast(`${n} photo(s) recalibrée(s) avec le nouvel assemblage…`);
+}
+
 (async function start() {
   state.settings = { ...state.settings, ...((await db.getSetting('app')) || {}) };
+  await migratePhotos();
   // Une conversion interrompue (fermeture de l'onglet) est relancée.
   await route();
   processQueue();
