@@ -34,7 +34,7 @@ function renderHalf(S, lens, fov, back, gain) {
 }
 
 test('le calibrage automatique retrouve le décalage des objectifs et l’écart d’exposition', () => {
-  const truthA = { cx: 0.5, cy: 0.5, r: 0.5, rot: 0 };
+  const truthA = { cx: 0.5, cy: 0.5, r: 0.503, rot: 0 };
   const truthB = { cx: 0.497, cy: 0.503, r: 0.495, rot: 0.6 };
   const A = renderHalf(500, truthA, 195, false, 1);
   const B = renderHalf(500, truthB, 195, true, 1.25);
