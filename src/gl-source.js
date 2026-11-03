@@ -5,6 +5,7 @@ import { levelMatrix, mat3Transpose, DEG } from './math.js';
 export const DEFAULT_LENS_PARAMS = {
   fov: 195,
   blend: 2,
+  vignette: 1, // force de la correction du vignettage (1 = profil mesuré sur la SM-C200)
   lensA: { cx: 0.5, cy: 0.5, r: 0.5048, rot: 0 },
   lensB: { cx: 0.4938, cy: 0.4968, r: 0.4978, rot: 0.24 },
 };
@@ -170,6 +171,9 @@ export function setSourceUniforms(gl, u, source, srcType, params) {
   gl.uniformMatrix3fv(u.uRot, false, new Float32Array(mat3Transpose(rot)));
   gl.uniform1f(u.uFovHalf, (p.fov / 2) * DEG);
   gl.uniform1f(u.uBlend, Math.max(0.01, Math.min(p.blend, p.fov / 2 - 90.01)) * DEG);
+  // Profil de vignettage de la SM-C200 (voir calibrate.js), modulé par params.vignette.
+  const vig = srcType === 'fisheye' ? p.vignette ?? 1 : 0;
+  gl.uniform2f(u.uVignette, 0.38 * vig, 0.42 * vig);
   const la = p.lensA, lb = p.lensB;
   gl.uniform4f(u.uLensA, la.cx, la.cy, la.r, la.rot * DEG);
   gl.uniform4f(u.uLensB, lb.cx, lb.cy, lb.r, lb.rot * DEG);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autoCalibrate } from '../src/calibrate.js';
+import { autoCalibrate, VIGNETTE_P, VIGNETTE_Q } from '../src/calibrate.js';
 import { DEFAULT_LENS_PARAMS } from '../src/gl-source.js';
 
 const DEG = Math.PI / 180;
@@ -27,7 +27,10 @@ function renderHalf(S, lens, fov, back, gain) {
       const a = Math.atan2(-dy, dx) - lens.rot * DEG;
       const st = Math.sin(th);
       const d = back ? [-st * Math.cos(a), st * Math.sin(a), -Math.cos(th)] : [st * Math.cos(a), st * Math.sin(a), Math.cos(th)];
-      data.set(scene(d).map((v) => v * gain), (py * S + px) * 3);
+      // Vignettage de la caméra (inverse de la correction : x = 1 - (1 - y)^(1/g)).
+      const t2 = (th / (Math.PI / 2)) ** 2;
+      const g = Math.exp((VIGNETTE_P * t2 + VIGNETTE_Q * t2 ** 4) / 2.2);
+      data.set(scene(d).map((v) => 255 * (1 - (1 - Math.min(255, v * gain) / 255) ** (1 / g))), (py * S + px) * 3);
     }
   }
   return { size: S, data };
