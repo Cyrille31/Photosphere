@@ -20,11 +20,11 @@ uniform vec4 uLensA;        // cx, cy, rayon, rotation (objectif avant)
 uniform vec4 uLensB;        // idem objectif arrière
 uniform vec3 uGainA[36];    // correction d'exposition le long de la couture (par azimut)
 uniform vec3 uGainB[36];
-uniform sampler2D uSeamTex; // par tranche d'azimut : R = décalage de la couture, G = parallaxe (radians)
+uniform sampler2D uSeamTex; // par tranche d'azimut : R = décalage de la couture, G = parallaxe, B = décalage le long de la couture (radians)
 
-vec2 lensUv(vec4 lens, vec2 p, float theta) {
+vec2 lensUv(vec4 lens, vec2 p, float theta, float extraRot) {
   float r = lens.z * theta / uFovHalf;
-  float a = atan(p.y, p.x) + lens.w;
+  float a = atan(p.y, p.x) + lens.w + extraRot;
   return lens.xy + r * vec2(cos(a), -sin(a));
 }
 
@@ -45,18 +45,19 @@ vec4 sampleSource(vec3 dOut, float pixAng) {
   float az = (atan(d.y, d.x) + PI) / (2.0 * PI);
   float sbin = mod(az * 180.0 - 0.5, 180.0);
   int s0 = int(floor(sbin));
-  vec2 sd = mix(texelFetch(uSeamTex, ivec2(s0, 0), 0).rg, texelFetch(uSeamTex, ivec2((s0 + 1) % 180, 0), 0).rg, fract(sbin));
+  vec3 sd = mix(texelFetch(uSeamTex, ivec2(s0, 0), 0).rgb, texelFetch(uSeamTex, ivec2((s0 + 1) % 180, 0), 0).rgb, fract(sbin));
   float seam = PI * 0.5 + sd.r;
   // Correction de parallaxe : décalage radial des deux images, maximal sur la couture et nul à 30°.
   float ramp = 1.0 - smoothstep(0.13, 0.53, abs(tf - PI * 0.5));
   float disp = 0.5 * ramp * sd.g;
+  float twist = -0.5 * ramp * sd.b;
   float tfs = tf - disp;
   float tbs = tb - disp;
   float wf = 1.0 - smoothstep(seam - uBlend, seam + uBlend, tf);
   if (tfs >= uFovHalf) wf = 0.0;
   if (tbs >= uFovHalf) wf = 1.0;
-  vec4 cf = wf > 0.0 ? textureLod(uTexA, lensUv(uLensA, d.xy, tfs), lod) : vec4(0.0);
-  vec4 cb = wf < 1.0 ? textureLod(uTexB, lensUv(uLensB, vec2(-d.x, d.y), tbs), lod) : vec4(0.0);
+  vec4 cf = wf > 0.0 ? textureLod(uTexA, lensUv(uLensA, d.xy, tfs, twist), lod) : vec4(0.0);
+  vec4 cb = wf < 1.0 ? textureLod(uTexB, lensUv(uLensB, vec2(-d.x, d.y), tbs, twist), lod) : vec4(0.0);
   // Gains interpolés selon l'azimut autour de l'axe, appliqués progressivement vers la couture.
   float bin = mod(az * 36.0 - 0.5, 36.0);
   int i0 = int(floor(bin));

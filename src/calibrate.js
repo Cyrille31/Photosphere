@@ -18,9 +18,9 @@ function bilinear(half, x, y, out, o) {
 }
 
 // Pixel (en pixels de la moitié) vu par un objectif : k = rayon normalisé par radian.
-function lensPixel(lens, k, px, py, theta, S) {
+function lensPixel(lens, k, px, py, theta, S, extraRot = 0) {
   const r = k * theta;
-  const a = Math.atan2(py, px) + lens.rot;
+  const a = Math.atan2(py, px) + lens.rot + extraRot;
   return [(lens.cx + r * Math.cos(a)) * S, (lens.cy - r * Math.sin(a)) * S];
 }
 
@@ -54,10 +54,11 @@ function sampleBoth(A, B, lensA, kA, lensB, kB, dirs, vignette = 0) {
   const n = dirs.length;
   const ca = new Float32Array(n * 3), cb = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
-    const [x, y, z, , disp = 0] = dirs[i];
+    // disp : décalage radial (parallaxe), twist : décalage le long de la couture, répartis sur les deux objectifs.
+    const [x, y, z, , disp = 0, twist = 0] = dirs[i];
     const tf = Math.acos(Math.max(-1, Math.min(1, z)));
-    const pa = lensPixel(lensA, kA, x, y, tf - disp / 2, A.size);
-    const pb = lensPixel(lensB, kB, -x, y, Math.PI - tf - disp / 2, B.size);
+    const pa = lensPixel(lensA, kA, x, y, tf - disp / 2, A.size, -twist / 2);
+    const pb = lensPixel(lensB, kB, -x, y, Math.PI - tf - disp / 2, B.size, -twist / 2);
     bilinear(A, pa[0], pa[1], ca, i * 3);
     bilinear(B, pb[0], pb[1], cb, i * 3);
     if (vignette) {
@@ -145,11 +146,11 @@ export function fitLenses(A, B, start) {
 }
 
 // Gains de couleur (par tranche d'azimut) qui égalisent les deux objectifs sur la couture.
-export function seamGains(A, B, params, disparity) {
+export function seamGains(A, B, params, disparity, twist) {
   const fovHalf = (params.fov / 2) * DEG;
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
-  const dirs = withDisparity(ringDirections([88, 90, 92], 720), disparity);
+  const dirs = withDisparity(ringDirections([88, 90, 92], 720), disparity, twist);
   const [ca, cb] = sampleBoth(A, B, lensA, params.lensA.r / fovHalf, lensB, params.lensB.r / fovHalf, dirs, params.vignette);
   const N = GAIN_BINS;
   const sa = new Float64Array(N * 3), sb = new Float64Array(N * 3);
@@ -179,19 +180,20 @@ export function seamGains(A, B, params, disparity) {
 export function autoCalibrate(A, B, start) {
   const lenses = fitLenses(A, B, start);
   const params = { ...start, ...lenses };
-  const disparity = seamDisparity(A, B, params);
-  const gains = seamGains(A, B, params, disparity);
-  return { ...lenses, blend: 1, gains, disparity, seam: seamPath(A, B, params, gains, disparity), calibVersion: CALIB_VERSION };
+  const { disparity, twist } = seamDisparity(A, B, params);
+  const gains = seamGains(A, B, params, disparity, twist);
+  const seam = seamPath(A, B, params, gains, disparity, twist);
+  return { ...lenses, blend: 1, gains, disparity, twist, seam, calibVersion: CALIB_VERSION };
 }
 
 // Résolution des tracés le long de la couture (tranches de 2°), identique dans le shader.
 export const SEAM_BINS = 180;
-export const CALIB_VERSION = 4;
+export const CALIB_VERSION = 5;
 
 // Couture optimale : pour chaque tranche d'azimut, on décale la couture (±5°) vers l'endroit où les
 // deux objectifs concordent le mieux, avec un tracé régulier (programmation dynamique). Les objets
 // proches (parallaxe) ne sont alors plus dédoublés par le fondu.
-export function seamPath(A, B, params, gains, disparity) {
+export function seamPath(A, B, params, gains, disparity, twist) {
   const fovHalf = (params.fov / 2) * DEG;
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
@@ -210,7 +212,7 @@ export function seamPath(A, B, params, gains, disparity) {
         const az = -Math.PI + ((k + (j + 0.5) / PER) / N) * 2 * Math.PI;
         for (const dt of [-1, 0, 1]) {
           const th = (90 + offsets[m] + dt) * DEG;
-          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, dispAt(disparity, az)]);
+          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, dispAt(disparity, az), dispAt(twist, az)]);
         }
       }
       const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, params.vignette);
@@ -258,71 +260,140 @@ function dispAt(disparity, az) {
   return (disparity[i0] * (1 - f) + disparity[i1] * f) * DEG;
 }
 
-function withDisparity(dirs, disparity) {
-  return dirs.map((d) => [d[0], d[1], d[2], d[3], dispAt(disparity, d[3])]);
+function withDisparity(dirs, disparity, twist) {
+  return dirs.map((d) => [d[0], d[1], d[2], d[3], dispAt(disparity, d[3]), dispAt(twist, d[3])]);
 }
 
-// Parallaxe : les deux objectifs sont à quelques centimètres l'un de l'autre, un objet proche n'est
-// donc pas vu sous le même angle par chacun. Pour chaque tranche d'azimut on cherche le décalage
-// radial qui fait coïncider les deux images sur la couture (tracé régulier par programmation
-// dynamique) ; le shader décale ensuite les deux images d'autant au voisinage de la couture.
+// Alignement local le long de la couture. Les deux objectifs sont à quelques centimètres l'un de
+// l'autre : un objet proche n'est pas vu sous le même angle par chacun (décalage radial), et le
+// calibrage global laisse un petit résidu le long de la couture (décalage tangentiel). Pour chaque
+// tranche d'azimut on cherche le couple de décalages qui fait coïncider les deux images, avec un
+// tracé régulier (programmation dynamique) ; le shader recale ensuite les deux images d'autant au
+// voisinage de la couture.
 export function seamDisparity(A, B, params) {
   const fovHalf = (params.fov / 2) * DEG;
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
   const kA = params.lensA.r / fovHalf, kB = params.lensB.r / fovHalf;
   const maxD = Math.max(0, Math.min(4, 2 * (params.fov / 2 - 95.5)));
-  const cands = [];
-  for (let v = -maxD; v <= maxD + 1e-9; v += 0.25) cands.push(v);
-  const N = SEAM_BINS, M = cands.length, PER = 4;
+  const radial = [], tang = [];
+  for (let v = -maxD; v <= maxD + 1e-9; v += 0.25) radial.push(v);
+  for (let v = -1.5; v <= 1.5 + 1e-9; v += 0.25) tang.push(v);
+  const R = radial.length, T = tang.length, M = R * T;
+  const N = SEAM_BINS, PER = 4;
   const thetas = [85, 87, 89, 91, 93, 95];
   const cost = new Float64Array(N * M);
+  const texture = new Float64Array(N);
+  const dirs = [];
+  for (let i = 0; i < PER * thetas.length; i++) dirs.push([0, 0, 0, 0, 0, 0]);
   for (let k = 0; k < N; k++) {
-    for (let m = 0; m < M; m++) {
-      const dirs = [];
-      for (let j = 0; j < PER; j++) {
-        const az = -Math.PI + ((k + (j + 0.5) / PER) / N) * 2 * Math.PI;
-        for (const t of thetas) {
-          const th = t * DEG;
-          dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, cands[m] * DEG]);
+    for (let j = 0; j < PER; j++) {
+      const az = -Math.PI + ((k + (j + 0.5) / PER) / N) * 2 * Math.PI;
+      thetas.forEach((t, ti) => {
+        const th = t * DEG, d = dirs[j * thetas.length + ti];
+        d[0] = Math.sin(th) * Math.cos(az);
+        d[1] = Math.sin(th) * Math.sin(az);
+        d[2] = Math.cos(th);
+        d[3] = az;
+      });
+    }
+    for (let a = 0; a < R; a++) {
+      for (let b = 0; b < T; b++) {
+        for (const d of dirs) {
+          d[4] = radial[a] * DEG;
+          d[5] = tang[b] * DEG;
+        }
+        const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, params.vignette);
+        let sa = 0, sb = 0;
+        for (let i = 0; i < ca.length; i++) {
+          sa += ca[i];
+          sb += cb[i];
+        }
+        const ratio = (sa + 1) / (sb + 1);
+        let e = 0;
+        for (let i = 0; i < ca.length; i++) e += Math.abs(ca[i] - cb[i] * ratio);
+        cost[k * M + a * T + b] = e / ca.length + 0.3 * Math.abs(radial[a]) + 0.6 * Math.abs(tang[b]);
+        if (a === 0 && b === 0) {
+          const mean = sa / ca.length;
+          let v = 0;
+          for (let i = 0; i < ca.length; i++) v += (ca[i] - mean) ** 2;
+          texture[k] = Math.sqrt(v / ca.length);
         }
       }
-      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, params.vignette);
-      let sa = 0, sb = 0;
-      for (let i = 0; i < ca.length; i++) {
-        sa += ca[i];
-        sb += cb[i];
-      }
-      const ratio = (sa + 1) / (sb + 1);
-      let e = 0;
-      for (let i = 0; i < ca.length; i++) e += Math.abs(ca[i] - cb[i] * ratio);
-      cost[k * M + m] = e / ca.length + 0.3 * Math.abs(cands[m]);
     }
   }
-  const L = N * 2, lam = 1.5;
+  // Deux tours pour que le tracé se referme ; pénalités de variation entre tranches voisines.
+  const L = N * 2, lamR = 4, lamT = 3;
   const acc = new Float64Array(L * M), from = new Int32Array(L * M);
   for (let m = 0; m < M; m++) acc[m] = cost[m];
   for (let t = 1; t < L; t++) {
     const k = t % N;
-    for (let m = 0; m < M; m++) {
-      let best = Infinity, bi = 0;
-      for (let q = Math.max(0, m - 3); q <= Math.min(M - 1, m + 3); q++) {
-        const v = acc[(t - 1) * M + q] + lam * Math.abs(q - m);
-        if (v < best) {
-          best = v;
-          bi = q;
+    for (let a = 0; a < R; a++) {
+      for (let b = 0; b < T; b++) {
+        let best = Infinity, bi = 0;
+        for (let qa = Math.max(0, a - 1); qa <= Math.min(R - 1, a + 1); qa++) {
+          for (let qb = Math.max(0, b - 1); qb <= Math.min(T - 1, b + 1); qb++) {
+            const v = acc[(t - 1) * M + qa * T + qb] + lamR * Math.abs(qa - a) + lamT * Math.abs(qb - b);
+            if (v < best) {
+              best = v;
+              bi = qa * T + qb;
+            }
+          }
         }
+        acc[t * M + a * T + b] = best + cost[k * M + a * T + b];
+        from[t * M + a * T + b] = bi;
       }
-      acc[t * M + m] = best + cost[k * M + m];
-      from[t * M + m] = bi;
     }
   }
   let m = 0;
   for (let q = 1; q < M; q++) if (acc[(L - 1) * M + q] < acc[(L - 1) * M + m]) m = q;
-  const out = new Array(N);
+  const disparity = new Array(N), twist = new Array(N);
   for (let t = L - 1; t >= N; t--) {
-    out[t % N] = cands[m];
+    disparity[t % N] = radial[Math.floor(m / T)];
+    twist[t % N] = tang[m % T];
     m = from[t * M + m];
   }
+  // Le décalage tangentiel varie lentement autour de la couture : c'est un résidu du calibrage global
+  // (rotation et centre de l'objectif). On n'en garde que la composante douce (harmoniques 0 et 1,
+  // pondérées par la texture), qui ne courbe pas les lignes droites ; un recalage tangentiel local
+  // tordrait les lignes verticales qui longent la couture.
+  // Le décalage radial (parallaxe) reste local mais lissé : s'il variait brusquement d'une tranche à
+  // l'autre, il courberait les lignes droites qui traversent la couture.
+  return { disparity: smoothCircular(disparity, 10), twist: lowOrderFit(twist, texture) };
+}
+
+function smoothCircular(arr, radius) {
+  const n = arr.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0, w = 0;
+    for (let j = -radius; j <= radius; j++) {
+      const k = radius + 1 - Math.abs(j);
+      s += arr[(i + j + n) % n] * k;
+      w += k;
+    }
+    out[i] = +(s / w).toFixed(3);
+  }
   return out;
+}
+
+function lowOrderFit(values, weights) {
+  const n = values.length;
+  // Moindres carrés pondérés sur la base (1, cos, sin).
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], v = [0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI + ((i + 0.5) / n) * 2 * Math.PI;
+    const f = [1, Math.cos(a), Math.sin(a)], w = weights[i] + 1e-6;
+    for (let r = 0; r < 3; r++) {
+      v[r] += w * f[r] * values[i];
+      for (let c = 0; c < 3; c++) M[r][c] += w * f[r] * f[c];
+    }
+  }
+  const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det(M);
+  if (Math.abs(D) < 1e-12) return new Array(n).fill(0);
+  const coef = [0, 1, 2].map((k) => det(M.map((row, r) => row.map((x, c) => (c === k ? v[r] : x)))) / D);
+  return values.map((_, i) => {
+    const a = -Math.PI + ((i + 0.5) / n) * 2 * Math.PI;
+    return +(coef[0] + coef[1] * Math.cos(a) + coef[2] * Math.sin(a)).toFixed(3);
+  });
 }
