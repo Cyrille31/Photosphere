@@ -77,6 +77,7 @@ export async function openEditor(container, photo, { photos, onDone }) {
           <div class="fisheye-only">
             ${slider('fov', 'Champ de vision des objectifs (°)', 180, 220, 0.1)}
             ${slider('blend', 'Largeur du fondu de couture (°)', 0.5, 10, 0.1)}
+            ${slider('vignette', 'Correction du vignettage (bords plus sombres) : 0 = aucune, 1 = Gear 360', 0, 1.5, 0.05)}
             ${lensFields('lensA', 'Objectif de la moitié gauche')}
             ${lensFields('lensB', 'Objectif de la moitié droite')}
             <div class="tools">

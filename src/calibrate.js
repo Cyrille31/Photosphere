@@ -37,7 +37,20 @@ function ringDirections(thetasDeg, nAz) {
   return dirs;
 }
 
-function sampleBoth(A, B, lensA, kA, lensB, kB, dirs) {
+// Vignettage mesuré sur la Gear 360 (SM-C200) : la lumière baisse vers le bord de chaque objectif,
+// log V(θ) = -(P·t² + Q·t⁸) avec t = θ / 90° (profil confirmé par les assemblages Samsung). Sur les
+// valeurs JPEG (gamma ≈ 2,2), le gain vaut g = exp((P·t² + Q·t⁸) / 2,2) et s'applique comme
+// y = 1 - (1 - x)^g : plein effet dans les ombres, sans saturer les tons clairs (ciel).
+export const VIGNETTE_P = 0.38;
+export const VIGNETTE_Q = 0.42;
+
+function vignetteGain(theta, strength) {
+  if (!strength) return 1;
+  const t2 = (theta / (Math.PI / 2)) ** 2;
+  return Math.exp((strength * (VIGNETTE_P * t2 + VIGNETTE_Q * t2 ** 4)) / 2.2);
+}
+
+function sampleBoth(A, B, lensA, kA, lensB, kB, dirs, vignette = 0) {
   const n = dirs.length;
   const ca = new Float32Array(n * 3), cb = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
@@ -47,6 +60,13 @@ function sampleBoth(A, B, lensA, kA, lensB, kB, dirs) {
     const pb = lensPixel(lensB, kB, -x, y, Math.PI - tf - disp / 2, B.size);
     bilinear(A, pa[0], pa[1], ca, i * 3);
     bilinear(B, pb[0], pb[1], cb, i * 3);
+    if (vignette) {
+      const ga = vignetteGain(tf - disp / 2, vignette), gb = vignetteGain(Math.PI - tf - disp / 2, vignette);
+      for (let c = 0; c < 3; c++) {
+        ca[i * 3 + c] = 255 * (1 - (1 - Math.min(1, Math.max(0, ca[i * 3 + c] / 255))) ** ga);
+        cb[i * 3 + c] = 255 * (1 - (1 - Math.min(1, Math.max(0, cb[i * 3 + c] / 255))) ** gb);
+      }
+    }
   }
   return [ca, cb];
 }
@@ -65,8 +85,8 @@ function normalizedLuma(c) {
 }
 
 // Écart photométrique robuste (on ignore les 30 % de points les plus mauvais : parallaxe, bras…).
-function seamCost(A, B, lensA, kA, lensB, kB, dirs) {
-  const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs);
+function seamCost(A, B, lensA, kA, lensB, kB, dirs, vignette) {
+  const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, vignette);
   const la = normalizedLuma(ca), lb = normalizedLuma(cb);
   const e = new Float32Array(la.length);
   for (let i = 0; i < e.length; i++) e[i] = (la[i] - lb[i]) ** 2;
@@ -115,7 +135,7 @@ export function fitLenses(A, B, start) {
   const f = (q) => {
     let reg = 0;
     for (let i = 0; i < q.length; i++) reg += ((q[i] - q0[i]) / scale[i]) ** 2;
-    return seamCost(A, B, lensA, q[0], { cx: q[2], cy: q[3], rot: q[4] }, q[1], dirs) + lam * reg;
+    return seamCost(A, B, lensA, q[0], { cx: q[2], cy: q[3], rot: q[4] }, q[1], dirs, start.vignette) + lam * reg;
   };
   const { x } = patternSearch(f, q0, scale, 400);
   return {
@@ -130,7 +150,7 @@ export function seamGains(A, B, params, disparity) {
   const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
   const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
   const dirs = withDisparity(ringDirections([88, 90, 92], 720), disparity);
-  const [ca, cb] = sampleBoth(A, B, lensA, params.lensA.r / fovHalf, lensB, params.lensB.r / fovHalf, dirs);
+  const [ca, cb] = sampleBoth(A, B, lensA, params.lensA.r / fovHalf, lensB, params.lensB.r / fovHalf, dirs, params.vignette);
   const N = GAIN_BINS;
   const sa = new Float64Array(N * 3), sb = new Float64Array(N * 3);
   dirs.forEach((d, i) => {
@@ -166,7 +186,7 @@ export function autoCalibrate(A, B, start) {
 
 // Résolution des tracés le long de la couture (tranches de 2°), identique dans le shader.
 export const SEAM_BINS = 180;
-export const CALIB_VERSION = 3;
+export const CALIB_VERSION = 4;
 
 // Couture optimale : pour chaque tranche d'azimut, on décale la couture (±5°) vers l'endroit où les
 // deux objectifs concordent le mieux, avec un tracé régulier (programmation dynamique). Les objets
@@ -193,7 +213,7 @@ export function seamPath(A, B, params, gains, disparity) {
           dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, dispAt(disparity, az)]);
         }
       }
-      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs);
+      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, params.vignette);
       let s = 0;
       for (let i = 0; i < dirs.length; i++) for (let c = 0; c < 3; c++) s += Math.abs(ca[i * 3 + c] * ga[c] - cb[i * 3 + c] * gb[c]);
       cost[k * M + m] = s / (dirs.length * 3) + 0.4 * Math.abs(offsets[m]);
@@ -267,7 +287,7 @@ export function seamDisparity(A, B, params) {
           dirs.push([Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th), az, cands[m] * DEG]);
         }
       }
-      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs);
+      const [ca, cb] = sampleBoth(A, B, lensA, kA, lensB, kB, dirs, params.vignette);
       let sa = 0, sb = 0;
       for (let i = 0; i < ca.length; i++) {
         sa += ca[i];

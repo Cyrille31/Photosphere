@@ -15,6 +15,7 @@ uniform int uSrcMode;       // 0 = équirectangulaire, 1 = double fisheye
 uniform mat3 uRot;          // sortie -> source (redressement)
 uniform float uFovHalf;     // demi-champ des objectifs fisheye (radians)
 uniform float uBlend;       // demi-largeur de la couture (radians)
+uniform vec2 uVignette;     // correction du vignettage : P, Q (log V = -(P t² + Q t⁸), t = θ / 90°)
 uniform vec4 uLensA;        // cx, cy, rayon, rotation (objectif avant)
 uniform vec4 uLensB;        // idem objectif arrière
 uniform vec3 uGainA[36];    // correction d'exposition le long de la couture (par azimut)
@@ -65,6 +66,15 @@ vec4 sampleSource(vec3 dOut, float pixAng) {
   vec3 gb = mix(uGainB[i0], uGainB[i1], fr);
   float ra = smoothstep(PI * 0.25, PI * 0.5, tf);
   float rb = smoothstep(PI * 0.25, PI * 0.5, tb);
+  float ta = tfs / (PI * 0.5), tb2 = tbs / (PI * 0.5);
+  ta *= ta;
+  tb2 *= tb2;
+  // Gain qui agit pleinement dans les ombres et tend doucement vers le blanc sans saturer
+  // (comme le logiciel Samsung) : y = 1 - (1 - x)^g.
+  float va = exp((uVignette.x * ta + uVignette.y * ta * ta * ta * ta) / 2.2);
+  float vb = exp((uVignette.x * tb2 + uVignette.y * tb2 * tb2 * tb2 * tb2) / 2.2);
+  cf.rgb = 1.0 - pow(1.0 - clamp(cf.rgb, 0.0, 1.0), vec3(va));
+  cb.rgb = 1.0 - pow(1.0 - clamp(cb.rgb, 0.0, 1.0), vec3(vb));
   cf.rgb *= mix(vec3(1.0), ga, ra);
   cb.rgb *= mix(vec3(1.0), gb, rb);
   return mix(cb, cf, wf);

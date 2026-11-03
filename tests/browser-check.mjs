@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { serve } from './serve.mjs';
 import { DEFAULT_LENS_PARAMS } from '../src/gl-source.js';
+import { VIGNETTE_P, VIGNETTE_Q } from '../src/calibrate.js';
 import { levelMatrix, mat3Apply, mat3Transpose, dirFromLonLat, lonLatFromDir } from '../src/math.js';
 
 const require = createRequire(import.meta.url);
@@ -61,7 +62,10 @@ async function makeFisheye(w) {
           const th = r * fovHalf, a = Math.atan2(-dy, dx) - (L.rot * Math.PI) / 180;
           const st = Math.sin(th);
           const d = back ? [-st * Math.cos(a), st * Math.sin(a), -Math.cos(th)] : [st * Math.cos(a), st * Math.sin(a), Math.cos(th)];
-          const col = window.scene(Math.atan2(d[0], d[2]), Math.asin(d[1]));
+          // Vignettage de la caméra (inverse de la correction appliquée à l'assemblage).
+          const t2 = (th / (Math.PI / 2)) ** 2;
+          const g = Math.exp((lenses.vigP * t2 + lenses.vigQ * t2 ** 4) / 2.2);
+          const col = window.scene(Math.atan2(d[0], d[2]), Math.asin(d[1])).map((v) => 255 * (1 - (1 - v / 255) ** (1 / g)));
           img.data.set(col, i);
         }
       }
@@ -72,7 +76,7 @@ async function makeFisheye(w) {
       for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
       return btoa(s);
     },
-    { w, SCENE, lenses: DEFAULT_LENS_PARAMS }
+    { w, SCENE, lenses: { ...DEFAULT_LENS_PARAMS, vigP: VIGNETTE_P, vigQ: VIGNETTE_Q } }
   );
 }
 
