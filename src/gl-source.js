@@ -14,8 +14,9 @@ const NO_GAIN = new Float32Array(36 * 3).fill(1);
 const SEAM_BINS = 180;
 const seamTextures = new WeakMap(); // contexte WebGL -> { tex, key }
 
-// Tracé de la couture et parallaxe, par tranche d'azimut, dans une petite texture flottante.
-function bindSeamTexture(gl, seam, disparity) {
+// Tracé de la couture et recalage local (parallaxe, décalage tangentiel), par tranche d'azimut,
+// dans une petite texture flottante.
+function bindSeamTexture(gl, seam, disparity, twist) {
   let entry = seamTextures.get(gl);
   if (!entry) {
     const tex = gl.createTexture();
@@ -29,15 +30,16 @@ function bindSeamTexture(gl, seam, disparity) {
   }
   gl.bindTexture(gl.TEXTURE_2D, entry.tex);
   const ok = (a) => Array.isArray(a) && a.length === SEAM_BINS;
-  const key = (ok(seam) ? seam.join() : '') + '|' + (ok(disparity) ? disparity.join() : '');
+  const key = [seam, disparity, twist].map((a) => (ok(a) ? a.join() : '')).join('|');
   if (key !== entry.key) {
-    const data = new Float32Array(SEAM_BINS * 2);
+    const data = new Float32Array(SEAM_BINS * 4);
     for (let i = 0; i < SEAM_BINS; i++) {
-      data[i * 2] = ok(seam) ? seam[i] * DEG : 0;
-      data[i * 2 + 1] = ok(disparity) ? disparity[i] * DEG : 0;
+      data[i * 4] = ok(seam) ? seam[i] * DEG : 0;
+      data[i * 4 + 1] = ok(disparity) ? disparity[i] * DEG : 0;
+      data[i * 4 + 2] = ok(twist) ? twist[i] * DEG : 0;
     }
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, SEAM_BINS, 1, 0, gl.RG, gl.FLOAT, data);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, SEAM_BINS, 1, 0, gl.RGBA, gl.FLOAT, data);
     entry.key = key;
   }
 }
@@ -181,7 +183,8 @@ export function setSourceUniforms(gl, u, source, srcType, params) {
   gl.uniform3fv(u.uGainA, gainArray(g && g.a));
   gl.uniform3fv(u.uGainB, gainArray(g && g.b));
   gl.activeTexture(gl.TEXTURE2);
-  bindSeamTexture(gl, srcType === 'fisheye' && p.seam, srcType === 'fisheye' && p.disparity);
+  const fe = srcType === 'fisheye';
+  bindSeamTexture(gl, fe && p.seam, fe && p.disparity, fe && p.twist);
   gl.uniform1i(u.uSeamTex, 2);
   gl.activeTexture(gl.TEXTURE0);
 }
