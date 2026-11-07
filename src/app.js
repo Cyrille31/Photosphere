@@ -499,10 +499,21 @@ async function openEditorView(id) {
   app.innerHTML = '';
   try {
     const fromViewer = state.returnToViewer;
+    const navigated = state.editorNav;
     state.returnToViewer = false;
+    state.editorNav = false;
     active = await openEditor(app, photo, {
       photos: state.photos,
-      initialView: fromViewer ? state.lastView : null,
+      initialView: fromViewer || navigated ? state.lastView : null,
+      onNavigate: (dir, view) => {
+        const list = state.photos;
+        const i = list.findIndex((x) => x.id === id);
+        const next = list[(i + dir + list.length) % list.length];
+        state.lastView = view;
+        state.returnToViewer = fromViewer;
+        state.editorNav = true;
+        location.hash = '#/edit/' + next.id;
+      },
       onDone: async (changed, view) => {
         // Retour là d'où l'on vient : la visionneuse (même photo, même direction) ou la bibliothèque.
         if (fromViewer) {

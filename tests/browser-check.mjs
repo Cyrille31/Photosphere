@@ -228,6 +228,36 @@ try {
   await page.waitForSelector('.ps-player canvas');
   check(page.url().endsWith('#/view/' + result.id), 'retour de l’éditeur vers la visionneuse');
   await page.waitForTimeout(1500);
+  // Flèches du clavier : photo suivante puis retour.
+  const t0 = await page.textContent('.ps-title');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(1200);
+  const t1 = await page.textContent('.ps-title');
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(1200);
+  check(t0 !== t1 && (await page.textContent('.ps-title')) === t0, `visionneuse, flèches du clavier : « ${t0} » → « ${t1} » → retour`);
+  // Éditeur : boutons et flèches, avec enregistrement automatique des modifications.
+  await page.click('.ps-edit');
+  await page.waitForSelector('.editor canvas');
+  await page.waitForFunction(() => document.querySelector('.ed-hint').hidden, null, { timeout: 30000 });
+  check((await page.textContent('.ed-count')).trim() === '1 / 2', 'éditeur : compteur de photos affiché');
+  await page.fill('.slider input[type=number][name=tiltSide]', '3');
+  await page.dispatchEvent('.slider input[type=number][name=tiltSide]', 'input');
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction((id) => !location.hash.endsWith(id), result.id);
+  await page.waitForSelector('.editor canvas');
+  const saved = await page.evaluate(async (id) => (await (await import('./src/db.js')).getPhoto(id)).params, result.id);
+  check(Math.abs(saved.roll) > 1 || Math.abs(saved.pitch) > 1, 'éditeur, flèche droite : photo suivante, modifications de la précédente enregistrées');
+  await page.click('.ed-nav.prev');
+  await page.waitForFunction((id) => location.hash.endsWith(id), result.id);
+  check(true, 'éditeur, bouton ‹ : retour à la photo précédente');
+  // Annule la bascule de test pour la suite.
+  await page.waitForSelector('[data-reset-level]');
+  await page.click('[data-reset-level]');
+  await page.click('[data-save]');
+  await page.waitForSelector('.ps-player canvas');
+  await page.waitForTimeout(1000);
   // Simule un téléphone tenu en mode paysage (capteurs d'orientation).
   await page.evaluate(() => {
     window.__orient = setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 20, beta: 90, gamma: 0 })), 50);

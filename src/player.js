@@ -408,6 +408,16 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
 
   const onResize = () => (dirty = true);
   window.addEventListener('resize', onResize);
+  // Flèches gauche / droite du clavier : photo précédente / suivante (la direction de vue est conservée).
+  const onKey = (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.target.closest && e.target.closest('input, select, textarea')) return;
+    if (!current || photos.length < 2) return;
+    e.preventDefault();
+    const i = photos.findIndex((x) => x.id === current.id);
+    go(photos[(i + (e.key === 'ArrowRight' ? 1 : -1) + photos.length) % photos.length].id);
+  };
+  window.addEventListener('keydown', onKey);
   setActive('touch');
   raf = requestAnimationFrame(loop);
   go(startId && byId.has(startId) ? startId : photos[0] && photos[0].id, false);
@@ -418,6 +428,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       disposed = true;
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKey);
       if (xrSession) xrSession.end().catch(() => {});
       lockScreen(false);
       controller.dispose();
