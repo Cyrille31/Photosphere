@@ -1,5 +1,5 @@
 // Service worker : fonctionnement hors connexion (réseau d'abord, cache en secours).
-const CACHE = 'photosphere-v5';
+const CACHE = 'photosphere-v6';
 const FILES = [
   './', 'index.html', 'app.css', 'player.css', 'manifest.webmanifest',
   'assets/logo.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable-512.png',

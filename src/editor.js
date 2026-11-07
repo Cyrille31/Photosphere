@@ -4,7 +4,7 @@ import { PanoRenderer } from './renderer.js';
 import { ViewController } from './controls.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
-import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg } from './math.js';
+import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap } from './math.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { newId } from './importer.js';
 
@@ -56,9 +56,9 @@ export async function openEditor(container, photo, { photos, onDone }) {
       <div class="ed-body">
         <section data-panel="level">
           <p class="note">Corrigez une photo prise caméra penchée : la ligne orange (horizon) doit être plate et les verticales droites. Utilisez la vue à plat et la grille pour vérifier.</p>
-          ${slider('pitch', 'Bascule avant / arrière (°)', -45, 45, 0.1)}
-          ${slider('roll', 'Bascule gauche / droite (°)', -45, 45, 0.1)}
-          ${slider('yaw', 'Cap : rotation horizontale (°)', -180, 180, 0.5)}
+          ${slider('tiltForward', 'Bascule avant / arrière, dans l’axe de la vue (°)', -45, 45, 0.1)}
+          ${slider('tiltSide', 'Bascule gauche / droite, dans l’axe de la vue (°)', -45, 45, 0.1)}
+          ${slider('cap', 'Cap : rotation horizontale (°)', -180, 180, 0.5)}
           <div class="tools">
             <button class="btn small" data-tool="horizon">📏 Horizon : 2 points</button>
             <button class="btn small" data-tool="verticals">📐 Verticales : 1 ou 2 lignes</button>
@@ -66,7 +66,8 @@ export async function openEditor(container, photo, { photos, onDone }) {
           </div>
           <p class="note"><b>Horizon</b> : cliquez deux points de l’horizon réel (mer, plaine), si possible éloignés d’environ 90°.<br>
           <b>Verticales</b> : cliquez le haut puis le bas d’un élément vertical (angle de mur, poteau, encadrement de porte), puis d’un second, de préférence dans une autre direction. Avec une seule ligne, appuyez sur « Appliquer ».<br>
-          <b>Cap</b> : alignez le nord (ou une direction commune) sur toutes vos photos pour des transitions naturelles entre elles.</p>
+          <b>Bascules</b> : elles s’appliquent par rapport au centre de la vue affichée. Tournez la vue vers un mur ou une porte, puis basculez jusqu’à ce que ses verticales soient droites ; les valeurs se mettent à jour quand vous tournez la vue.<br>
+          <b>Cap</b> : fait tourner la photo autour de la verticale sans toucher au redressement. Alignez le nord (ou une direction commune) sur toutes vos photos pour des transitions naturelles entre elles.</p>
         </section>
         <section data-panel="lens" hidden>
           <label class="field">Type d’image source
@@ -113,7 +114,10 @@ export async function openEditor(container, photo, { photos, onDone }) {
   let raf = 0;
 
   const controller = new ViewController(canvas, renderer, {
-    onChange: () => redraw(),
+    onChange: () => {
+      redraw();
+      syncInputs();
+    },
     onTap: (x, y) => onTap(x, y),
   });
   controller.fov = 90;
@@ -330,7 +334,15 @@ export async function openEditor(container, photo, { photos, onDone }) {
   }
 
   // ---------- champs ----------
+  // Cap de la direction au centre de la vue affichée (vue 360 ou vue à plat).
+  function viewHeading() {
+    return controller.mode === 'flat' ? (controller.flatCx - 0.5) * 360 : controller.yaw / DEG;
+  }
+
+  const TILT = { tiltForward: 'forward', tiltSide: 'side', cap: 'cap' };
+
   function getPath(path) {
+    if (TILT[path]) return levelToViewTilt(p.params, viewHeading())[TILT[path]];
     return path.split('.').reduce((o, k) => o[k], p.params);
   }
   function setPath(path, v) {
@@ -352,8 +364,13 @@ export async function openEditor(container, photo, { photos, onDone }) {
     i.addEventListener('input', () => {
       const v = parseFloat(i.value);
       if (!Number.isFinite(v)) return;
-      if (['yaw', 'pitch', 'roll'].includes(i.name)) {
-        setLevel({ ...p.params, [i.name]: v });
+      if (i.name === 'cap') {
+        setLevel(withCap(p.params, v));
+      } else if (TILT[i.name]) {
+        const h = viewHeading();
+        const t = levelToViewTilt(p.params, h);
+        t[TILT[i.name]] = v;
+        setLevel(viewTiltToLevel(t, h));
       } else {
         setPath(i.name, v);
         dirty = true;
