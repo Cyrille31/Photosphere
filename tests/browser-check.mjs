@@ -200,6 +200,22 @@ try {
   const roll = await page.inputValue('.slider input[type=number][name=tiltSide]');
   const pitch = await page.inputValue('.slider input[type=number][name=tiltForward]');
   check(Math.abs(+roll) < 0.6 && Math.abs(+pitch) < 0.6, `outil horizon : bascules ${roll}° et ${pitch}° (attendu ≈ 0)`);
+  // Défaire : revient à l'état d'avant l'outil horizon (bascule de 6°).
+  await page.click('[data-undo]');
+  await page.waitForTimeout(200);
+  const undone = +(await page.inputValue('.slider input[type=number][name=tiltSide]'));
+  check(Math.abs(undone - 6) < 0.3, `Défaire : bascule revenue à ${undone}° (avant l’outil horizon)`);
+  // Nord : dans la vue à plat, on touche le point de l'horizon situé à +90° (est actuel).
+  const capBefore = +(await page.inputValue('.slider input[type=number][name=cap]'));
+  await page.click('[data-north]');
+  await page.mouse.click(left + fw * 0.75, top + fh * 0.5);
+  await page.waitForTimeout(300);
+  const capAfter = +(await page.inputValue('.slider input[type=number][name=cap]'));
+  const nBox = await page.locator('.ed-cardinal.north').boundingBox();
+  check(Math.abs(Math.abs(capAfter - capBefore) - 90) < 3 && nBox && Math.abs(nBox.x + nBox.width / 2 - (box.x + box.width / 2)) < 15,
+    `nord indiqué d’un clic : cap ${capBefore.toFixed(1)}° → ${capAfter.toFixed(1)}°, « N » recentré`);
+  await page.click('[data-undo]');
+  await page.click('[data-undo]');
   // Lien vers la deuxième photo
   await page.click('[data-tab=links]');
   await page.click('[data-add-link]');
@@ -214,6 +230,33 @@ try {
     return (await db.listPhotos()).map((p) => p.hotspots.length);
   });
   check(links.join() === '1,1', 'lien aller et lien retour enregistrés');
+
+  console.log('Renommage et fichier de réglages');
+  await page.locator('.card .card-title').first().click();
+  await page.fill('.rename-input', 'Entrée du jardin');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.card-title')].some((t) => t.textContent.includes('Entrée du jardin')));
+  check(true, 'photo renommée depuis la bibliothèque');
+  // Exporte les réglages, abîme la bibliothèque, puis recharge le fichier.
+  const settingsJson = await page.evaluate(async () => {
+    const { buildSettings } = await import('./src/settings-file.js');
+    const db = await import('./src/db.js');
+    const photos = await db.listPhotos();
+    const data = buildSettings(photos);
+    for (const p of photos) await db.putPhoto({ ...p, name: 'x', params: { ...p.params, yaw: 77 }, hotspots: [] });
+    return JSON.stringify(data);
+  });
+  const settingsPath = path.join(shots, 'photosphere.json');
+  fs.writeFileSync(settingsPath, settingsJson);
+  check(settingsJson.length < 50000, `fichier de réglages léger (${(settingsJson.length / 1024).toFixed(1)} ko pour 2 photos)`);
+  await page.locator('input[type=file][accept^=".json"]').setInputFiles(settingsPath);
+  await page.waitForFunction(() => [...document.querySelectorAll('.card-title')].some((t) => t.textContent.includes('Entrée du jardin')), null, { timeout: 30000 });
+  const restored = await page.evaluate(async () => {
+    const db = await import('./src/db.js');
+    return (await db.listPhotos()).map((p) => ({ name: p.name, yaw: p.params.yaw, links: p.hotspots.length, targetOk: p.hotspots.every((h) => h.target) }));
+  });
+  check(restored.every((r) => r.name !== 'x' && r.yaw !== 77 && r.links === 1 && r.targetOk), 'réglages rechargés : noms, redressement et liens retrouvés');
+  await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 180000 });
 
   console.log('Visionneuse');
   await page.goto(base + '#/view/' + result.id);

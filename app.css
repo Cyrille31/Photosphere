@@ -61,7 +61,10 @@ body.dragging .empty, body.dragging .grid { outline: 3px dashed var(--accent); o
 .badge.err { background: var(--danger); }
 .progress { position: absolute; left: 0; bottom: 0; height: 4px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .2s; }
 .card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
-.card-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.card-title .rename-icon { font-size: 12px; opacity: .45; margin-left: 4px; }
+.card-title:hover .rename-icon { opacity: 1; }
+.rename-input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 6px; padding: 4px 6px; font: inherit; font-weight: 600; }
 .card-meta { font-size: 12px; color: var(--muted); }
 .card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
@@ -88,6 +91,9 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .ed-hint[hidden] { display: none; }
 .ed-markers { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .ed-marker { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; border: 2px solid #fff; background: var(--warn); box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+.ed-cardinal { position: absolute; transform: translate(-50%, -50%); min-width: 22px; padding: 2px 6px; border-radius: 6px; background: rgba(10, 16, 35, .8); color: #ffd166; font: 700 13px/1.2 system-ui, sans-serif; text-align: center; pointer-events: none; }
+.ed-cardinal.minor { color: #cfd6f3; font-weight: 500; font-size: 11px; }
+.ed-cardinal.north { background: #e5484d; color: #fff; font-size: 15px; }
 .ed-hot-label { position: absolute; transform: translate(-50%, 22px); background: rgba(10,16,35,.85); padding: 3px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; }
 .ed-panel { border-left: 1px solid var(--line); background: var(--bg2); display: flex; flex-direction: column; min-height: 0; }
 .ed-panel-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
