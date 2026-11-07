@@ -1,7 +1,7 @@
 // Import des photos (carte micro SD, galerie du téléphone, glisser-déposer) et file de conversion.
 import { decodeImage, DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { readExif, extractExifSegment, buildXmpSegment } from './metadata.js';
-import { renderPanorama } from './exporter.js';
+import { renderPanorama, abortError } from './exporter.js';
 import { autoCalibrate, CALIB_VERSION } from './calibrate.js';
 import * as db from './db.js';
 
@@ -60,11 +60,31 @@ function rgbHalves(img, size) {
 }
 
 // Calibrage automatique (objectifs + exposition) à partir de la photo brute.
-export async function calibrateFromBlob(blob, params) {
-  const img = await decodeImage(blob);
+export async function calibrateFromBlob(blob, params, shouldAbort) {
+  const img = await decodeImage(blob, 2000);
   const [A, B] = rgbHalves(img, 1000);
   if (img.close) img.close();
-  return autoCalibrate(A, B, { ...DEFAULT_LENS_PARAMS, ...params });
+  const start = { ...DEFAULT_LENS_PARAMS, ...params };
+  if (typeof Worker === 'undefined') return autoCalibrate(A, B, start);
+  // Le calcul tourne dans un worker pour ne pas figer l'affichage.
+  const worker = new Worker(new URL('./calibrate-worker.js', import.meta.url), { type: 'module' });
+  let timer = 0;
+  try {
+    return await new Promise((resolve, reject) => {
+      timer = setInterval(() => {
+        if (shouldAbort && shouldAbort()) reject(abortError());
+      }, 200);
+      worker.onmessage = (e) => {
+        if (e.data.error) reject(new Error(e.data.error));
+        else resolve(e.data.patch);
+      };
+      worker.onerror = (e) => reject(new Error(e.message || 'Erreur du calibrage'));
+      worker.postMessage({ A: A.data.buffer, B: B.data.buffer, size: A.size, start }, [A.data.buffer, B.data.buffer]);
+    });
+  } finally {
+    clearInterval(timer);
+    worker.terminate();
+  }
 }
 
 export async function lensDefaults(model) {
@@ -135,11 +155,11 @@ export async function importFiles(files, onProgress) {
   return { added, skipped };
 }
 
-export async function convertPhoto(photo, settings, onProgress) {
+export async function convertPhoto(photo, settings, onProgress, shouldAbort) {
   const orig = await db.getBlob(photo.id + ':orig');
   if (!orig) throw new Error('Fichier original introuvable');
   if (photo.srcType === 'fisheye' && (!photo.params.autoCalibrated || photo.params.calibVersion !== CALIB_VERSION)) {
-    const patch = await calibrateFromBlob(orig, photo.params);
+    const patch = await calibrateFromBlob(orig, photo.params, shouldAbort);
     const cur = await db.getPhoto(photo.id);
     photo = { ...cur, params: { ...cur.params, ...patch, autoCalibrated: true } };
     await db.putPhoto(photo);
@@ -160,6 +180,7 @@ export async function convertPhoto(photo, settings, onProgress) {
     quality: settings.quality || 92,
     segments,
     onProgress,
+    shouldAbort,
   });
   await db.putBlob(photo.id + ':out', blob);
   await db.putBlob(photo.id + ':thumb', thumb);

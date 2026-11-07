@@ -3,9 +3,15 @@
 import { VERT_SRC, EXPORT_FRAG_SRC } from './shaders.js';
 import { compileProgram, createQuad, decodeImage, splitHalves, uploadHalves, deleteSource, setSourceUniforms } from './gl-source.js';
 
-const BAND = 256; // multiple de 16 (taille des blocs JPEG 4:2:0)
+const BAND = 256;
 
-export async function renderPanorama({ src, srcType, params, width = 7776, height = 3888, quality = 92, segments = [], thumbWidth = 1024, onProgress }) {
+export function abortError() {
+  const e = new Error('Conversion interrompue');
+  e.aborted = true;
+  return e;
+} // multiple de 16 (taille des blocs JPEG 4:2:0)
+
+export async function renderPanorama({ src, srcType, params, width = 7776, height = 3888, quality = 92, segments = [], thumbWidth = 1024, onProgress, shouldAbort }) {
   const img = await decodeImage(src);
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 1;
@@ -71,6 +77,9 @@ export async function renderPanorama({ src, srcType, params, width = 7776, heigh
     for (let y0 = 0; y0 < height; y0 += BAND) {
       // Limite la mémoire : au plus deux bandes en attente d'encodage.
       while (y0 - rowsEncoded > BAND * 2) await new Promise((r) => (waiting = r));
+      // Laisse la main à l'affichage entre deux bandes, et s'interrompt si l'utilisateur ouvre une photo.
+      await new Promise((r) => setTimeout(r, 0));
+      if (shouldAbort && shouldAbort()) throw abortError();
       const rows = Math.min(BAND, height - y0);
       const band = new Uint8Array(width * rows * 4);
       for (let x0 = 0; x0 < width; x0 += tileW) {

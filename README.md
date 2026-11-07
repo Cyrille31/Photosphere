@@ -15,7 +15,7 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
   - le JPEG produit contient les métadonnées **XMP GPano** (reconnu comme photosphère par Google Photos, Facebook, les visionneuses VR…) et conserve l’EXIF d’origine (date, GPS).
 - **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
 - **Liens** entre photos : on touche l’endroit (porte, passage) qui mène à une autre photo ; lien retour créé automatiquement.
-- **Visionneuse** :
+- **Visionneuse** (bouton ✏ Éditer pour redresser la photo affichée ou y ajouter un lien, puis revenir au même endroit) :
   - *Tactile* : doigt / souris, pincer ou molette pour zoomer ;
   - *Bout de bras* : on bouge le téléphone (gyroscope) ;
   - *Casque VR* : écran partagé avec correction des lentilles pour casques type Cardboard ; on fixe un lien 1,5 s pour y aller (ou bouton du casque) ;

@@ -59,9 +59,14 @@ async function thumbUrl(p) {
 }
 
 // ---------- file de conversion ----------
+// Les conversions ne tournent que sur la bibliothèque : dans la visionneuse ou l'éditeur, elles
+// saccaderaient l'affichage et chargeraient la mémoire. Elles reprennent au retour.
+const queuePaused = () => state.view !== 'library';
+
 async function processQueue() {
   if (state.converting) return;
   for (;;) {
+    if (queuePaused()) break;
     const next = (await db.listPhotos()).find((p) => p.status === 'pending');
     if (!next) break;
     state.converting = next.id;
@@ -74,8 +79,12 @@ async function processQueue() {
         if (bar) bar.style.width = Math.round(f * 100) + '%';
         const badge = document.querySelector(`[data-id="${next.id}"] .badge.status`);
         if (badge) badge.textContent = `Conversion ${Math.round(f * 100)} %`;
-      });
+      }, queuePaused);
     } catch (e) {
+      if (e.aborted) {
+        state.converting = null;
+        break;
+      }
       console.error(e);
       const cur = await db.getPhoto(next.id);
       if (cur) await db.putPhoto({ ...cur, status: 'error', error: e.message });
@@ -459,7 +468,13 @@ async function openViewer(id) {
       photos: list,
       startId: id,
       title: 'PhotoSphère',
+      initialView: state.lastView,
       onExit: () => (location.hash = '#/'),
+      onEdit: (photoId, view) => {
+        state.lastView = view;
+        state.returnToViewer = true;
+        location.hash = '#/edit/' + photoId;
+      },
     });
     active = {
       dispose() {
@@ -483,12 +498,17 @@ async function openEditorView(id) {
   state.view = 'editor';
   app.innerHTML = '';
   try {
+    const fromViewer = state.returnToViewer;
+    state.returnToViewer = false;
     active = await openEditor(app, photo, {
       photos: state.photos,
-      onDone: async (changed) => {
-        location.hash = '#/';
-        await refresh();
-        if (changed) processQueue();
+      initialView: fromViewer ? state.lastView : null,
+      onDone: async (changed, view) => {
+        // Retour là d'où l'on vient : la visionneuse (même photo, même direction) ou la bibliothèque.
+        if (fromViewer) {
+          state.lastView = view;
+          location.hash = '#/view/' + id;
+        } else location.hash = '#/';
       },
     });
   } catch (e) {
@@ -498,17 +518,19 @@ async function openEditorView(id) {
 }
 
 async function route() {
+  const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
+  // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo.
+  state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : 'library';
   if (active) {
     const a = active;
     active = null;
     await a.dispose();
   }
-  const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
   await refresh();
   if (m && m[1] === 'view') return openViewer(m[2]);
   if (m && m[1] === 'edit') return openEditorView(m[2]);
-  state.view = 'library';
   renderLibrary();
+  processQueue();
 }
 
 window.addEventListener('hashchange', route);

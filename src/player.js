@@ -29,7 +29,8 @@ function saveHeadsetSettings(h) {
 }
 
 // photos : [{ id, name, src, srcType, params, hotspots: [{ target, yaw, pitch, label }] }]
-export function createPlayer(container, { photos, startId, onExit, title }) {
+// onEdit(id, vue) : ouvre l'éditeur sur la photo affichée ; initialView : { yaw, pitch } en radians.
+export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
@@ -40,6 +41,7 @@ export function createPlayer(container, { photos, startId, onExit, title }) {
     <div class="ps-top">
       ${onExit ? '<button class="ps-btn ps-back" title="Retour">←</button>' : ''}
       <div class="ps-title"></div>
+      ${onEdit ? '<button class="ps-btn ps-edit" title="Redresser cette photo ou y ajouter des liens">✏<span>Éditer</span></button>' : ''}
       <button class="ps-btn ps-list-btn" title="Liste des photos">☰</button>
     </div>
     <div class="ps-bottom">
@@ -65,7 +67,14 @@ export function createPlayer(container, { photos, startId, onExit, title }) {
   const $ = (s) => root.querySelector(s);
   const canvas = $('.ps-canvas');
   const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-  const renderer = new PanoRenderer(canvas, { xr: true, maxHalf: coarse ? 3072 : 4096 });
+  const renderer = new PanoRenderer(canvas, {
+    xr: true,
+    maxHalf: coarse ? 3072 : 4096,
+    onLost: () => {
+      toast('La carte graphique a interrompu l’affichage : rechargement…');
+      setTimeout(() => location.reload(), 1500);
+    },
+  });
   let current = null;
   let dirty = true;
   let sel = -1;
@@ -107,7 +116,10 @@ export function createPlayer(container, { photos, startId, onExit, title }) {
     } catch (e) {
       toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
     }
-    if (!keepView || !current) {
+    if (!current && initialView) {
+      controller.yaw = initialView.yaw;
+      controller.pitch = initialView.pitch;
+    } else if (!keepView || !current) {
       controller.yaw = (photo.initialYaw || 0) * DEG;
       controller.pitch = 0;
     }
@@ -343,6 +355,13 @@ export function createPlayer(container, { photos, startId, onExit, title }) {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   });
   if (onExit) $('.ps-back').addEventListener('click', () => onExit(current && current.id));
+  if (onEdit) {
+    $('.ps-edit').addEventListener('click', () => {
+      if (!current) return;
+      const m = controller.camMatrix();
+      onEdit(current.id, { yaw: headingOf(m), pitch: Math.asin(Math.max(-1, Math.min(1, m[5]))) });
+    });
+  }
 
   const list = $('.ps-list');
   $('.ps-list-btn').addEventListener('click', () => {

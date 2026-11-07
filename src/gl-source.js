@@ -94,9 +94,40 @@ export async function blobFromSource(src) {
   return res.blob();
 }
 
-export async function decodeImage(src) {
+// Dimensions d'un JPEG lues dans son en-tête (marqueur SOF), sans décoder l'image.
+async function jpegSize(blob) {
+  const b = new Uint8Array(await blob.slice(0, 512 * 1024).arrayBuffer());
+  if (b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let p = 2;
+  while (p + 9 < b.length) {
+    if (b[p] !== 0xff) return null;
+    const m = b[p + 1];
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+      return { height: (b[p + 5] << 8) | b[p + 6], width: (b[p + 7] << 8) | b[p + 8] };
+    }
+    p += 2 + ((b[p + 2] << 8) | b[p + 3]);
+  }
+  return null;
+}
+
+// maxWidth : décode directement à taille réduite (beaucoup moins de mémoire qu'une image de 30 Mpx).
+export async function decodeImage(src, maxWidth = 0) {
   const blob = await blobFromSource(src);
   if (typeof createImageBitmap === 'function') {
+    if (maxWidth) {
+      try {
+        const size = await jpegSize(blob);
+        if (size && size.width > maxWidth) {
+          return await createImageBitmap(blob, {
+            resizeWidth: maxWidth,
+            resizeHeight: Math.round((maxWidth * size.height) / size.width),
+            resizeQuality: 'high',
+          });
+        }
+      } catch (e) {
+        // repli sur le décodage complet
+      }
+    }
     try {
       return await createImageBitmap(blob);
     } catch (e) {

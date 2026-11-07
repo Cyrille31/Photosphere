@@ -3,12 +3,20 @@ import { VERT_SRC, VIEW_FRAG_SRC, MAX_HOTSPOTS } from './shaders.js';
 import { compileProgram, createQuad, decodeImage, splitHalves, uploadHalves, deleteSource, setSourceUniforms } from './gl-source.js';
 import { mat3Apply, mat3Transpose, mat3Identity, vecNormalize, dirFromLonLat, lonLatFromDir, DEG } from './math.js';
 
+const MAX_RENDER_PIXELS = 4.2e6;
+
 export class PanoRenderer {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, xrCompatible: !!options.xr, preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 n’est pas disponible sur cet appareil.');
     this.gl = gl;
+    // Perte du contexte (mémoire graphique saturée, pilote réinitialisé) : on prévient l'appelant.
+    this.disposed = false;
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      if (!this.disposed && options.onLost) options.onLost();
+    });
     const { prog, uniforms } = compileProgram(gl, VERT_SRC, VIEW_FRAG_SRC);
     this.prog = prog;
     this.u = uniforms;
@@ -23,7 +31,7 @@ export class PanoRenderer {
 
   async load(src, srcType = 'equirect', params = {}) {
     const token = ++this.loadToken;
-    const img = await decodeImage(src);
+    const img = await decodeImage(src, this.maxHalf * 2);
     if (token !== this.loadToken) return false;
     const split = splitHalves(img, this.maxHalf);
     if (img.close) img.close();
@@ -47,7 +55,10 @@ export class PanoRenderer {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Plafond de pixels rendus : sur un très grand écran, la fluidité prime sur la définition.
+    const cssPx = (this.canvas.clientWidth || 1) * (this.canvas.clientHeight || 1);
+    dpr = Math.min(dpr, Math.sqrt(MAX_RENDER_PIXELS / cssPx));
     const w = Math.max(1, Math.round(this.canvas.clientWidth * dpr));
     const h = Math.max(1, Math.round(this.canvas.clientHeight * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) {
@@ -137,6 +148,7 @@ export class PanoRenderer {
   }
 
   dispose() {
+    this.disposed = true;
     deleteSource(this.gl, this.source);
     this.source = null;
     const ext = this.gl.getExtension('WEBGL_lose_context');
