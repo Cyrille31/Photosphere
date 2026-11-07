@@ -25,7 +25,8 @@ function lensFields(key, title) {
   </fieldset>`;
 }
 
-export async function openEditor(container, photo, { photos, onDone, initialView }) {
+// onNavigate(sens, vue) : passe à la photo précédente (-1) ou suivante (+1), après enregistrement.
+export async function openEditor(container, photo, { photos, onDone, onNavigate, initialView }) {
   const p = clone(photo);
   p.params = { yaw: 0, pitch: 0, roll: 0, ...clone(DEFAULT_LENS_PARAMS), ...p.params };
   p.hotspots = p.hotspots || [];
@@ -33,6 +34,13 @@ export async function openEditor(container, photo, { photos, onDone, initialView
   const reverseLinks = []; // { target, yaw, pitch }
   let dirty = false;
 
+  const index = photos.findIndex((x) => x.id === p.id);
+  const navButtons =
+    onNavigate && photos.length > 1
+      ? `<button class="ed-nav prev" data-nav="-1" title="Photo précédente (flèche gauche)" aria-label="Photo précédente">‹</button>
+         <button class="ed-nav next" data-nav="1" title="Photo suivante (flèche droite)" aria-label="Photo suivante">›</button>
+         <div class="ed-count">${index + 1} / ${photos.length}</div>`
+      : '';
   container.innerHTML = `<div class="editor">
     <div class="ed-stage">
       <canvas></canvas>
@@ -43,6 +51,7 @@ export async function openEditor(container, photo, { photos, onDone, initialView
         <button class="btn small" data-grid>▦ Grille</button>
       </div>
       <div class="ed-hint" hidden></div>
+      ${navButtons}
     </div>
     <aside class="ed-panel">
       <div class="ed-panel-head">
@@ -468,7 +477,7 @@ export async function openEditor(container, photo, { photos, onDone, initialView
     onDone(false, currentView());
   });
 
-  $('[data-save]').addEventListener('click', async () => {
+  async function save() {
     const cur = await db.getPhoto(p.id);
     const imageChanged = cur.srcType !== p.srcType || JSON.stringify(cur.params) !== JSON.stringify(p.params);
     const updated = {
@@ -487,9 +496,35 @@ export async function openEditor(container, photo, { photos, onDone, initialView
       await db.putPhoto({ ...t, hotspots: [...(t.hotspots || []), { id: newId(), target: p.id, label: '', yaw: r.yaw, pitch: r.pitch }] });
     }
     dirty = false;
-    if (imageChanged) toast('Enregistré. La photo sera reconvertie dès le retour à la bibliothèque.');
+    return imageChanged;
+  }
+
+  $('[data-save]').addEventListener('click', async () => {
+    if (await save()) toast('Enregistré. La photo sera reconvertie dès le retour à la bibliothèque.');
     onDone(true, currentView());
   });
+
+  // Photo précédente / suivante : les modifications en cours sont enregistrées automatiquement.
+  let navigating = false;
+  async function navigate(dir) {
+    if (navigating || !onNavigate || photos.length < 2) return;
+    navigating = true;
+    if (dirty) {
+      await save();
+      toast('Modifications de « ' + ($('[name=title]').value.trim() || p.name) + ' » enregistrées.');
+    }
+    onNavigate(dir, currentView());
+  }
+  $$('[data-nav]').forEach((b) => b.addEventListener('click', () => navigate(+b.dataset.nav)));
+  const onKey = (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    // Les flèches gardent leur rôle dans un champ (curseurs, nom de la photo) ou une fenêtre ouverte.
+    if (e.target.closest && e.target.closest('input, select, textarea, dialog')) return;
+    if (document.querySelector('dialog[open]')) return;
+    e.preventDefault();
+    navigate(e.key === 'ArrowRight' ? 1 : -1);
+  };
+  window.addEventListener('keydown', onKey);
 
   const beforeUnload = (e) => {
     if (dirty) e.preventDefault();
@@ -510,6 +545,7 @@ export async function openEditor(container, photo, { photos, onDone, initialView
   return {
     dispose() {
       cancelAnimationFrame(raf);
+      window.removeEventListener('keydown', onKey);
       window.removeEventListener('beforeunload', beforeUnload);
       window.removeEventListener('resize', onResize);
       controller.dispose();
