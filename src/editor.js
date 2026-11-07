@@ -25,7 +25,7 @@ function lensFields(key, title) {
   </fieldset>`;
 }
 
-export async function openEditor(container, photo, { photos, onDone }) {
+export async function openEditor(container, photo, { photos, onDone, initialView }) {
   const p = clone(photo);
   p.params = { yaw: 0, pitch: 0, roll: 0, ...clone(DEFAULT_LENS_PARAMS), ...p.params };
   p.hotspots = p.hotspots || [];
@@ -107,7 +107,13 @@ export async function openEditor(container, photo, { photos, onDone }) {
   const $$ = (s) => [...container.querySelectorAll(s)];
   const stage = $('.ed-stage');
   const canvas = stage.querySelector('canvas');
-  const renderer = new PanoRenderer(canvas, { maxHalf: matchMedia('(pointer: coarse)').matches ? 2048 : 4096 });
+  const renderer = new PanoRenderer(canvas, {
+    maxHalf: matchMedia('(pointer: coarse)').matches ? 2048 : 3072,
+    onLost: () => {
+      toast('La carte graphique a interrompu l’affichage : rechargement de l’éditeur…', true);
+      setTimeout(() => location.reload(), 1500);
+    },
+  });
   let tool = null; // { kind, points: [] }
   let placing = null; // { kind: 'add' | 'move', index }
   let grid = true;
@@ -121,6 +127,11 @@ export async function openEditor(container, photo, { photos, onDone }) {
     onTap: (x, y) => onTap(x, y),
   });
   controller.fov = 90;
+  if (initialView) {
+    controller.yaw = initialView.yaw;
+    controller.pitch = initialView.pitch;
+  }
+  const currentView = () => ({ yaw: controller.yaw, pitch: controller.pitch });
 
   function redraw() {
     if (raf) return;
@@ -454,7 +465,7 @@ export async function openEditor(container, photo, { photos, onDone }) {
 
   $('[data-cancel]').addEventListener('click', () => {
     if (dirty && !confirm('Abandonner les modifications ?')) return;
-    onDone(false);
+    onDone(false, currentView());
   });
 
   $('[data-save]').addEventListener('click', async () => {
@@ -476,8 +487,8 @@ export async function openEditor(container, photo, { photos, onDone }) {
       await db.putPhoto({ ...t, hotspots: [...(t.hotspots || []), { id: newId(), target: p.id, label: '', yaw: r.yaw, pitch: r.pitch }] });
     }
     dirty = false;
-    if (imageChanged) toast('Enregistré. Reconversion en cours…');
-    onDone(true);
+    if (imageChanged) toast('Enregistré. La photo sera reconvertie dès le retour à la bibliothèque.');
+    onDone(true, currentView());
   });
 
   const beforeUnload = (e) => {

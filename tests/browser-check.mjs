@@ -220,6 +220,14 @@ try {
   await page.waitForSelector('.ps-player canvas');
   await page.waitForTimeout(1500);
   await page.screenshot({ path: path.join(shots, '05-visionneuse.png') });
+  // Bouton Éditer de la visionneuse, puis retour à la même photo.
+  await page.click('.ps-edit');
+  await page.waitForSelector('.editor canvas');
+  check(page.url().endsWith('#/edit/' + result.id), 'bouton Éditer de la visionneuse : éditeur ouvert sur la photo affichée');
+  await page.click('[data-cancel]');
+  await page.waitForSelector('.ps-player canvas');
+  check(page.url().endsWith('#/view/' + result.id), 'retour de l’éditeur vers la visionneuse');
+  await page.waitForTimeout(1500);
   // Simule un téléphone tenu en mode paysage (capteurs d'orientation).
   await page.evaluate(() => {
     window.__orient = setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 20, beta: 90, gamma: 0 })), 50);
