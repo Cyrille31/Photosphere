@@ -6,6 +6,7 @@ import { openEditor } from './editor.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
+import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
 const app = document.getElementById('app');
 const state = {
@@ -104,10 +105,20 @@ export async function requeue(photo) {
 // ---------- import ----------
 async function handleFiles(files) {
   if (!files || !files.length) return;
-  const b = busy('Import des photos');
+  // Un fichier de réglages (photosphere.json) importé avec les photos est appliqué après elles.
+  const settingsFiles = [...files].filter(isSettingsFile);
+  const images = [...files].filter((f) => !isSettingsFile(f));
+  const b = busy(images.length ? 'Import des photos' : 'Chargement des réglages');
   try {
-    const { added, skipped } = await importFiles(files, b.update);
+    const { added, skipped } = images.length ? await importFiles(images, b.update) : { added: [], skipped: [] };
+    let settingsMsg = '';
+    for (const f of settingsFiles) {
+      const r = await applySettings(await readSettingsFile(f));
+      settingsMsg += `Réglages de « ${f.name} » appliqués à ${r.applied} photo(s).`;
+      if (r.unmatched.length) settingsMsg += ` ${r.unmatched.length} photo(s) du fichier absente(s) de la bibliothèque (${r.unmatched.slice(0, 3).join(', ')}${r.unmatched.length > 3 ? '…' : ''}).`;
+    }
     b.close();
+    if (settingsMsg) toast(settingsMsg, false, 8000);
     if (added.length) toast(`${added.length} photo(s) importée(s). Conversion en ${state.settings.outWidth} × ${state.settings.outWidth / 2} en cours…`);
     if (skipped.length) {
       const shown = skipped.filter((s) => s.reason !== 'déjà importée');
@@ -135,7 +146,8 @@ function fileInput(attrs, onFiles) {
   return i;
 }
 
-const pickPhotos = fileInput({ accept: 'image/jpeg,.jpg,.jpeg', multiple: '' }, handleFiles);
+const pickPhotos = fileInput({ accept: 'image/jpeg,.jpg,.jpeg,.json,application/json', multiple: '' }, handleFiles);
+const pickSettings = fileInput({ accept: '.json,application/json' }, handleFiles);
 const pickFolder = fileInput({ webkitdirectory: '', multiple: '' }, handleFiles);
 const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) => {
   if (!files[0]) return;
@@ -150,7 +162,7 @@ const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) 
   await refresh();
   processQueue();
 });
-document.body.append(pickPhotos, pickFolder, pickProject);
+document.body.append(pickPhotos, pickFolder, pickProject, pickSettings);
 const supportsFolder = 'webkitdirectory' in document.createElement('input') && !matchMedia('(pointer: coarse)').matches;
 
 // Glisser-déposer
@@ -234,7 +246,9 @@ async function renderLibrary() {
         <div class="menu-list" hidden>
           <button data-act="export-tour">🌐 Visite autonome (fichier HTML)<small>Un seul fichier à partager : s’ouvre sur smartphone, PC, casque VR</small></button>
           <button data-act="export-zip">🖼 Toutes les photos JPEG (ZIP)<small>${state.settings.outWidth} × ${state.settings.outWidth / 2}, métadonnées photosphère</small></button>
-          <button data-act="export-project">💾 Sauvegarder le projet<small>Pour le transférer vers le téléphone ou un autre appareil</small></button>
+          <button data-act="export-settings">📝 Exporter les réglages (${SETTINGS_FILE_NAME})<small>Fichier léger à ranger avec vos photos d’origine : réimportez le dossier pour tout retrouver</small></button>
+          <button data-act="load-settings">📂 Charger des réglages (${SETTINGS_FILE_NAME})<small>Applique un fichier de réglages aux photos déjà importées</small></button>
+          <button data-act="export-project">💾 Sauvegarder le projet complet (ZIP)<small>Photos comprises : volumineux, pour transférer vers un autre appareil</small></button>
           <button data-act="restore">♻ Restaurer une sauvegarde</button>
         </div>
       </div>
@@ -249,7 +263,7 @@ async function renderLibrary() {
           <div class="progress" style="width:${state.converting === p.id ? Math.round(state.progress * 100) : 0}%"></div>
         </div>
         <div class="card-body">
-          <div class="card-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+          <div class="card-title" data-act="rename" title="Cliquer pour renommer">${escapeHtml(p.name)} <span class="rename-icon">✏</span></div>
           <div class="card-meta">${formatDate(p.takenAt)}${p.model ? ' · ' + escapeHtml(p.model) : ''} · source ${p.srcWidth} × ${p.srcHeight}</div>
           <div class="card-actions">
             <button class="btn small" data-act="view">👁 Voir</button>
@@ -267,6 +281,36 @@ async function renderLibrary() {
     const img = app.querySelector(`[data-id="${p.id}"] img`);
     if (img) img.src = await thumbUrl(p);
   }
+}
+
+// Renommage directement sur la carte : Entrée valide, Échap annule.
+function renamePhoto(p, titleEl) {
+  if (titleEl.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'rename-input';
+  input.value = p.name;
+  input.setAttribute('aria-label', 'Nom de la photo');
+  titleEl.replaceChildren(input);
+  input.focus();
+  input.select();
+  let finished = false;
+  const finish = async (save) => {
+    if (finished) return;
+    finished = true;
+    const name = input.value.trim();
+    if (save && name && name !== p.name) {
+      const cur = await db.getPhoto(p.id);
+      if (cur) await db.putPhoto({ ...cur, name });
+    }
+    await refresh();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
 }
 
 function bindLibrary() {
@@ -300,6 +344,8 @@ async function onAction(act, p, el) {
     case 'view':
       location.hash = '#/view/' + p.id;
       return;
+    case 'rename':
+      return renamePhoto(p, el);
     case 'edit':
       location.hash = '#/edit/' + p.id;
       return;
@@ -325,6 +371,12 @@ async function onAction(act, p, el) {
       }
       return b.close();
     }
+    case 'export-settings':
+      download(settingsBlob(state.photos), SETTINGS_FILE_NAME);
+      toast(`Rangez « ${SETTINGS_FILE_NAME} » dans le dossier de vos photos d’origine. Pour tout retrouver, importez ce dossier (ou les photos avec ce fichier).`, false, 9000);
+      return;
+    case 'load-settings':
+      return pickSettings.click();
     case 'export-project': {
       const b = busy('Sauvegarde du projet');
       try {
@@ -394,6 +446,7 @@ function showHelp() {
       <li>Dans l’onglet <b>Liens</b>, touchez l’endroit (porte, chemin…) qui mène à une autre photo. Le lien retour peut être créé automatiquement.</li>
       <li><b>Visiter</b> : mode <i>Tactile</i> (doigt/souris), <i>Bout de bras</i> (bougez le téléphone), <i>Casque VR</i> (écran partagé pour casque type Cardboard : fixez un lien pendant 1,5 s pour y aller, ou appuyez sur le bouton du casque).</li>
       <li><b>Exporter</b> une visite autonome (.html), les JPEG, ou une sauvegarde pour passer sur le téléphone.</li>
+      <li><b>Conserver vos réglages</b> : « Exporter les réglages » crée un petit fichier <code>photosphere.json</code> (redressement, nord, calibrage, liens, noms). Rangez-le avec vos photos d’origine, qui ne sont jamais modifiées ; en réimportant le dossier (ou les photos avec ce fichier), tout est retrouvé.</li>
     </ol>
     <p class="note">Sur smartphone, ajoutez PhotoSphère à l’écran d’accueil pour l’utiliser en plein écran et hors connexion. Les photos restent stockées sur l’appareil.</p>
     <div class="row"><button class="btn primary" data-close>Fermer</button></div>`);

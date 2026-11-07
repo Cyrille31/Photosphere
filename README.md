@@ -14,12 +14,15 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
   - les photos déjà assemblées (application Samsung) sont remises à la bonne taille ;
   - le JPEG produit contient les métadonnées **XMP GPano** (reconnu comme photosphère par Google Photos, Facebook, les visionneuses VR…) et conserve l’EXIF d’origine (date, GPS).
 - **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
+- **Nord** : points cardinaux sur l'horizon de l'éditeur ; « Indiquer le nord » puis un clic dans l'image règle le cap.
+- **Défaire** (bouton ou Ctrl+Z) la dernière action de l'éditeur ; renommage des photos directement dans la bibliothèque.
 - **Liens** entre photos : on touche l’endroit (porte, passage) qui mène à une autre photo ; lien retour créé automatiquement.
 - **Visionneuse** (bouton ✏ Éditer pour redresser la photo affichée ou y ajouter un lien, puis revenir au même endroit) :
   - *Tactile* : doigt / souris, pincer ou molette pour zoomer ;
   - *Bout de bras* : on bouge le téléphone (gyroscope) ;
   - *Casque VR* : écran partagé avec correction des lentilles pour casques type Cardboard ; on fixe un lien 1,5 s pour y aller (ou bouton du casque) ;
   - *WebXR* natif quand le navigateur le propose.
+- **Fichier de réglages** `photosphere.json` (≈ 11 ko par photo) : à ranger avec les photos d'origine, jamais modifiées. En réimportant le dossier (ou les photos avec ce fichier), redressement, nord, calibrage, liens et noms sont retrouvés.
 - **Exports** : visite autonome en un seul fichier `.html` (s’ouvre partout, même en local), ZIP des JPEG, sauvegarde/restauration du projet pour passer du PC au téléphone.
 
 ## Et le Bluetooth ?

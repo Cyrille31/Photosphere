@@ -10,6 +10,10 @@ import { newId } from './importer.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
+// Points cardinaux affichés sur l'horizon : par convention, le nord est la longitude 0 de la photo
+// corrigée (le centre de l'image à plat), l'est à droite.
+const CARDINALS = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+
 function slider(name, label, min, max, step) {
   return `<label class="slider"><span>${label}</span>
     <input type="range" name="${name}" min="${min}" max="${max}" step="${step}">
@@ -49,6 +53,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         <button class="btn small" data-view="persp">🌐 Vue 360</button>
         <button class="btn small" data-view="flat">🗺 Vue à plat</button>
         <button class="btn small" data-grid>▦ Grille</button>
+        <button class="btn small" data-undo disabled title="Défaire la dernière action (Ctrl+Z)">↶ Défaire</button>
       </div>
       <div class="ed-hint" hidden></div>
       ${navButtons}
@@ -73,10 +78,14 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
             <button class="btn small" data-tool="verticals">📐 Verticales : 1 ou 2 lignes</button>
             <button class="btn small" data-reset-level>↺ Réinitialiser</button>
           </div>
+          <div class="tools">
+            <button class="btn small" data-north>🧭 Indiquer le nord</button>
+          </div>
           <p class="note"><b>Horizon</b> : cliquez deux points de l’horizon réel (mer, plaine), si possible éloignés d’environ 90°.<br>
           <b>Verticales</b> : cliquez le haut puis le bas d’un élément vertical (angle de mur, poteau, encadrement de porte), puis d’un second, de préférence dans une autre direction. Avec une seule ligne, appuyez sur « Appliquer ».<br>
           <b>Bascules</b> : elles s’appliquent par rapport au centre de la vue affichée. Tournez la vue vers un mur ou une porte, puis basculez jusqu’à ce que ses verticales soient droites ; les valeurs se mettent à jour quand vous tournez la vue.<br>
-          <b>Cap</b> : fait tourner la photo autour de la verticale sans toucher au redressement. Alignez le nord (ou une direction commune) sur toutes vos photos pour des transitions naturelles entre elles.</p>
+          <b>Nord / cap</b> : la caméra n’a pas de boussole, c’est à vous d’indiquer le nord (repéré sur un plan, une carte ou avec la boussole du téléphone). Cliquez « Indiquer le nord » puis touchez sa direction dans l’image ; le « N » rouge s’y place et le curseur de cap permet d’affiner. Avec le même nord sur toutes vos photos, on garde la bonne direction en passant de l’une à l’autre.<br>
+          <b>Défaire</b> (Ctrl+Z) annule la dernière action : bascule, outil horizon ou verticales, lien…</p>
         </section>
         <section data-panel="lens" hidden>
           <label class="field">Type d’image source
@@ -163,6 +172,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const s = renderer.project(d, frame);
       if (s) html += `<div class="ed-marker" style="left:${s.x / dpr}px;top:${s.y / dpr}px"></div>`;
     });
+    CARDINALS.forEach((name, k) => {
+      const s = renderer.project(dirFromLonLat(k * 45 * DEG, 0), frame);
+      if (s) html += `<div class="ed-cardinal${k === 0 ? ' north' : ''}${k % 2 ? ' minor' : ''}" style="left:${s.x / dpr}px;top:${s.y / dpr}px">${name}</div>`;
+    });
     p.hotspots.forEach((h) => {
       const s = renderer.project(dirFromLonLat(h.yaw * DEG, h.pitch * DEG), frame);
       const t = photos.find((x) => x.id === h.target);
@@ -176,6 +189,40 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     h.hidden = !msg;
     h.innerHTML = msg || '';
     stage.classList.toggle('picking', !!msg);
+  }
+
+  // ---------- historique (Défaire) ----------
+  // Un instantané est pris avant chaque action ; les réglages continus d'un même curseur sont regroupés.
+  const history = [];
+  let lastKey = '', lastTime = 0;
+  function snapshot(key = '') {
+    const now = performance.now();
+    if (key && key === lastKey && now - lastTime < 1000) {
+      lastTime = now;
+      return;
+    }
+    lastKey = key;
+    lastTime = now;
+    history.push(clone({ params: p.params, srcType: p.srcType, hotspots: p.hotspots, reverse: reverseLinks.length }));
+    if (history.length > 60) history.shift();
+    updateUndo();
+  }
+  function undo() {
+    const s = history.pop();
+    if (!s) return;
+    p.params = s.params;
+    p.srcType = s.srcType;
+    p.hotspots = s.hotspots;
+    reverseLinks.length = Math.min(reverseLinks.length, s.reverse);
+    lastKey = '';
+    dirty = true;
+    syncInputs();
+    renderLinks();
+    redraw();
+    updateUndo();
+  }
+  function updateUndo() {
+    $('[data-undo]').disabled = !history.length;
   }
 
   // ---------- redressement ----------
@@ -233,6 +280,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       toast('Points trop proches : recommencez avec des points plus éloignés.', true);
     } else {
       const lvl = applyUpCorrection(p.params, up);
+      snapshot();
       setLevel({ ...lvl, yaw: p.params.yaw + wrapDeg(lvl.yaw - p.params.yaw) });
       toast('Photo redressée. Vérifiez avec la grille, puis affinez si besoin.');
     }
@@ -260,7 +308,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const kind = placing.kind, index = placing.index;
       placing = null;
       hint('');
-      if (kind === 'move') {
+      if (kind === 'north') {
+        setNorth(pos.yaw);
+      } else if (kind === 'move') {
+        snapshot();
         Object.assign(p.hotspots[index], pos);
         dirty = true;
         renderLinks();
@@ -280,6 +331,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         d.querySelector('[data-ok]').addEventListener('click', () => {
           const target = d.querySelector('[name=target]').value;
           const label = d.querySelector('[name=label]').value.trim();
+          snapshot();
           p.hotspots.push({ id: newId(), target, label, ...pos });
           if (d.querySelector('[name=reverse]').checked) reverseLinks.push({ target, yaw: wrapDeg(pos.yaw + 180), pitch: pos.pitch });
           dirty = true;
@@ -315,12 +367,14 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const i = +item.dataset.i;
       const h = p.hotspots[i];
       item.querySelector('[name=target]').addEventListener('change', (e) => {
+        snapshot();
         h.target = e.target.value;
         dirty = true;
         redraw();
       });
       item.querySelector('[name=label]').addEventListener('input', (e) => {
-        h.label = e.target.value;
+        snapshot('label' + i);
+        p.hotspots[i].label = e.target.value;
         dirty = true;
         redraw();
       });
@@ -336,6 +390,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         bindPlaceCancel();
       });
       item.querySelector('[data-del]').addEventListener('click', () => {
+        snapshot();
         p.hotspots.splice(i, 1);
         dirty = true;
         renderLinks();
@@ -384,6 +439,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     i.addEventListener('input', () => {
       const v = parseFloat(i.value);
       if (!Number.isFinite(v)) return;
+      snapshot('slider:' + i.name);
       if (i.name === 'cap') {
         setLevel(withCap(p.params, v));
       } else if (TILT[i.name]) {
@@ -401,6 +457,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   );
 
   $('[name=srcType]').addEventListener('change', (e) => {
+    snapshot();
     p.srcType = e.target.value;
     dirty = true;
     syncInputs();
@@ -428,7 +485,37 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   $('[data-grid]').classList.toggle('active', grid);
 
   $$('[data-tool]').forEach((b) => b.addEventListener('click', () => (tool && tool.kind === b.dataset.tool ? stopTool() : startTool(b.dataset.tool))));
-  $('[data-reset-level]').addEventListener('click', () => setLevel({ yaw: 0, pitch: 0, roll: 0 }));
+  $('[data-reset-level]').addEventListener('click', () => {
+    snapshot();
+    setLevel({ yaw: 0, pitch: 0, roll: 0 });
+  });
+
+  // Le nord est la direction de cap `h` (degrés, dans l'image affichée) : on ajuste le cap en
+  // conséquence, sans toucher au redressement, et la vue suit pour que l'image ne saute pas.
+  function setNorth(h) {
+    snapshot();
+    setLevel(withCap(p.params, levelToViewTilt(p.params, 0).cap + h));
+    const shift = h * DEG;
+    if (controller.mode === 'flat') controller.flatCx = 0.5;
+    controller.yaw -= shift;
+    syncInputs();
+    redraw();
+    toast('Nord enregistré : le « N » rouge indique maintenant cette direction.');
+  }
+
+  $('[data-north]').addEventListener('click', () => {
+    stopTool();
+    placing = { kind: 'north' };
+    hint('Touchez dans l’image la direction du nord (sur l’horizon), ou <button class="btn small" data-north-center>prenez le centre de la vue</button> <button class="btn small" data-place-cancel>Annuler</button>');
+    bindPlaceCancel();
+    $('[data-north-center]').addEventListener('click', () => {
+      placing = null;
+      hint('');
+      setNorth(viewHeading());
+    });
+  });
+
+  $('[data-undo]').addEventListener('click', undo);
 
   $('[data-add-link]').addEventListener('click', () => {
     stopTool();
@@ -443,6 +530,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     hint('Calibrage en cours…');
     try {
       const patch = await calibrateFromBlob(await db.getBlob(p.id + ':orig'), p.params);
+      snapshot();
       Object.assign(p.params, clone(patch), { autoCalibrated: true });
       dirty = true;
       syncInputs();
@@ -464,6 +552,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   });
 
   $('[data-lens-reset]').addEventListener('click', () => {
+    snapshot();
     Object.assign(p.params, clone(DEFAULT_LENS_PARAMS));
     dirty = true;
     syncInputs();
@@ -517,6 +606,13 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   }
   $$('[data-nav]').forEach((b) => b.addEventListener('click', () => navigate(+b.dataset.nav)));
   const onKey = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+      // Dans un champ texte, Ctrl+Z garde son rôle habituel.
+      if (e.target.closest && e.target.closest('input[type=text], textarea')) return;
+      e.preventDefault();
+      undo();
+      return;
+    }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     // Les flèches gardent leur rôle dans un champ (curseurs, nom de la photo) ou une fenêtre ouverte.
     if (e.target.closest && e.target.closest('input, select, textarea, dialog')) return;

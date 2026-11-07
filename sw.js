@@ -1,10 +1,10 @@
 // Service worker : fonctionnement hors connexion (réseau d'abord, cache en secours).
-const CACHE = 'photosphere-v8';
+const CACHE = 'photosphere-v9';
 const FILES = [
   './', 'index.html', 'app.css', 'player.css', 'manifest.webmanifest',
   'assets/logo.svg', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/icon-maskable-512.png',
   'src/app.js', 'src/ui.js', 'src/db.js', 'src/editor.js', 'src/importer.js', 'src/exporter.js',
-  'src/jpeg-encoder.js', 'src/jpeg-worker.js', 'src/metadata.js', 'src/zip.js', 'src/tour-export.js',
+  'src/jpeg-encoder.js', 'src/jpeg-worker.js', 'src/metadata.js', 'src/zip.js', 'src/tour-export.js', 'src/settings-file.js',
   'src/calibrate.js', 'src/calibrate-worker.js', 'src/math.js', 'src/shaders.js', 'src/gl-source.js', 'src/renderer.js', 'src/controls.js', 'src/player.js',
 ];
 
