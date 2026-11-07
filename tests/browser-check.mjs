@@ -8,7 +8,7 @@ import os from 'node:os';
 import { serve } from './serve.mjs';
 import { DEFAULT_LENS_PARAMS } from '../src/gl-source.js';
 import { VIGNETTE_P, VIGNETTE_Q } from '../src/calibrate.js';
-import { levelMatrix, mat3Apply, mat3Transpose, dirFromLonLat, lonLatFromDir } from '../src/math.js';
+import { levelMatrix, mat3Apply, mat3Transpose, dirFromLonLat, lonLatFromDir, viewTiltToLevel } from '../src/math.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = await import('playwright').catch(() => require('playwright'));
@@ -160,28 +160,46 @@ try {
   await page.goto(base + '#/edit/' + result.id);
   await page.waitForSelector('.editor canvas');
   await page.waitForFunction(() => document.querySelector('.ed-hint').hidden, null, { timeout: 30000 });
-  await page.fill('.slider input[type=number][name=roll]', '6');
-  await page.dispatchEvent('.slider input[type=number][name=roll]', 'input');
+  await page.fill('.slider input[type=number][name=tiltSide]', '6');
+  await page.dispatchEvent('.slider input[type=number][name=tiltSide]', 'input');
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(shots, '03-editeur-3d.png') });
+  // Les bascules sont relatives à la vue : après un quart de tour, la bascule latérale devient avant / arrière.
+  const cbox = await page.locator('.editor canvas').boundingBox();
+  const cx = cbox.x + cbox.width / 2, cy = cbox.y + cbox.height / 2;
+  const turn = async (dx) => {
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    for (let k = 1; k <= 10; k++) await page.mouse.move(cx + (dx * k) / 10, cy);
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+  };
+  await turn(-cbox.height / 2);
+  await turn(-cbox.height / 2);
+  const fwd = +(await page.inputValue('.slider input[type=number][name=tiltForward]'));
+  const side = +(await page.inputValue('.slider input[type=number][name=tiltSide]'));
+  check(Math.abs(Math.abs(fwd) - 6) < 0.3 && Math.abs(side) < 0.3, `bascules relatives à la vue : après un quart de tour, avant/arrière ${fwd}°, gauche/droite ${side}°`);
+  await turn(cbox.height / 2);
+  await turn(cbox.height / 2);
   await page.click('[data-view=flat]');
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(shots, '04-editeur-plat.png') });
-  // Outil horizon : deux clics sur la ligne médiane de la vue à plat (horizon actuel penché de 6°).
+  // Outil horizon : deux clics sur le vrai horizon, vu dans la sortie actuelle penchée de 6°.
   await page.click('[data-tool=horizon]');
   const box = await page.locator('.editor canvas').boundingBox();
   const fw = Math.min(box.width, box.height * 2), fh = fw / 2;
   const top = box.y + (box.height - fh) / 2, left = box.x + (box.width - fw) / 2;
   // Le vrai horizon (équateur de la source) vu dans la sortie actuelle penchée de 6°.
-  const Rt = mat3Transpose(levelMatrix(0, 0, 6));
+  const lv = viewTiltToLevel({ forward: 0, side: 6, cap: 0 }, 0);
+  const Rt = mat3Transpose(levelMatrix(lv.yaw, lv.pitch, lv.roll));
   for (const lon of [-0.4, 1.2]) {
     const ll = lonLatFromDir(mat3Apply(Rt, dirFromLonLat(lon, 0)));
     await page.mouse.click(left + fw * (ll.lon / (2 * Math.PI) + 0.5), top + fh * (0.5 - ll.lat / Math.PI));
   }
   await page.waitForTimeout(200);
-  const roll = await page.inputValue('.slider input[type=number][name=roll]');
-  const pitch = await page.inputValue('.slider input[type=number][name=pitch]');
-  check(Math.abs(+roll) < 0.6 && Math.abs(+pitch) < 0.6, `outil horizon : roulis ${roll}°, bascule ${pitch}° (attendu ≈ 0)`);
+  const roll = await page.inputValue('.slider input[type=number][name=tiltSide]');
+  const pitch = await page.inputValue('.slider input[type=number][name=tiltForward]');
+  check(Math.abs(+roll) < 0.6 && Math.abs(+pitch) < 0.6, `outil horizon : bascules ${roll}° et ${pitch}° (attendu ≈ 0)`);
   // Lien vers la deuxième photo
   await page.click('[data-tab=links]');
   await page.click('[data-add-link]');

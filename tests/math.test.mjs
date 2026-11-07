@@ -80,3 +80,33 @@ test('matrice caméra : lacet / tangage', () => {
   const up = m.cameraMatrix(0, 0.5);
   close(up[5], Math.sin(0.5));
 });
+
+test('redressement relatif à la vue : aller-retour', () => {
+  for (const h of [0, 37, -120, 179]) {
+    const t = { forward: 4.5, side: -3, cap: 25 };
+    const back = m.levelToViewTilt(m.viewTiltToLevel(t, h), h);
+    close(back.forward, t.forward, 1e-9);
+    close(back.side, t.side, 1e-9);
+    close(back.cap, t.cap, 1e-9);
+  }
+});
+
+test('le cap ne modifie pas le redressement', () => {
+  const a = m.viewTiltToLevel({ forward: 6, side: 2, cap: 0 }, 30);
+  const b = m.withCap(a, 80);
+  close(m.levelToViewTilt(b, 30).cap, 80, 1e-9);
+  // Le zénith de l'image corrigée pointe vers la même direction de la photo d'origine.
+  closeVec(m.mat3Apply(m.levelMatrix(a.yaw, a.pitch, a.roll), [0, 1, 0]), m.mat3Apply(m.levelMatrix(b.yaw, b.pitch, b.roll), [0, 1, 0]), 1e-9);
+});
+
+test('la bascule avant / arrière agit dans l’axe du regard', () => {
+  // En regardant vers le cap 90°, une bascule avant penche le zénith dans le plan vertical de ce cap.
+  const lvl = m.viewTiltToLevel({ forward: 10, side: 0, cap: 0 }, 90);
+  const s = m.mat3Apply(m.levelMatrix(lvl.yaw, lvl.pitch, lvl.roll), [0, 1, 0]);
+  close(s[2], 0, 1e-9);
+  close(Math.atan2(s[0], s[1]) / m.DEG, 10, 1e-9);
+  // Vue de côté (cap 0°), cette même correction apparaît comme une bascule gauche / droite.
+  const t0 = m.levelToViewTilt(lvl, 0);
+  close(t0.forward, 0, 1e-9);
+  close(t0.side, 10, 1e-9);
+});

@@ -164,3 +164,32 @@ export function headingOf(m) {
 export function wrapDeg(a) {
   return ((((a + 180) % 360) + 360) % 360) - 180;
 }
+
+// Redressement exprimé par rapport à la vue : R = A · Ry(cap), où A est une bascule pure (autour d'un
+// axe horizontal) et le cap une rotation autour de la verticale de l'image corrigée, qui ne modifie
+// donc pas le redressement. La bascule est décrite dans l'axe du regard (cap de vue `headingDeg`) :
+// `forward` = bascule avant / arrière, `side` = bascule gauche / droite, en degrés.
+export function levelToViewTilt(level, headingDeg) {
+  const R = levelMatrix(level.yaw || 0, level.pitch || 0, level.roll || 0);
+  const s = mat3Apply(R, [0, 1, 0]);
+  const cap = headingOf(mat3Mul(mat3Transpose(alignUpMatrix(s)), R));
+  const sh = mat3Apply(rotY(-(headingDeg * DEG + cap)), s);
+  return {
+    forward: Math.atan2(sh[2], sh[1]) / DEG,
+    side: Math.atan2(sh[0], sh[1]) / DEG,
+    cap: cap / DEG,
+  };
+}
+
+export function viewTiltToLevel(tilt, headingDeg) {
+  const cap = tilt.cap * DEG;
+  const sh = vecNormalize([Math.tan(tilt.side * DEG), 1, Math.tan(tilt.forward * DEG)]);
+  const s = mat3Apply(rotY(headingDeg * DEG + cap), sh);
+  return matToLevel(mat3Mul(alignUpMatrix(s), rotY(cap)));
+}
+
+// Change le cap en conservant exactement le redressement (la bascule A).
+export function withCap(level, capDeg) {
+  const s = mat3Apply(levelMatrix(level.yaw || 0, level.pitch || 0, level.roll || 0), [0, 1, 0]);
+  return matToLevel(mat3Mul(alignUpMatrix(s), rotY(capDeg * DEG)));
+}
