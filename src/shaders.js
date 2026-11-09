@@ -107,7 +107,7 @@ uniform mat3 uCam;          // caméra -> monde
 uniform int uViewMode;      // 0 perspective, 1 plan équirectangulaire
 uniform vec4 uFlat;         // rectangle de l'image en mode plan (pixels, origine en bas)
 uniform vec2 uDistort;      // k1, k2 (lentilles du casque)
-uniform vec3 uHot[${MAX_HOTSPOTS}];
+uniform vec4 uHot[${MAX_HOTSPOTS}];   // direction (xyz) et opacité (w) des liens
 uniform int uHotCount;
 uniform int uHotSel;
 uniform float uHotSize;
@@ -156,23 +156,24 @@ void main() {
 
   for (int i = 0; i < ${MAX_HOTSPOTS}; i++) {
     if (i >= uHotCount) break;
-    vec3 h = uHot[i];
+    vec3 h = uHot[i].xyz;
+    float alpha = uHot[i].w;
     float ang = acos(clamp(dot(dir, h), -1.0, 1.0));
     float s = uHotSize * (i == uHotSel ? 1.25 : 1.0);
-    if (ang < s * 1.45) {
+    if (alpha > 0.003 && ang < s * 1.45) {
       float aa = max(pixAng * 1.5, 1e-5);
       float disc = 1.0 - smoothstep(s - aa, s, ang);
       float ring = disc * smoothstep(s * 0.72 - aa, s * 0.72, ang);
       float dot0 = 1.0 - smoothstep(s * 0.22 - aa, s * 0.22, ang);
       vec3 accent = i == uHotSel ? vec3(1.0, 0.62, 0.15) : vec3(0.25, 0.8, 1.0);
-      col = mix(col, accent * 0.35, disc * 0.45);
-      col = mix(col, vec3(1.0), ring * 0.95 + dot0);
+      col = mix(col, accent * 0.35, disc * 0.45 * alpha);
+      col = mix(col, vec3(1.0), clamp(ring * 0.95 + dot0, 0.0, 1.0) * alpha);
       if (i == uHotSel && uDwell > 0.0) {
         vec3 t1 = normalize(cross(vec3(0.0, 1.0, 0.0), h) + vec3(1e-6, 0.0, 0.0));
         vec3 t2 = cross(h, t1);
         float a = atan(dot(dir, t2), dot(dir, t1)) / (2.0 * PI) + 0.5;
         float arc = step(s * 1.1, ang) * (1.0 - step(s * 1.4, ang)) * step(a, uDwell);
-        col = mix(col, accent, arc);
+        col = mix(col, accent, arc * alpha);
       }
     }
   }

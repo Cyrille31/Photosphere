@@ -23,9 +23,10 @@ export function buildSettings(photos) {
       name: p.name,
       srcType: p.srcType,
       params: p.params,
+      ...(p.mapPos ? { mapPos: p.mapPos } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
-        .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}) })),
+        .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}), ...(h.auto ? { auto: true } : {}) })),
     })),
   };
 }
@@ -61,13 +62,14 @@ export async function applySettings(data) {
     }
     const hotspots = (e.hotspots || [])
       .filter((h) => idOf.has(key(h.target)))
-      .map((h) => ({ id: newId(), target: idOf.get(key(h.target)), yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}) }));
+      .map((h) => ({ id: newId(), target: idOf.get(key(h.target)), yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}), ...(h.auto ? { auto: true } : {}) }));
     const srcType = e.srcType || cur.srcType;
     const params = { ...cur.params, ...(e.params || {}) };
     const imageChanged = srcType !== cur.srcType || JSON.stringify(params) !== JSON.stringify(cur.params);
     await db.putPhoto({
       ...cur,
       name: e.name || cur.name,
+      ...(e.mapPos ? { mapPos: e.mapPos } : {}),
       srcType,
       params,
       hotspots,

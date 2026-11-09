@@ -84,9 +84,13 @@ export class PanoRenderer {
     gl.uniform1i(u.uViewMode, frame.mode === 'flat' ? 1 : 0);
     const f = frame.flat || [0, 0, 1, 1];
     gl.uniform4f(u.uFlat, f[0], f[1], f[2], f[3]);
-    const flatHot = new Float32Array(MAX_HOTSPOTS * 3);
-    this.hotspots.forEach((d, i) => flatHot.set(d, i * 3));
-    gl.uniform3fv(u.uHot, flatHot);
+    // frame.hotAlpha : opacité de chaque lien (1 par défaut, toujours visible).
+    const flatHot = new Float32Array(MAX_HOTSPOTS * 4);
+    this.hotspots.forEach((d, i) => {
+      flatHot.set(d, i * 4);
+      flatHot[i * 4 + 3] = frame.hotAlpha ? frame.hotAlpha[i] ?? 1 : 1;
+    });
+    gl.uniform4fv(u.uHot, flatHot);
     gl.uniform1i(u.uHotCount, this.hotspots.length);
     gl.uniform1i(u.uHotSel, frame.hotSel ?? -1);
     gl.uniform1f(u.uHotSize, frame.hotSize || 0.07);

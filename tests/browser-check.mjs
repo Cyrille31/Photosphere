@@ -295,12 +295,13 @@ try {
   fs.writeFileSync(settingsPath, settingsJson);
   check(settingsJson.length < 50000, `fichier de réglages léger (${(settingsJson.length / 1024).toFixed(1)} ko pour 2 photos)`);
   await page.locator('input[type=file][accept^=".json"]').setInputFiles(settingsPath);
-  await page.waitForFunction(() => [...document.querySelectorAll('.card-title')].some((t) => t.textContent.includes('Entrée du jardin')), null, { timeout: 30000 });
+  // On attend la fin de l'application des réglages (message de confirmation).
+  await page.waitForSelector('.toast:has-text("appliqués à 2 photo")', { timeout: 30000 });
   const restored = await page.evaluate(async () => {
     const db = await import('./src/db.js');
     return (await db.listPhotos()).map((p) => ({ name: p.name, yaw: p.params.yaw, links: p.hotspots.length, targetOk: p.hotspots.every((h) => h.target) }));
   });
-  check(restored.every((r) => r.name !== 'x' && r.yaw !== 77 && r.links === 1 && r.targetOk), 'réglages rechargés : noms, redressement et liens retrouvés');
+  check(restored.every((r) => r.name !== 'x' && r.yaw !== 77 && r.links === 1 && r.targetOk), 'réglages rechargés : noms, redressement et liens retrouvés ' + JSON.stringify(restored));
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 180000 });
 
   console.log('Visionneuse');
@@ -398,6 +399,24 @@ try {
   await tour.waitForTimeout(1500);
   await tour.screenshot({ path: path.join(shots, '08-visite-autonome.png') });
   const before = await tour.textContent('.ps-title');
+  // Les cibles n'apparaissent qu'à l'approche de la souris : invisibles au départ, on balaie l'image.
+  await tour.mouse.move(5, 400);
+  await tour.waitForTimeout(400);
+  const hiddenAtStart = !(await tour.isVisible('.ps-label'));
+  let found = false;
+  for (let y = 150; y <= 650 && !found; y += 100) {
+    for (let x = 100; x <= 1180 && !found; x += 120) {
+      await tour.mouse.move(x, y);
+      await tour.waitForTimeout(60);
+      found = await tour.isVisible('.ps-label');
+    }
+  }
+  // On vise ensuite la cible elle-même (elle se trouve juste au-dessus de son étiquette).
+  const lb = await tour.locator('.ps-label').boundingBox();
+  await tour.mouse.move(lb.x + lb.width / 2, lb.y - 22);
+  await tour.waitForTimeout(500);
+  const opacity = await tour.$eval('.ps-label', (b) => +getComputedStyle(b).opacity);
+  check(hiddenAtStart && found && opacity > 0.5, `cible d’un lien invisible au loin, apparaît à l’approche de la souris (opacité ${opacity.toFixed(2)})`);
   await tour.click('.ps-label');
   await tour.waitForTimeout(1200);
   const after = await tour.textContent('.ps-title');

@@ -35,7 +35,52 @@ async function tx(store, mode, fn) {
 
 export const listPhotos = () => tx('photos', 'readonly', (s) => s.getAll());
 export const getPhoto = (id) => tx('photos', 'readonly', (s) => s.get(id));
-export const putPhoto = (p) => tx('photos', 'readwrite', (s) => s.put(p));
+export const putPhoto = async (p) => {
+  await tx('photos', 'readwrite', (s) => s.put(p));
+  notify();
+};
+
+// Lecture et écriture d'une fiche dans une seule transaction : une modification faite ailleurs
+// entre-temps (éditeur, fichier de réglages) ne peut pas être écrasée. fn(fiche) renvoie la nouvelle
+// fiche, ou null pour ne rien changer. Renvoie la fiche enregistrée (ou null).
+export async function updatePhoto(id, fn) {
+  const db = await open();
+  const result = await new Promise((resolve, reject) => {
+    const t = db.transaction('photos', 'readwrite');
+    const store = t.objectStore('photos');
+    let out = null;
+    const r = store.get(id);
+    r.onsuccess = () => {
+      if (!r.result) return;
+      const next = fn(r.result);
+      if (next) {
+        store.put(next);
+        out = next;
+      }
+    };
+    t.oncomplete = () => resolve(out);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('Transaction annulée'));
+  });
+  if (result) notify();
+  return result;
+}
+
+// Abonnement aux modifications des photos (enregistrement automatique du fichier de réglages).
+const listeners = new Set();
+export function onPhotosChanged(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function notify() {
+  listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
 export const getBlob = (key) => tx('blobs', 'readonly', (s) => s.get(key));
 export const putBlob = (key, blob) => tx('blobs', 'readwrite', (s) => s.put(blob, key));
 export const getSetting = (key) => tx('settings', 'readonly', (s) => s.get(key));
@@ -43,6 +88,7 @@ export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v
 
 export async function deletePhoto(id) {
   await tx('photos', 'readwrite', (s) => s.delete(id));
+  notify();
   for (const k of ['orig', 'out', 'thumb']) await tx('blobs', 'readwrite', (s) => s.delete(`${id}:${k}`));
   // Supprime les liens qui pointaient vers cette photo.
   for (const p of await listPhotos()) {

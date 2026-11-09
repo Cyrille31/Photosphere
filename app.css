@@ -161,3 +161,27 @@ dialog.arrival { width: min(96vw, 1000px); }
 .arrival-stage { position: relative; height: min(58vh, 520px); border-radius: 10px; overflow: hidden; background: #000; }
 .arrival-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .arrival-cross { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.5); pointer-events: none; }
+
+/* Plan des photos */
+.plan { display: flex; flex-direction: column; height: calc(100dvh - 61px - env(safe-area-inset-top)); }
+.plan-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.plan-north { font-weight: 700; color: #fff; background: #e5484d; border-radius: 6px; padding: 3px 8px; }
+.plan-key { padding: 0 4px; border-radius: 4px; font-weight: 600; }
+.plan-key.auto { color: #22c1ee; }
+.plan-key.manual { color: #ffb23e; }
+.plan-view { position: relative; flex: 1; overflow: hidden; touch-action: none; cursor: grab; background:
+  radial-gradient(circle at 1px 1px, rgba(255,255,255,.07) 1px, transparent 0) 0 0 / 28px 28px, var(--bg); }
+.plan-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.plan-links { position: absolute; left: 0; top: 0; overflow: visible; }
+.plan-links line { stroke-linecap: round; }
+.plan-links line.pair { stroke: rgba(255,255,255,.18); stroke-width: 8; }
+.plan-links line.auto { stroke: #22c1ee; stroke-width: 3.5; }
+.plan-links line.manual { stroke: #ffb23e; stroke-width: 3.5; }
+.plan-node { position: absolute; left: 0; top: 0; width: 120px; margin: -40px 0 0 -60px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: grab; user-select: none; -webkit-user-select: none; }
+.plan-ball { width: 80px; height: 80px; border-radius: 50%; background: #000 center / 200% 100%; position: relative; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+.plan-ball::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.45), transparent 40%), radial-gradient(circle at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+.plan-node span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; background: rgba(10,16,35,.8); padding: 2px 7px; border-radius: 6px; }
+.plan-node.selected .plan-ball { outline: 3px solid var(--accent); outline-offset: 2px; }
+.plan-actions { display: none; gap: 4px; }
+.plan-node.selected .plan-actions { display: flex; }
+.check.small { font-size: 12.5px; margin: 0; }
