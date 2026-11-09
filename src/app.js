@@ -553,11 +553,21 @@ async function openEditorView(id) {
   try {
     const fromViewer = state.returnToViewer;
     const navigated = state.editorNav;
+    const focus = state.editorFocus;
     state.returnToViewer = false;
     state.editorNav = false;
+    state.editorFocus = null;
     active = await openEditor(app, photo, {
       photos: state.photos,
       initialView: fromViewer || navigated ? state.lastView : null,
+      focus,
+      onOpenPhoto: (otherId, view, focusOpt) => {
+        state.lastView = view;
+        state.returnToViewer = fromViewer;
+        state.editorNav = true;
+        state.editorFocus = focusOpt || null;
+        location.hash = '#/edit/' + otherId;
+      },
       onNavigate: (dir, view) => {
         const list = state.photos;
         const i = list.findIndex((x) => x.id === id);

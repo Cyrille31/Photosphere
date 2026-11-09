@@ -57,7 +57,7 @@ export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, 
       id: p.id,
       name: p.name,
       src: await blobToDataUrl(small),
-      hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label }) => ({ target, yaw, pitch, label })),
+      hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label, arrive }) => ({ target, yaw, pitch, label, arrive })),
     });
   }
   const ids = new Set(items.map((p) => p.id));

@@ -220,16 +220,49 @@ try {
   await page.click('[data-tab=links]');
   await page.click('[data-add-link]');
   await page.mouse.click(left + fw * 0.6, top + fh * 0.55);
+  // Choix de la destination dans la grille de vignettes (taille réglable avec Ctrl + molette).
+  await page.waitForSelector('dialog.picker .picker-item img[src]');
+  const thumbBefore = await page.$eval('.picker-grid', (g) => g.style.getPropertyValue('--thumb'));
+  await page.hover('.picker-grid');
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -200);
+  await page.keyboard.up('Control');
+  const thumbAfter = await page.$eval('.picker-grid', (g) => g.style.getPropertyValue('--thumb'));
+  check(parseInt(thumbAfter) > parseInt(thumbBefore), `choix par vignettes, taille réglable avec Ctrl + molette (${thumbBefore} → ${thumbAfter})`);
+  await page.click('dialog.picker .picker-item');
   await page.click('dialog [data-ok]');
   check((await page.locator('.link-item').count()) === 1, 'lien créé');
+  // Vue d'arrivée : on tourne l'aperçu de la photo de destination puis on valide.
+  await page.click('[data-arrive]');
+  await page.waitForSelector('dialog.arrival canvas');
+  await page.waitForTimeout(800);
+  const ab = await page.locator('dialog.arrival canvas').boundingBox();
+  await page.mouse.move(ab.x + ab.width / 2, ab.y + ab.height / 2);
+  await page.mouse.down();
+  for (let k = 1; k <= 10; k++) await page.mouse.move(ab.x + ab.width / 2 - 25 * k, ab.y + ab.height / 2);
+  await page.mouse.up();
+  await page.click('dialog.arrival [data-ok]');
+  await page.waitForTimeout(200);
+  check((await page.textContent('.link-item')).includes('réglée'), 'vue d’arrivée réglée sur le lien');
+  // Lien retour : enregistre, ouvre la photo de destination, prête à déplacer le lien qui revient.
+  await page.click('[data-back]');
+  await page.waitForFunction((id) => location.hash.startsWith('#/edit/') && !location.hash.endsWith(id), result.id);
+  await page.waitForFunction(() => /Lien retour/.test(document.querySelector('.ed-hint').textContent || ''), null, { timeout: 30000 });
+  const backBefore = await page.evaluate(async (id) => (await (await import('./src/db.js')).listPhotos()).find((p) => p.id !== id).hotspots[0], result.id);
+  const eb = await page.locator('.editor canvas').boundingBox();
+  await page.mouse.click(eb.x + eb.width * 0.3, eb.y + eb.height * 0.5);
   await page.click('[data-save]');
   await page.waitForSelector('.grid');
+  const state2 = await page.evaluate(async (id) => {
+    const photos = await (await import('./src/db.js')).listPhotos();
+    const src = photos.find((p) => p.id === id), dst = photos.find((p) => p.id !== id);
+    return { arrive: src.hotspots[0].arrive, back: dst.hotspots[0], counts: photos.map((p) => p.hotspots.length) };
+  }, result.id);
+  check(state2.arrive && Math.abs(state2.arrive.yaw) > 1, `vue d’arrivée enregistrée (cap ${state2.arrive && state2.arrive.yaw}°)`);
+  check(backBefore && state2.back && state2.back.target === result.id && Math.abs(state2.back.yaw - backBefore.yaw) > 1,
+    `lien retour déplacé depuis le raccourci « ↩ Lien retour » (${backBefore && backBefore.yaw.toFixed(1)}° → ${state2.back && state2.back.yaw.toFixed(1)}°)`);
+  check(state2.counts.join() === '1,1', 'lien aller et lien retour enregistrés');
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 180000 });
-  const links = await page.evaluate(async () => {
-    const db = await import('./src/db.js');
-    return (await db.listPhotos()).map((p) => p.hotspots.length);
-  });
-  check(links.join() === '1,1', 'lien aller et lien retour enregistrés');
 
   console.log('Renommage et fichier de réglages');
   await page.locator('.card .card-title').first().click();
@@ -308,6 +341,20 @@ try {
   await page.click('.ps-mode[data-mode=cardboard]');
   await page.waitForTimeout(1200);
   check(await page.locator('.ps-player.stereo').count() === 1, 'mode casque VR (écran partagé) activé');
+  // Réglages du casque : écartement des centres puis RAZ.
+  await page.click('.ps-vr-settings');
+  await page.$eval('.ps-headset [name=sep]', (i) => {
+    i.value = 42;
+    i.dispatchEvent(new Event('input'));
+  });
+  const sepSaved = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')).sep);
+  await page.click('.ps-headset [data-preset=v2]');
+  const v2 = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));
+  await page.click('.ps-headset [data-preset=reset]');
+  const reset = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));
+  check(sepSaved === 42 && v2.k1 === 0.34 && v2.k2 === 0.55 && reset.sep === 50 && reset.k1 === 0.22,
+    'casque : écartement des centres réglable, préréglage Cardboard v2, RAZ');
+  await page.click('.ps-headset .ps-close-panel');
   await page.screenshot({ path: path.join(shots, '06-casque-vr.png') });
   await page.click('.ps-exit-vr');
   await page.click('.ps-mode[data-mode=gyro]');

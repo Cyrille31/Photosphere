@@ -6,6 +6,8 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap } from './math.js';
 import { toast, escapeHtml, dialog } from './ui.js';
+import { pickPhoto } from './photo-picker.js';
+import { chooseArrivalView } from './arrival-view.js';
 import { newId } from './importer.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -30,7 +32,9 @@ function lensFields(key, title) {
 }
 
 // onNavigate(sens, vue) : passe à la photo précédente (-1) ou suivante (+1), après enregistrement.
-export async function openEditor(container, photo, { photos, onDone, onNavigate, initialView }) {
+// onOpenPhoto(id, vue, focus) : ouvre une autre photo dans l'éditeur (ex. pour régler un lien retour).
+// focus.linkTo : à l'ouverture, prépare le déplacement du lien qui pointe vers cette photo.
+export async function openEditor(container, photo, { photos, onDone, onNavigate, onOpenPhoto, initialView, focus }) {
   const p = clone(photo);
   p.params = { yaw: 0, pitch: 0, roll: 0, ...clone(DEFAULT_LENS_PARAMS), ...p.params };
   p.hotspots = p.hotspots || [];
@@ -305,11 +309,17 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     if (placing) {
       const { lon, lat } = lonLatFromDir(d);
       const pos = { yaw: lon / DEG, pitch: lat / DEG };
-      const kind = placing.kind, index = placing.index;
+      const kind = placing.kind, index = placing.index, placing_target = placing.target;
       placing = null;
       hint('');
       if (kind === 'north') {
         setNorth(pos.yaw);
+      } else if (kind === 'add-to') {
+        snapshot();
+        p.hotspots.push({ id: newId(), target: placing_target, label: '', ...pos });
+        dirty = true;
+        renderLinks();
+        redraw();
       } else if (kind === 'move') {
         snapshot();
         Object.assign(p.hotspots[index], pos);
@@ -320,16 +330,17 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     }
   }
 
-  function chooseTarget(pos) {
+  async function chooseTarget(pos) {
+    const target = await pickPhoto(others, { title: 'Lien vers quelle photo ?' });
+    if (!target) return;
+    const t = photos.find((x) => x.id === target);
     dialog(
-      `<h2>Nouveau lien</h2>
-      <label class="field">Vers la photo<select name="target">${others.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}</select></label>
+      `<h2>Nouveau lien vers « ${escapeHtml(t ? t.name : '')} »</h2>
       <label class="field">Texte affiché (facultatif)<input type="text" name="label" placeholder="ex. Vers la cuisine"></label>
-      <label class="check"><input type="checkbox" name="reverse" checked> Créer aussi le lien retour dans l’autre photo (placé dans la direction opposée, à ajuster si besoin)</label>
+      <label class="check"><input type="checkbox" name="reverse" checked> Créer aussi le lien retour dans l’autre photo (placé dans la direction opposée ; « ↩ Lien retour » permet ensuite de le déplacer)</label>
       <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-ok>Créer</button></div>`,
       (d) => {
         d.querySelector('[data-ok]').addEventListener('click', () => {
-          const target = d.querySelector('[name=target]').value;
           const label = d.querySelector('[name=label]').value.trim();
           snapshot();
           p.hotspots.push({ id: newId(), target, label, ...pos });
@@ -343,6 +354,16 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     );
   }
 
+  // Vignettes des photos de destination (libérées à la fermeture de l'éditeur).
+  const thumbUrls = new Map();
+  async function thumbOf(id) {
+    if (!thumbUrls.has(id)) {
+      const b = await db.getBlob(id + ':thumb');
+      thumbUrls.set(id, b ? URL.createObjectURL(b) : '');
+    }
+    return thumbUrls.get(id);
+  }
+
   function renderLinks() {
     const list = $('.links-list');
     if (!p.hotspots.length) {
@@ -350,26 +371,38 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       return;
     }
     list.innerHTML = p.hotspots
-      .map(
-        (h, i) => `<div class="link-item" data-i="${i}">
-        <div class="row2"><select name="target">${others
-          .map((o) => `<option value="${o.id}" ${o.id === h.target ? 'selected' : ''}>→ ${escapeHtml(o.name)}</option>`)
-          .join('')}</select></div>
+      .map((h, i) => {
+        const t = photos.find((x) => x.id === h.target);
+        const arrive = h.arrive
+          ? `réglée (cap ${Math.round(h.arrive.yaw)}°)`
+          : 'automatique (on garde la même direction)';
+        return `<div class="link-item" data-i="${i}">
+        <button class="link-target" data-target title="Changer la photo de destination"><img alt=""><span>→ ${escapeHtml(t ? t.name : '?')}</span><small>changer</small></button>
         <div class="row2"><input type="text" name="label" value="${escapeHtml(h.label || '')}" placeholder="Texte affiché"></div>
+        <div class="note">Vue à l’arrivée : ${arrive}</div>
+        <div class="row2">
+          <button class="btn small" data-arrive title="Orienter la photo d’arrivée">🎯 Vue d’arrivée</button>
+          ${h.arrive ? '<button class="btn small" data-arrive-auto title="Revenir à l’orientation automatique">Auto</button>' : ''}
+          <button class="btn small" data-back title="Ouvrir la photo de destination pour régler le lien qui revient ici">↩ Lien retour</button>
+        </div>
         <div class="row2">
           <button class="btn small" data-look>👁 Voir</button>
           <button class="btn small" data-move>✥ Déplacer</button>
           <button class="btn small danger" data-del>🗑</button>
-        </div></div>`
-      )
+        </div></div>`;
+      })
       .join('');
-    list.querySelectorAll('.link-item').forEach((item) => {
+    list.querySelectorAll('.link-item').forEach(async (item) => {
       const i = +item.dataset.i;
       const h = p.hotspots[i];
-      item.querySelector('[name=target]').addEventListener('change', (e) => {
+      item.querySelector('[data-target]').addEventListener('click', async () => {
+        const id = await pickPhoto(others, { title: 'Lien vers quelle photo ?', currentId: h.target });
+        if (!id || id === h.target) return;
         snapshot();
-        h.target = e.target.value;
+        p.hotspots[i].target = id;
+        delete p.hotspots[i].arrive;
         dirty = true;
+        renderLinks();
         redraw();
       });
       item.querySelector('[name=label]').addEventListener('input', (e) => {
@@ -378,6 +411,24 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         dirty = true;
         redraw();
       });
+      item.querySelector('[data-arrive]').addEventListener('click', async () => {
+        // Sans réglage, on arrive en regardant dans la direction du lien.
+        const v = await chooseArrivalView(h.target, h.arrive || { yaw: h.yaw, pitch: 0 });
+        if (!v) return;
+        snapshot();
+        p.hotspots[i].arrive = v;
+        dirty = true;
+        renderLinks();
+      });
+      const auto = item.querySelector('[data-arrive-auto]');
+      if (auto)
+        auto.addEventListener('click', () => {
+          snapshot();
+          delete p.hotspots[i].arrive;
+          dirty = true;
+          renderLinks();
+        });
+      item.querySelector('[data-back]').addEventListener('click', () => openOther(h.target, { linkTo: p.id }));
       item.querySelector('[data-look]').addEventListener('click', () => {
         if (controller.mode === 'flat') setView('persp');
         controller.yaw = h.yaw * DEG;
@@ -396,6 +447,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         renderLinks();
         redraw();
       });
+      const url = await thumbOf(h.target);
+      if (url) item.querySelector('.link-target img').src = url;
     });
   }
 
@@ -593,6 +646,13 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     onDone(true, currentView());
   });
 
+  // Ouvre une autre photo dans l'éditeur, après avoir enregistré celle-ci.
+  async function openOther(id, focusOpt) {
+    if (!onOpenPhoto) return;
+    if (dirty) await save();
+    onOpenPhoto(id, currentView(), focusOpt);
+  }
+
   // Photo précédente / suivante : les modifications en cours sont enregistrées automatiquement.
   let navigating = false;
   async function navigate(dir) {
@@ -638,9 +698,29 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   hint('');
   redraw();
 
+  if (focus && focus.linkTo) {
+    $('[data-tab=links]').click();
+    const back = photos.find((x) => x.id === focus.linkTo);
+    const idx = p.hotspots.findIndex((h) => h.target === focus.linkTo);
+    const cancel = ' <button class="btn small" data-place-cancel>Annuler</button>';
+    if (idx >= 0) {
+      const h = p.hotspots[idx];
+      controller.yaw = h.yaw * DEG;
+      controller.pitch = h.pitch * DEG;
+      placing = { kind: 'move', index: idx };
+      hint(`Lien retour vers « ${escapeHtml(back ? back.name : '')} » : touchez son nouvel emplacement (par exemple la porte vue d’ici).` + cancel);
+    } else {
+      placing = { kind: 'add-to', target: focus.linkTo };
+      hint(`Pas encore de lien retour vers « ${escapeHtml(back ? back.name : '')} » : touchez l’endroit où le placer.` + cancel);
+    }
+    bindPlaceCancel();
+    redraw();
+  }
+
   return {
     dispose() {
       cancelAnimationFrame(raf);
+      thumbUrls.forEach((u) => u && URL.revokeObjectURL(u));
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('beforeunload', beforeUnload);
       window.removeEventListener('resize', onResize);

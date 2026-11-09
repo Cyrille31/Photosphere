@@ -1,6 +1,6 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
-import { ViewController, DEFAULT_HEADSET } from './controls.js';
+import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, mat3Mul, mat3Apply, rotY, headingOf, dirFromLonLat } from './math.js';
 
 const DWELL_MS = 1600;
@@ -59,7 +59,17 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       <label>Champ de vision par œil <output></output><input type="range" name="eyeFov" min="60" max="120" step="1"></label>
       <label>Correction des lentilles k1 <output></output><input type="range" name="k1" min="0" max="0.8" step="0.01"></label>
       <label>Correction des lentilles k2 <output></output><input type="range" name="k2" min="0" max="0.8" step="0.01"></label>
-      <button class="ps-btn ps-close-panel">Fermer</button>
+      <div class="ps-presets">
+        <button class="ps-btn" data-preset="v1" title="k1 0,441 · k2 0,156">Cardboard v1</button>
+        <button class="ps-btn" data-preset="v2" title="k1 0,34 · k2 0,55">Cardboard v2</button>
+        <button class="ps-btn" data-preset="none">Sans correction</button>
+      </div>
+      <label>Écartement des centres des deux images <output></output><input type="range" name="sep" min="30" max="70" step="0.5"></label>
+      <p class="ps-note">Lentilles : les lignes droites doivent rester droites jusqu’au bord. Écartement : chaque œil doit voir le point de visée au centre de sa lentille.</p>
+      <div class="ps-presets">
+        <button class="ps-btn" data-preset="reset">↺ RAZ (valeurs par défaut)</button>
+        <button class="ps-btn ps-close-panel">Fermer</button>
+      </div>
     </div>
     <div class="ps-toast" hidden></div>`;
   container.appendChild(root);
@@ -103,7 +113,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     return (photo.hotspots || []).filter((h) => byId.has(h.target));
   }
 
-  async function go(id, keepView = true) {
+  // arrive : vue d'arrivée réglée sur le lien suivi ({ yaw, pitch } en degrés), sinon on garde la vue.
+  async function go(id, keepView = true, arrive = null) {
     const photo = byId.get(id);
     if (!photo) return;
     const fade = $('.ps-fade');
@@ -116,7 +127,15 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     } catch (e) {
       toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
     }
-    if (!current && initialView) {
+    if (arrive && current) {
+      if (controller.mode === 'gyro' && controller.gyroMat) {
+        // Bout de bras / casque : on tourne l'image pour que la direction d'arrivée soit devant soi.
+        controller.gyroOffset += arrive.yaw * DEG - headingOf(controller.camMatrix());
+      } else {
+        controller.yaw = arrive.yaw * DEG;
+        controller.pitch = (arrive.pitch || 0) * DEG;
+      }
+    } else if (!current && initialView) {
       controller.yaw = initialView.yaw;
       controller.pitch = initialView.pitch;
     } else if (!keepView || !current) {
@@ -151,7 +170,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
 
   function follow(i) {
     const h = hotspotsOf(current)[i];
-    if (h) go(h.target);
+    if (h) go(h.target, true, h.arrive || null);
   }
 
   function onTap(x, y) {
@@ -219,6 +238,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       follow(i2);
     }
     const eyeLabels = root.querySelectorAll('.ps-eye-labels span');
+    // Le nom du lien visé s'affiche sous le centre de chaque lentille.
+    const sep = (controller.headset.sep ?? 50) / 2;
+    eyeLabels.forEach((s, k) => (s.style.left = 50 + (k ? sep : -sep) - 25 + '%'));
     const name = sel >= 0 ? hotspotsOf(current)[sel].label || byId.get(hotspotsOf(current)[sel].target).name : '';
     eyeLabels.forEach((s) => (s.textContent = controller.stereo ? name : ''));
   }
@@ -385,12 +407,21 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
   const syncHeadset = () => {
     hs.querySelectorAll('input').forEach((i) => {
       i.value = controller.headset[i.name];
-      i.previousElementSibling.textContent = i.name === 'eyeFov' ? i.value + '°' : i.value;
+      i.previousElementSibling.textContent = i.name === 'eyeFov' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.value;
     });
   };
   hs.querySelectorAll('input').forEach((i) =>
     i.addEventListener('input', () => {
       controller.headset[i.name] = parseFloat(i.value);
+      saveHeadsetSettings(controller.headset);
+      syncHeadset();
+      dirty = true;
+    })
+  );
+  hs.querySelectorAll('[data-preset]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const k = b.dataset.preset;
+      Object.assign(controller.headset, k === 'reset' ? DEFAULT_HEADSET : HEADSET_PRESETS[k]);
       saveHeadsetSettings(controller.headset);
       syncHeadset();
       dirty = true;

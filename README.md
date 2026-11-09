@@ -16,11 +16,12 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
 - **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
 - **Nord** : points cardinaux sur l'horizon de l'éditeur ; « Indiquer le nord » puis un clic dans l'image règle le cap.
 - **Défaire** (bouton ou Ctrl+Z) la dernière action de l'éditeur ; renommage des photos directement dans la bibliothèque.
+- **Liens** : destination choisie dans une grille de vignettes (taille réglable, Ctrl + molette) ; **vue d'arrivée** réglable par lien ; raccourci **« ↩ Lien retour »** pour placer le lien qui revient (par ex. sur la porte vue depuis la pièce).
 - **Liens** entre photos : on touche l’endroit (porte, passage) qui mène à une autre photo ; lien retour créé automatiquement.
 - **Visionneuse** (bouton ✏ Éditer pour redresser la photo affichée ou y ajouter un lien, puis revenir au même endroit) :
   - *Tactile* : doigt / souris, pincer ou molette pour zoomer ;
   - *Bout de bras* : on bouge le téléphone (gyroscope) ;
-  - *Casque VR* : écran partagé avec correction des lentilles pour casques type Cardboard ; on fixe un lien 1,5 s pour y aller (ou bouton du casque) ;
+  - *Casque VR* : écran partagé avec correction des lentilles (k1, k2 ; préréglages Cardboard v1 / v2, RAZ) et écartement réglable des centres des deux images, pour casques type Cardboard ; on fixe un lien 1,5 s pour y aller (ou bouton du casque) ;
   - *WebXR* natif quand le navigateur le propose.
 - **Fichier de réglages** `photosphere.json` (≈ 11 ko par photo) : à ranger avec les photos d'origine, jamais modifiées. En réimportant le dossier (ou les photos avec ce fichier), redressement, nord, calibrage, liens et noms sont retrouvés.
 - **Exports** : visite autonome en un seul fichier `.html` (s’ouvre partout, même en local), ZIP des JPEG, sauvegarde/restauration du projet pour passer du PC au téléphone.
