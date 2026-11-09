@@ -4,7 +4,7 @@ import { importFiles, convertPhoto } from './importer.js';
 import { createPlayer } from './player.js';
 import { openEditor } from './editor.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
-import { toast, escapeHtml, dialog } from './ui.js';
+import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
@@ -253,10 +253,14 @@ async function renderLibrary() {
         </div>
       </div>
     </div>
+    <div class="library-search">
+      <input type="search" class="search-input" name="library-search" placeholder="🔍 Rechercher une photo par son nom" value="${escapeHtml(state.search || '')}" autocomplete="off">
+      <span class="note search-count"></span>
+    </div>
     <p class="note">${photos.length} photo(s), ${links} lien(s). Astuce : réglez le « cap » de chaque photo dans l’éditeur pour que le nord soit commun à toutes — les transitions entre photos garderont alors la bonne direction.</p>
     <div class="grid">${photos
       .map(
-        (p) => `<div class="card" data-id="${p.id}">
+        (p) => `<div class="card" data-id="${p.id}" data-search="${escapeHtml(p.name + ' ' + (p.fileName || ''))}">
         <div class="thumb" data-act="view"><img alt="" loading="lazy">
           <div class="badges"><span class="badge">${p.srcType === 'fisheye' ? 'Double fisheye' : 'Équirectangulaire'}</span>${statusBadge(p)}
           ${(p.hotspots || []).length ? `<span class="badge">🔗 ${p.hotspots.length}</span>` : ''}</div>
@@ -313,7 +317,28 @@ function renamePhoto(p, titleEl) {
   input.addEventListener('click', (e) => e.stopPropagation());
 }
 
+// Filtre les cartes sans reconstruire la page (le champ de recherche garde la main).
+function applyLibrarySearch() {
+  const cards = [...app.querySelectorAll('.card')];
+  let n = 0;
+  cards.forEach((c) => {
+    const ok = matchesSearch(state.search, c.dataset.search);
+    c.hidden = !ok;
+    n += ok;
+  });
+  const count = app.querySelector('.search-count');
+  if (count) count.textContent = state.search ? `${n} photo(s) trouvée(s) sur ${cards.length}` : '';
+}
+
 function bindLibrary() {
+  const search = app.querySelector('[name=library-search]');
+  if (search) {
+    search.addEventListener('input', () => {
+      state.search = search.value;
+      applyLibrarySearch();
+    });
+    applyLibrarySearch();
+  }
   app.querySelectorAll('[data-act]').forEach((b) => {
     b.addEventListener('click', (e) => {
       const card = b.closest('.card');
@@ -499,6 +524,7 @@ async function photoSources(photos) {
     list.push({
       id: p.id,
       name: p.name,
+      fileName: p.fileName,
       src: url,
       srcType: out ? 'equirect' : p.srcType,
       params: out ? {} : p.params,

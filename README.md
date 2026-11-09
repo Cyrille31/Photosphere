@@ -16,7 +16,8 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
 - **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
 - **Nord** : points cardinaux sur l'horizon de l'éditeur ; « Indiquer le nord » puis un clic dans l'image règle le cap.
 - **Défaire** (bouton ou Ctrl+Z) la dernière action de l'éditeur ; renommage des photos directement dans la bibliothèque.
-- **Liens** : destination choisie dans une grille de vignettes (taille réglable, Ctrl + molette) ; **vue d'arrivée** réglable par lien ; raccourci **« ↩ Lien retour »** pour placer le lien qui revient (par ex. sur la porte vue depuis la pièce).
+- **Recherche** d'une photo par son nom (ou son nom de fichier), sans tenir compte des majuscules ni des accents : bibliothèque, choix des liens, liste de la visionneuse.
+- **Liens** : destination choisie dans une grille de vignettes avec recherche (taille réglable, Ctrl + molette) ; **vue d'arrivée** réglable par lien ; raccourci **« ↩ Lien retour »** pour placer le lien qui revient (par ex. sur la porte vue depuis la pièce).
 - **Liens** entre photos : on touche l’endroit (porte, passage) qui mène à une autre photo ; lien retour créé automatiquement.
 - **Visionneuse** (bouton ✏ Éditer pour redresser la photo affichée ou y ajouter un lien, puis revenir au même endroit) :
   - *Tactile* : doigt / souris, pincer ou molette pour zoomer ;

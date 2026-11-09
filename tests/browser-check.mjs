@@ -229,7 +229,13 @@ try {
   await page.keyboard.up('Control');
   const thumbAfter = await page.$eval('.picker-grid', (g) => g.style.getPropertyValue('--thumb'));
   check(parseInt(thumbAfter) > parseInt(thumbBefore), `choix par vignettes, taille réglable avec Ctrl + molette (${thumbBefore} → ${thumbAfter})`);
-  await page.click('dialog.picker .picker-item');
+  // Recherche textuelle dans le choix de la photo à lier : rien ne correspond, puis la bonne photo.
+  await page.fill('dialog.picker [name=search]', 'cuisine');
+  check((await page.locator('dialog.picker .picker-item:visible').count()) === 0 && (await page.isVisible('.picker-empty')), 'choix du lien : recherche sans résultat signalée');
+  await page.fill('dialog.picker [name=search]', 'PHONE');
+  check((await page.locator('dialog.picker .picker-item:visible').count()) === 1, 'choix du lien : recherche par nom (sans tenir compte des majuscules)');
+  await page.press('dialog.picker [name=search]', 'Enter');
+  await page.waitForSelector('dialog [name=reverse]');
   await page.click('dialog [data-ok]');
   check((await page.locator('.link-item').count()) === 1, 'lien créé');
   // Vue d'arrivée : on tourne l'aperçu de la photo de destination puis on valide.
@@ -270,6 +276,12 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => [...document.querySelectorAll('.card-title')].some((t) => t.textContent.includes('Entrée du jardin')));
   check(true, 'photo renommée depuis la bibliothèque');
+  await page.fill('[name=library-search]', 'entree jardin');
+  const shown = await page.locator('.card:visible').count();
+  const countText = await page.textContent('.search-count');
+  check(shown === 1 && countText.includes('1 photo'), `bibliothèque : recherche « entree jardin » (sans accent) → ${countText}`);
+  await page.fill('[name=library-search]', '');
+  check((await page.locator('.card:visible').count()) === 2, 'bibliothèque : recherche effacée, toutes les photos visibles');
   // Exporte les réglages, abîme la bibliothèque, puis recharge le fichier.
   const settingsJson = await page.evaluate(async () => {
     const { buildSettings } = await import('./src/settings-file.js');
@@ -312,6 +324,13 @@ try {
   await page.keyboard.press('ArrowLeft');
   await page.waitForTimeout(1200);
   check(t0 !== t1 && (await page.textContent('.ps-title')) === t0, `visionneuse, flèches du clavier : « ${t0} » → « ${t1} » → retour`);
+  await page.click('.ps-list-btn');
+  await page.fill('.ps-search', 'phone');
+  await page.press('.ps-search', 'Enter');
+  await page.waitForFunction(() => document.querySelector('.ps-title').textContent === 'phone_360', null, { timeout: 10000 });
+  check(true, 'visionneuse : liste ☰ avec recherche, Entrée ouvre la photo trouvée');
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(1200);
   // Éditeur : boutons et flèches, avec enregistrement automatique des modifications.
   await page.click('.ps-edit');
   await page.waitForSelector('.editor canvas');
