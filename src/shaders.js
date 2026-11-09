@@ -125,13 +125,15 @@ void main() {
   vec3 dir;
   float inside = 1.0;
   vec2 ndc = (frag - uVp.xy) / uVp.zw * 2.0 - 1.0;
+  // Position dans l'espace des tangentes, avant correction des lentilles (0 = centre optique).
+  vec2 t0 = vec2(ndc.x * uProj.x + uProj.y, ndc.y * uProj.z + uProj.w);
   if (uViewMode == 1) {
     vec2 uv = (frag - uFlat.xy) / uFlat.zw;
     inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     uv = clamp(uv, 0.0, 1.0);
     dir = dirFromLonLat((uv.x - 0.5) * 2.0 * PI, (uv.y - 0.5) * PI);
   } else {
-    vec2 t = vec2(ndc.x * uProj.x + uProj.y, ndc.y * uProj.z + uProj.w);
+    vec2 t = t0;
     float r2 = dot(t, t);
     t *= 1.0 + uDistort.x * r2 + uDistort.y * r2 * r2;
     dir = normalize(uCam * vec3(t, 1.0));
@@ -176,7 +178,7 @@ void main() {
   }
 
   if (uReticle > 0.0 && uViewMode == 0) {
-    vec2 px = (ndc * uVp.zw * 0.5);
+    vec2 px = (t0 / uProj.xz) * uVp.zw * 0.5;
     float d = length(px);
     float rr = uReticle;
     float ring = smoothstep(rr * 0.55, rr * 0.7, d) * (1.0 - smoothstep(rr * 0.85, rr, d));

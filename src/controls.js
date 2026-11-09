@@ -1,7 +1,15 @@
 // Contrôle de la vue : glisser / pincer / molette, gyroscope, vue à plat, stéréo pour casque.
 import { DEG, cameraMatrix, deviceOrientationMatrix, headingOf, mat3Mul, rotY } from './math.js';
 
-export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1 };
+// sep : écartement entre les centres des deux images, en % de la largeur de l'écran.
+export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1, sep: 50 };
+
+// Coefficients publiés par Google pour ses casques (profils de visionneuse Cardboard).
+export const HEADSET_PRESETS = {
+  v1: { k1: 0.441, k2: 0.156 },
+  v2: { k1: 0.34, k2: 0.55 },
+  none: { k1: 0, k2: 0 },
+};
 
 export class ViewController {
   constructor(canvas, renderer, opts = {}) {
@@ -215,12 +223,16 @@ export class ViewController {
       const sy = Math.tan((this.headset.eyeFov / 2) * DEG);
       const sx = sy * (hw / h);
       const distort = [this.headset.k1, this.headset.k2];
+      // Centre optique de chaque œil, écartés de `sep` % de la largeur autour du milieu de l'écran.
+      const half = ((this.headset.sep ?? 50) / 100) * (w / 2);
+      const ndcLeft = ((w / 2 - half) / hw) * 2 - 1;
+      const ndcRight = ((w / 2 + half - hw) / (w - hw)) * 2 - 1;
       return {
         mode: 'persp',
         stereo: true,
         eyes: [
-          { vp: [0, 0, hw, h], cam, proj: [sx, 0, sy, 0], distort },
-          { vp: [hw, 0, w - hw, h], cam, proj: [sx, 0, sy, 0], distort },
+          { vp: [0, 0, hw, h], cam, proj: [sx, -ndcLeft * sx, sy, 0], distort },
+          { vp: [hw, 0, w - hw, h], cam, proj: [sx, -ndcRight * sx, sy, 0], distort },
         ],
       };
     }

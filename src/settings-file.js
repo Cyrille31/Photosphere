@@ -25,7 +25,7 @@ export function buildSettings(photos) {
       params: p.params,
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
-        .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '' })),
+        .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}) })),
     })),
   };
 }
@@ -61,7 +61,7 @@ export async function applySettings(data) {
     }
     const hotspots = (e.hotspots || [])
       .filter((h) => idOf.has(key(h.target)))
-      .map((h) => ({ id: newId(), target: idOf.get(key(h.target)), yaw: h.yaw, pitch: h.pitch, label: h.label || '' }));
+      .map((h) => ({ id: newId(), target: idOf.get(key(h.target)), yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}) }));
     const srcType = e.srcType || cur.srcType;
     const params = { ...cur.params, ...(e.params || {}) };
     const imageChanged = srcType !== cur.srcType || JSON.stringify(params) !== JSON.stringify(cur.params);
