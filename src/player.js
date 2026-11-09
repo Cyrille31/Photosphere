@@ -386,11 +386,28 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
   }
 
   const list = $('.ps-list');
+  // Recherche insensible à la casse et aux accents (tous les mots doivent figurer).
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   $('.ps-list-btn').addEventListener('click', () => {
     list.innerHTML = `<h3>${title || 'Photos'}</h3>`;
+    const search = el('input', 'ps-search');
+    search.type = 'search';
+    search.placeholder = '🔍 Rechercher une photo';
+    list.appendChild(search);
+    const items = [];
+    search.addEventListener('input', () => {
+      const words = norm(search.value).split(/\s+/).filter(Boolean);
+      items.forEach(({ b, text }) => (b.hidden = !words.every((w) => text.includes(w))));
+    });
+    search.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const first = items.find(({ b }) => !b.hidden);
+      if (first) first.b.click();
+    });
     photos.forEach((p) => {
       const b = el('button', 'ps-list-item' + (current && p.id === current.id ? ' active' : ''));
       b.textContent = p.name;
+      items.push({ b, text: norm(p.name + ' ' + (p.fileName || '')) });
       b.addEventListener('click', () => {
         list.hidden = true;
         go(p.id);
@@ -401,6 +418,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     close.addEventListener('click', () => (list.hidden = true));
     list.appendChild(close);
     list.hidden = false;
+    if (!matchMedia('(pointer: coarse)').matches) search.focus();
   });
 
   const hs = $('.ps-headset');

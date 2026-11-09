@@ -28,6 +28,8 @@
 .ps-panel label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .ps-panel output { float: right; opacity: .75; }
 .ps-list-item { text-align: left; border: 0; border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.06); color: #fff; font: inherit; cursor: pointer; }
+.ps-search { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 14px; }
+.ps-list-item[hidden] { display: none; }
 .ps-list-item.active { outline: 2px solid #22c1ee; }
 .ps-toast { position: absolute; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: max-content; max-width: 86vw; background: rgba(10, 16, 35, .9); padding: 10px 14px; border-radius: 12px; font-size: 14px; text-align: center; }
 .ps-toast[hidden] { display: none; }

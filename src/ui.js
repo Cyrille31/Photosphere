@@ -22,3 +22,18 @@ export function dialog(html, setup) {
   d.showModal();
   return d;
 }
+
+// Recherche textuelle : insensible à la casse et aux accents, tous les mots doivent figurer.
+export function normalizeText(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+export function matchesSearch(query, ...texts) {
+  const words = normalizeText(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = normalizeText(texts.join(' '));
+  return words.every((w) => hay.includes(w));
+}
