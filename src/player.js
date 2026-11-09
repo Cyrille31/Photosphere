@@ -4,6 +4,9 @@ import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js'
 import { DEG, vecDot, mat3Mul, mat3Apply, rotY, headingOf, dirFromLonLat } from './math.js';
 
 const DWELL_MS = 1600;
+// Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
+// visibles à moins de HOT_NEAR degrés, invisibles au-delà de HOT_FAR, avec un fondu dans le temps.
+const HOT_NEAR = 10, HOT_FAR = 32, HOT_FADE_MS = 160;
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -144,6 +147,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     }
     current = photo;
     renderer.setHotspots(hotspotsOf(photo));
+    hotAlpha = [];
     sel = -1;
     dwell = 0;
     $('.ps-title').textContent = photo.name;
@@ -204,14 +208,54 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     const dirs = hotDirs();
     [...box.children].forEach((b, i) => {
       const p = !controller.stereo && dirs[i] ? renderer.project(dirs[i], frame) : null;
-      if (!p) {
+      const a = hotAlpha[i] || 0;
+      if (!p || a < 0.02) {
         b.style.display = 'none';
         return;
       }
       b.style.display = '';
+      b.style.opacity = a.toFixed(2);
       b.style.transform = `translate(${p.x / dpr}px, ${p.y / dpr}px) translate(-50%, 26px)`;
     });
   }
+
+  // Opacité des cibles selon leur distance à la souris (PC) ou au centre de la vue / au regard.
+  let hotAlpha = [];
+  let mouse = null;
+  let lastAlphaTime = 0;
+  function updateHotAlpha(now, frame) {
+    const dirs = hotDirs();
+    let ref = null;
+    if (xrSession) ref = xrGaze;
+    else if (mouse && !controller.stereo && controller.mode !== 'gyro' && frame) ref = renderer.pick(mouse.x, mouse.y, frame);
+    if (!ref) ref = controller.gazeDir();
+    const dt = lastAlphaTime ? Math.min(100, now - lastAlphaTime) : 16;
+    lastAlphaTime = now;
+    const k = Math.min(1, dt / HOT_FADE_MS);
+    let moving = false;
+    hotAlpha = dirs.map((d, i) => {
+      const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, ref)))) / DEG;
+      const x = Math.min(1, Math.max(0, (HOT_FAR - ang) / (HOT_FAR - HOT_NEAR)));
+      const target = i === sel ? 1 : x * x * (3 - 2 * x);
+      const cur = hotAlpha[i] ?? 0;
+      const next = cur + (target - cur) * k;
+      if (Math.abs(target - next) > 0.01) moving = true;
+      return next;
+    });
+    if (moving) dirty = true;
+    return hotAlpha;
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    const r = canvas.getBoundingClientRect();
+    const s = canvas.width / (r.width || 1);
+    mouse = { x: (e.clientX - r.left) * s, y: (e.clientY - r.top) * s };
+    dirty = true;
+  });
+  canvas.addEventListener('pointerleave', () => {
+    mouse = null;
+    dirty = true;
+  });
 
   function updateGaze(now) {
     const useGaze = controller.stereo || controller.mode === 'gyro' || xrSession;
@@ -255,6 +299,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     const frame = controller.frame();
     renderer.draw({
       ...frame,
+      hotAlpha: updateHotAlpha(now, frame),
       hotSel: sel,
       dwell,
       hotSize: controller.stereo ? 0.09 : 0.07,
@@ -358,7 +403,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
             proj: [1 / P[0], P[8] / P[0], 1 / P[5], P[9] / P[5]],
           };
         });
-        renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotSel: sel, dwell, hotSize: 0.09, reticle: 0 });
+        renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotAlpha: updateHotAlpha(now, null), hotSel: sel, dwell, hotSize: 0.09, reticle: 0 });
       };
       session.requestAnimationFrame(onFrame);
     } catch (e) {

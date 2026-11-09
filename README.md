@@ -24,6 +24,9 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
   - *Bout de bras* : on bouge le téléphone (gyroscope) ;
   - *Casque VR* : écran partagé avec correction des lentilles (k1, k2 ; préréglages Cardboard v1 / v2, RAZ) et écartement réglable des centres des deux images, pour casques type Cardboard ; on fixe un lien 1,5 s pour y aller (ou bouton du casque) ;
   - *WebXR* natif quand le navigateur le propose.
+- **Plan** des photos (nord en haut) : mini-sphères et liens ; déplacer une photo réoriente ses liens retour automatiques vers les photos voisines (les liens placés à la main ne bougent pas).
+- **Dossier de travail** (PC, Chrome / Edge) : PhotoSphère lit les photos du dossier d'origine et y enregistre automatiquement `photosphere.json` ; option pour renommer aussi le fichier d'une photo quand on la renomme.
+- **Visionneuse** : les cibles des liens n'apparaissent, progressivement, qu'à l'approche de la souris ou du regard.
 - **Fichier de réglages** `photosphere.json` (≈ 11 ko par photo) : à ranger avec les photos d'origine, jamais modifiées. En réimportant le dossier (ou les photos avec ce fichier), redressement, nord, calibrage, liens et noms sont retrouvés.
 - **Exports** : visite autonome en un seul fichier `.html` (s’ouvre partout, même en local), ZIP des JPEG, sauvegarde/restauration du projet pour passer du PC au téléphone.
 

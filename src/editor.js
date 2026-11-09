@@ -34,7 +34,8 @@ function lensFields(key, title) {
 // onNavigate(sens, vue) : passe à la photo précédente (-1) ou suivante (+1), après enregistrement.
 // onOpenPhoto(id, vue, focus) : ouvre une autre photo dans l'éditeur (ex. pour régler un lien retour).
 // focus.linkTo : à l'ouverture, prépare le déplacement du lien qui pointe vers cette photo.
-export async function openEditor(container, photo, { photos, onDone, onNavigate, onOpenPhoto, initialView, focus }) {
+// onRenamed(id, nom) : appelé après l'enregistrement d'un nouveau nom (renommage du fichier).
+export async function openEditor(container, photo, { photos, onDone, onNavigate, onOpenPhoto, onRenamed, initialView, focus }) {
   const p = clone(photo);
   p.params = { yaw: 0, pitch: 0, roll: 0, ...clone(DEFAULT_LENS_PARAMS), ...p.params };
   p.hotspots = p.hotspots || [];
@@ -322,7 +323,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         redraw();
       } else if (kind === 'move') {
         snapshot();
-        Object.assign(p.hotspots[index], pos);
+        // Placé à la main : le lien ne suit plus le plan.
+        Object.assign(p.hotspots[index], pos, { auto: false });
         dirty = true;
         renderLinks();
         redraw();
@@ -380,6 +382,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         <button class="link-target" data-target title="Changer la photo de destination"><img alt=""><span>→ ${escapeHtml(t ? t.name : '?')}</span><small>changer</small></button>
         <div class="row2"><input type="text" name="label" value="${escapeHtml(h.label || '')}" placeholder="Texte affiché"></div>
         <div class="note">Vue à l’arrivée : ${arrive}</div>
+        <label class="check small"><input type="checkbox" name="auto" ${h.auto ? 'checked' : ''}> Direction d’après le plan (lien automatique)</label>
         <div class="row2">
           <button class="btn small" data-arrive title="Orienter la photo d’arrivée">🎯 Vue d’arrivée</button>
           ${h.arrive ? '<button class="btn small" data-arrive-auto title="Revenir à l’orientation automatique">Auto</button>' : ''}
@@ -410,6 +413,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         p.hotspots[i].label = e.target.value;
         dirty = true;
         redraw();
+      });
+      item.querySelector('[name=auto]').addEventListener('change', (e) => {
+        snapshot();
+        p.hotspots[i].auto = e.target.checked;
+        dirty = true;
       });
       item.querySelector('[data-arrive]').addEventListener('click', async () => {
         // Sans réglage, on arrive en regardant dans la direction du lien.
@@ -635,9 +643,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const t = await db.getPhoto(r.target);
       if (!t || !updated.hotspots.some((h) => h.target === r.target)) continue;
       if ((t.hotspots || []).some((h) => h.target === p.id)) continue;
-      await db.putPhoto({ ...t, hotspots: [...(t.hotspots || []), { id: newId(), target: p.id, label: '', yaw: r.yaw, pitch: r.pitch }] });
+      // Lien retour automatique : sa direction suit ensuite la position des photos sur le plan.
+      await db.putPhoto({ ...t, hotspots: [...(t.hotspots || []), { id: newId(), target: p.id, label: '', yaw: r.yaw, pitch: r.pitch, auto: true }] });
     }
     dirty = false;
+    if (onRenamed && updated.name !== cur.name) await onRenamed(p.id, updated.name);
     return imageChanged;
   }
 

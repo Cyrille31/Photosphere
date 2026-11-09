@@ -3,6 +3,8 @@ import * as db from './db.js';
 import { importFiles, convertPhoto } from './importer.js';
 import { createPlayer } from './player.js';
 import { openEditor } from './editor.js';
+import { openPlan } from './plan.js';
+import * as ws from './workspace.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
 import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
@@ -216,7 +218,96 @@ function importButtons() {
   return `
     <button class="btn primary" data-act="import">📂 Importer des photos</button>
     ${supportsFolder ? '<button class="btn" data-act="folder">💾 Carte micro SD (dossier)</button>' : ''}
-    <button class="btn" data-act="wireless">📡 Gear 360 sans fil</button>`;
+    <button class="btn" data-act="wireless">📡 Gear 360 sans fil</button>
+    ${ws.isSupported() ? `<button class="btn" data-act="workspace" title="Dossier des photos d’origine, avec enregistrement automatique de photosphere.json">${workspaceLabel()}</button>` : ''}`;
+}
+
+// ---------- dossier de travail ----------
+function workspaceLabel() {
+  const s = ws.getStatus();
+  if (!s.linked) return '📁 Dossier de travail';
+  if (!s.granted) return `📁 Reconnecter « ${escapeHtml(s.name)} »`;
+  return `📁 ${escapeHtml(s.name)} ✓`;
+}
+
+function refreshWorkspaceButton() {
+  const b = app.querySelector('[data-act=workspace]');
+  if (b) b.innerHTML = workspaceLabel();
+}
+
+async function importFromWorkspace() {
+  const files = await ws.listFiles();
+  if (!files.length) return toast('Aucune photo JPEG trouvée dans ce dossier.', true);
+  await handleFiles(files);
+  await ws.saveNow();
+}
+
+function showWorkspace() {
+  const s = ws.getStatus();
+  const saved = s.lastSaved ? s.lastSaved.toLocaleTimeString('fr-FR') : 'pas encore';
+  dialog(
+    `<h2>Dossier de travail</h2>
+    <p>Liez le dossier qui contient vos photos d’origine : PhotoSphère y lit les photos et y enregistre <b>automatiquement</b> le fichier <code>${'photosphere.json'}</code> (redressement, nord, liens, noms, plan) après chaque modification. Les photos elles-mêmes ne sont jamais modifiées.</p>
+    ${
+      s.linked
+        ? `<p>Dossier lié : <b>${escapeHtml(s.name)}</b> — ${s.granted ? `enregistrement automatique actif (dernier : ${saved})` : 'accès à reconfirmer'}.</p>
+           ${s.lastError ? `<p class="note">Dernière erreur : ${escapeHtml(s.lastError)}</p>` : ''}
+           <div class="row" style="justify-content:flex-start">
+             ${s.granted ? '<button class="btn" data-ws="import">📥 Importer les photos du dossier</button><button class="btn" data-ws="save">💾 Enregistrer maintenant</button>' : '<button class="btn primary" data-ws="reconnect">🔓 Reconnecter</button>'}
+             <button class="btn danger" data-ws="unlink">Délier</button>
+           </div>`
+        : '<div class="row" style="justify-content:flex-start"><button class="btn primary" data-ws="link">📁 Choisir le dossier des photos</button></div>'
+    }
+    <p class="note">Disponible sur PC avec Chrome ou Edge. Le renommage des fichiers sur le disque se règle dans ⚙ Réglages.</p>
+    <div class="row"><button class="btn" data-close>Fermer</button></div>`,
+    (d) => {
+      d.querySelectorAll('[data-ws]').forEach((b) =>
+        b.addEventListener('click', async () => {
+          const act = b.dataset.ws;
+          try {
+            if (act === 'link') {
+              await ws.link();
+              d.close();
+              await importFromWorkspace();
+            } else if (act === 'reconnect') {
+              await ws.reconnect();
+              d.close();
+              if (ws.getStatus().granted) await importFromWorkspace();
+            } else if (act === 'import') {
+              d.close();
+              await importFromWorkspace();
+            } else if (act === 'save') {
+              const ok = await ws.saveNow();
+              toast(ok ? 'photosphere.json enregistré dans le dossier.' : 'Enregistrement impossible : ' + ws.getStatus().lastError, !ok);
+              d.close();
+            } else if (act === 'unlink') {
+              await ws.unlink();
+              d.close();
+            }
+          } catch (e) {
+            if (e.name !== 'AbortError') toast(e.message, true);
+          }
+          refreshWorkspaceButton();
+        })
+      );
+    }
+  );
+}
+
+// Option : le fichier d'origine prend le nouveau nom de la photo (dossier de travail).
+async function syncFileName(id, name) {
+  if (!state.settings.renameFiles || !ws.getStatus().granted) return;
+  const cur = await db.getPhoto(id);
+  if (!cur) return;
+  try {
+    const file = await ws.renameFile(cur.fileName, name);
+    if (file) {
+      await db.updatePhoto(id, (c) => ({ ...c, fileName: file }));
+      toast(`Fichier renommé sur le disque : ${file}`);
+    }
+  } catch (e) {
+    toast('Fichier non renommé : ' + e.message, true);
+  }
 }
 
 async function renderLibrary() {
@@ -240,6 +331,7 @@ async function renderLibrary() {
     <div class="toolbar">
       ${importButtons()}
       <span class="spacer"></span>
+      <button class="btn" data-act="plan" title="Plan des photos et de leurs liens">🗺 Plan</button>
       <button class="btn primary" data-act="visit">🥽 Visiter</button>
       <div class="menu">
         <button class="btn" data-act="menu">⬇ Exporter ▾</button>
@@ -306,6 +398,7 @@ function renamePhoto(p, titleEl) {
     if (save && name && name !== p.name) {
       const cur = await db.getPhoto(p.id);
       if (cur) await db.putPhoto({ ...cur, name });
+      await syncFileName(p.id, name);
     }
     await refresh();
   };
@@ -358,6 +451,14 @@ async function onAction(act, p, el) {
       return pickFolder.click();
     case 'restore':
       return pickProject.click();
+    case 'workspace':
+      if (ws.getStatus().linked && !ws.getStatus().granted) {
+        await ws.reconnect();
+        refreshWorkspaceButton();
+        if (ws.getStatus().granted) await importFromWorkspace();
+        return;
+      }
+      return showWorkspace();
     case 'wireless':
       return showWirelessHelp();
     case 'menu':
@@ -365,6 +466,9 @@ async function onAction(act, p, el) {
       return;
     case 'visit':
       location.hash = '#/view/' + (state.photos[0] && state.photos[0].id);
+      return;
+    case 'plan':
+      location.hash = '#/plan';
       return;
     case 'view':
       location.hash = '#/view/' + p.id;
@@ -487,13 +591,15 @@ async function showSettings() {
     </select></label>
     <label class="field">Qualité JPEG : <output>${state.settings.quality}</output><input type="range" name="quality" min="75" max="100" value="${state.settings.quality}"></label>
     ${est ? `<p class="note">Stockage utilisé : ${mb(est.usage || 0)} sur ${mb(est.quota || 0)} disponibles.</p>` : ''}
+    ${ws.isSupported() ? `<label class="check"><input type="checkbox" name="renameFiles" ${state.settings.renameFiles ? 'checked' : ''}> Quand je renomme une photo, renommer aussi son fichier dans le dossier de travail</label>` : ''}
     <label class="check"><input type="checkbox" name="reconvert"> Reconvertir toutes les photos avec ces réglages</label>
     <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-save>Enregistrer</button></div>`,
     (d) => {
       const q = d.querySelector('[name=quality]');
       q.addEventListener('input', () => (q.previousElementSibling.textContent = q.value));
       d.querySelector('[data-save]').addEventListener('click', async () => {
-        state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value };
+        const rf = d.querySelector('[name=renameFiles]');
+        state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles };
         await db.putSetting('app', state.settings);
         if (d.querySelector('[name=reconvert]').checked) {
           for (const p of await db.listPhotos()) await db.putPhoto({ ...p, status: 'pending' });
@@ -548,7 +654,7 @@ async function openViewer(id) {
       startId: id,
       title: 'PhotoSphère',
       initialView: state.lastView,
-      onExit: () => (location.hash = '#/'),
+      onExit: () => (location.hash = state.origin === 'plan' ? '#/plan' : '#/'),
       onEdit: (photoId, view) => {
         state.lastView = view;
         state.returnToViewer = true;
@@ -585,6 +691,7 @@ async function openEditorView(id) {
     state.editorFocus = null;
     active = await openEditor(app, photo, {
       photos: state.photos,
+      onRenamed: syncFileName,
       initialView: fromViewer || navigated ? state.lastView : null,
       focus,
       onOpenPhoto: (otherId, view, focusOpt) => {
@@ -608,7 +715,7 @@ async function openEditorView(id) {
         if (fromViewer) {
           state.lastView = view;
           location.hash = '#/view/' + id;
-        } else location.hash = '#/';
+        } else location.hash = state.origin === 'plan' ? '#/plan' : '#/';
       },
     });
   } catch (e) {
@@ -617,10 +724,26 @@ async function openEditorView(id) {
   }
 }
 
+// Plan des photos : on peut y ouvrir une photo, et l'on y revient en quittant la visionneuse / l'éditeur.
+async function openPlanView() {
+  state.view = 'plan';
+  state.origin = 'plan';
+  app.innerHTML = '';
+  if (!state.photos.length) {
+    location.hash = '#/';
+    return;
+  }
+  active = await openPlan(app, {
+    photos: state.photos,
+    onOpen: (id, mode) => (location.hash = (mode === 'edit' ? '#/edit/' : '#/view/') + id),
+  });
+}
+
 async function route() {
   const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
-  // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo.
-  state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : 'library';
+  const isPlan = location.hash === '#/plan';
+  // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo ou le plan.
+  state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : isPlan ? 'plan' : 'library';
   if (active) {
     const a = active;
     active = null;
@@ -629,6 +752,8 @@ async function route() {
   await refresh();
   if (m && m[1] === 'view') return openViewer(m[2]);
   if (m && m[1] === 'edit') return openEditorView(m[2]);
+  if (isPlan) return openPlanView();
+  state.origin = 'library';
   renderLibrary();
   processQueue();
 }
@@ -661,6 +786,8 @@ async function migratePhotos() {
 (async function start() {
   state.settings = { ...state.settings, ...((await db.getSetting('app')) || {}) };
   await migratePhotos();
+  await ws.init();
+  ws.onStatus(refreshWorkspaceButton);
   // Une conversion interrompue (fermeture de l'onglet) est relancée.
   await route();
   processQueue();

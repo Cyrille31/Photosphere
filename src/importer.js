@@ -160,9 +160,8 @@ export async function convertPhoto(photo, settings, onProgress, shouldAbort) {
   if (!orig) throw new Error('Fichier original introuvable');
   if (photo.srcType === 'fisheye' && (!photo.params.autoCalibrated || photo.params.calibVersion !== CALIB_VERSION)) {
     const patch = await calibrateFromBlob(orig, photo.params, shouldAbort);
-    const cur = await db.getPhoto(photo.id);
-    photo = { ...cur, params: { ...cur.params, ...patch, autoCalibrated: true } };
-    await db.putPhoto(photo);
+    photo = await db.updatePhoto(photo.id, (cur) => ({ ...cur, params: { ...cur.params, ...patch, autoCalibrated: true } }));
+    if (!photo) throw new Error('Photo supprimée pendant la conversion');
   }
   const head = new Uint8Array(await orig.slice(0, 256 * 1024).arrayBuffer());
   const segments = [];
@@ -184,11 +183,11 @@ export async function convertPhoto(photo, settings, onProgress, shouldAbort) {
   });
   await db.putBlob(photo.id + ':out', blob);
   await db.putBlob(photo.id + ':thumb', thumb);
-  const cur = await db.getPhoto(photo.id);
-  if (!cur) throw new Error('Photo supprimée pendant la conversion');
   // Si la photo a été modifiée pendant la conversion, elle reste à reconvertir.
-  const same = cur.srcType === photo.srcType && JSON.stringify(cur.params) === JSON.stringify(photo.params);
-  const updated = { ...cur, status: same ? 'done' : 'pending', outWidth: width, outSize: blob.size, convertedAt: Date.now() };
-  await db.putPhoto(updated);
+  const updated = await db.updatePhoto(photo.id, (cur) => {
+    const same = cur.srcType === photo.srcType && JSON.stringify(cur.params) === JSON.stringify(photo.params);
+    return { ...cur, status: same ? 'done' : 'pending', outWidth: width, outSize: blob.size, convertedAt: Date.now() };
+  });
+  if (!updated) throw new Error('Photo supprimée pendant la conversion');
   return updated;
 }
