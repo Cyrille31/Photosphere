@@ -151,6 +151,38 @@ export class PanoRenderer {
     return { x: x + ((nx + 1) / 2) * w, y: h - (y + ((ny + 1) / 2) * hh) };
   }
 
+  // Rend une vue perspective carrée hors écran et renvoie ses pixels (RGBA, lignes de bas en haut).
+  // Sert à l'analyse de l'image (redressement automatique) ; les cibles de liens sont masquées.
+  readView(cam, fovDeg, size) {
+    const gl = this.gl;
+    if (!this.viewFbo || this.viewFboSize !== size) {
+      if (this.viewFbo) {
+        gl.deleteFramebuffer(this.viewFbo);
+        gl.deleteTexture(this.viewTex);
+      }
+      this.viewTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.viewTex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, size, size);
+      this.viewFbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.viewTex, 0);
+      this.viewFboSize = size;
+    }
+    const t = Math.tan(((fovDeg / 2) * Math.PI) / 180);
+    this.draw({
+      mode: 'persp',
+      eyes: [{ vp: [0, 0, size, size], cam, proj: [t, 0, t, 0] }],
+      framebuffer: this.viewFbo,
+      hotAlpha: this.hotspots.map(() => 0),
+      hotSel: -1,
+    });
+    const px = new Uint8Array(size * size * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.viewFbo);
+    gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return px;
+  }
+
   dispose() {
     this.disposed = true;
     deleteSource(this.gl, this.source);

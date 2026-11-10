@@ -382,12 +382,14 @@ try {
   await page.screenshot({ path: path.join(shots, '07-bout-de-bras.png') });
 
   console.log('Visite autonome');
-  const html = await page.evaluate(async (startId) => {
+  // Sans vue d'arrivée réglée, on doit arriver dos au lien qui ramène à la photo de départ.
+  const { html, expectYaw } = await page.evaluate(async (startId) => {
     const db = await import('./src/db.js');
     const { exportTourHtml } = await import('./src/tour-export.js');
-    const photos = await db.listPhotos();
+    const photos = (await db.listPhotos()).map((p) => ({ ...p, hotspots: p.hotspots.map(({ arrive, ...h }) => h) }));
     const blob = await exportTourHtml(photos, { title: 'Test', startId, maxWidth: 2048 });
-    return blob.text();
+    const back = photos.find((p) => p.id !== startId).hotspots.find((h) => h.target === startId);
+    return { html: await blob.text(), expectYaw: back.yaw + 180 };
   }, result.id);
   const tourFile = path.join(shots, 'visite.html');
   fs.writeFileSync(tourFile, html);
@@ -426,6 +428,9 @@ try {
   const after = await tour.textContent('.ps-title');
   check(tourErrors.length === 0, 'visite autonome ouverte en file:// sans erreur ' + tourErrors.join(' | '));
   check(before !== after, `navigation par lien : « ${before} » → « ${after} »`);
+  const arrivedYaw = +(await tour.$eval('.ps-player', (el) => el.dataset.yaw));
+  const dYaw = Math.abs(((arrivedYaw - expectYaw + 540) % 360) - 180);
+  check(dYaw < 2, `arrivée orientée dos au lien retour (cap ${arrivedYaw.toFixed(1)}°, attendu ${(((expectYaw % 360) + 540) % 360 - 180).toFixed(1)}°)`);
 } catch (e) {
   failures++;
   console.error(e);
