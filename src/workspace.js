@@ -110,7 +110,7 @@ export async function saveNow() {
   if (saving) await saving;
   saving = (async () => {
     try {
-      const blob = settingsBlob(await db.listPhotos());
+      const blob = settingsBlob(await db.listPhotos(), await db.getPlanDrawing());
       const fh = await handle.getFileHandle(SETTINGS_FILE_NAME, { create: true });
       const w = await fh.createWritable();
       await w.write(blob);

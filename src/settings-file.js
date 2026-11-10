@@ -11,12 +11,13 @@ export function isSettingsFile(file) {
   return /\.json$/i.test(file.name);
 }
 
-export function buildSettings(photos) {
+export function buildSettings(photos, plan = null) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   return {
     format: FORMAT,
     version: 1,
     exportedAt: new Date().toISOString(),
+    ...(plan && (plan.lines.length || plan.texts.length) ? { plan } : {}),
     photos: photos.map((p) => ({
       file: p.fileName,
       size: p.fileSize,
@@ -24,6 +25,8 @@ export function buildSettings(photos) {
       srcType: p.srcType,
       params: p.params,
       ...(p.mapPos ? { mapPos: p.mapPos } : {}),
+      ...(p.mapRot ? { mapRot: p.mapRot } : {}),
+      ...(p.relief ? { relief: p.relief } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
         .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}), ...(h.auto ? { auto: true } : {}) })),
@@ -31,8 +34,8 @@ export function buildSettings(photos) {
   };
 }
 
-export function settingsBlob(photos) {
-  return new Blob([JSON.stringify(buildSettings(photos), null, 1)], { type: 'application/json' });
+export function settingsBlob(photos, plan = null) {
+  return new Blob([JSON.stringify(buildSettings(photos, plan), null, 1)], { type: 'application/json' });
 }
 
 // Applique un fichier de réglages aux photos de la bibliothèque, reconnues par leur nom de fichier.
@@ -52,6 +55,7 @@ export async function applySettings(data) {
     const p = find(e);
     if (p) idOf.set(key(e.file), p.id);
   });
+  if (data.plan && (Array.isArray(data.plan.lines) || Array.isArray(data.plan.texts))) await db.putPlanDrawing(data.plan);
   let applied = 0;
   const unmatched = [];
   for (const e of data.photos) {
@@ -70,6 +74,8 @@ export async function applySettings(data) {
       ...cur,
       name: e.name || cur.name,
       ...(e.mapPos ? { mapPos: e.mapPos } : {}),
+      ...(e.mapRot != null ? { mapRot: e.mapRot } : {}),
+      ...(e.relief ? { relief: e.relief } : {}),
       srcType,
       params,
       hotspots,

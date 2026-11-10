@@ -2,7 +2,8 @@
 import { DEG, cameraMatrix, deviceOrientationMatrix, headingOf, mat3Mul, rotY } from './math.js';
 
 // sep : écartement entre les centres des deux images, en % de la largeur de l'écran.
-export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1, sep: 50 };
+// relief : intensité du relief (0 = aucun, 1 = écart réel des yeux, 6,4 cm).
+export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1, sep: 50, relief: 1 };
 
 // Coefficients publiés par Google pour ses casques (profils de visionneuse Cardboard).
 export const HEADSET_PRESETS = {

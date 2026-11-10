@@ -4,7 +4,7 @@ import { createZip, readZip } from './zip.js';
 import { decodeImage } from './gl-source.js';
 
 // Modules de la visionneuse, concaténés dans la page exportée (pas d'import possible en file://).
-const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'player.js'];
+const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'relief.js', 'player.js'];
 
 export async function bundlePlayer() {
   const sources = await Promise.all(PLAYER_MODULES.map((m) => fetch(new URL(m, import.meta.url)).then((r) => r.text())));
@@ -58,6 +58,7 @@ export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, 
       name: p.name,
       src: await blobToDataUrl(small),
       hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label, arrive }) => ({ target, yaw, pitch, label, arrive })),
+      ...(p.relief && p.relief.walls ? { relief: p.relief, reliefKey: p.relief.key } : {}),
     });
   }
   const ids = new Set(items.map((p) => p.id));

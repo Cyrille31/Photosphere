@@ -2,11 +2,14 @@
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
+import { estimateRelief, reliefKey } from './relief.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
 // visibles à moins de HOT_NEAR degrés, invisibles au-delà de HOT_FAR, avec un fondu dans le temps.
 const HOT_NEAR = 10, HOT_FAR = 32, HOT_FADE_MS = 160;
+const EYE_HALF_GAP = 0.032; // demi-écart des yeux (m)
+const DEFAULT_CAMERA_HEIGHT = 1.6;
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -32,8 +35,10 @@ function saveHeadsetSettings(h) {
 }
 
 // photos : [{ id, name, src, srcType, params, hotspots: [{ target, yaw, pitch, label }] }]
+// photo.relief : forme estimée de la pièce (relief.js), photo.reliefKey : redressement de l'image affichée.
+// onRelief(id, relief) : relief calculé à la volée, à mémoriser.
 // onEdit(id, vue) : ouvre l'éditeur sur la photo affichée ; initialView : { yaw, pitch } en radians.
-export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView }) {
+export function createPlayer(container, { photos, startId, onExit, onEdit, onRelief, title, initialView }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
@@ -72,6 +77,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
         <button class="ps-btn" data-preset="none">Sans correction</button>
       </div>
       <label>Écartement des centres des deux images <output></output><input type="range" name="sep" min="30" max="70" step="0.5"></label>
+      <label>Relief (effet 3D, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
       <p class="ps-note">Lentilles : les lignes droites doivent rester droites jusqu’au bord. Écartement : chaque œil doit voir le point de visée au centre de sa lentille.</p>
       <div class="ps-presets">
         <button class="ps-btn" data-preset="reset">↺ RAZ (valeurs par défaut)</button>
@@ -131,6 +137,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     }
     try {
       await renderer.load(photo.src, photo.srcType || 'equirect', photo.params || {});
+      renderer.setRelief(null);
+      reliefFor = null;
+      ensureRelief(photo);
     } catch (e) {
       toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
     }
@@ -342,6 +351,36 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     eyeLabels.forEach((s) => (s.textContent = controller.stereo ? name : ''));
   }
 
+  // Relief : forme de la pièce enregistrée, sinon estimée (une seule fois) dès qu'on passe au casque.
+  let reliefFor = null;
+  function ensureRelief(photo) {
+    if (!photo || reliefFor === photo.id) return;
+    const key = photo.reliefKey ?? reliefKey(photo.params);
+    if (photo.relief && photo.relief.walls && photo.relief.key === key) {
+      renderer.setRelief(photo.relief);
+      reliefFor = photo.id;
+      return;
+    }
+    if (!controller.stereo && !xrSession) return;
+    try {
+      const r = estimateRelief(renderer.readFlat(1024, 512), 1024, 512);
+      photo.relief = { h: (photo.relief && photo.relief.h) || DEFAULT_CAMERA_HEIGHT, walls: r.walls, ceil: r.ceil, key };
+      renderer.setRelief(photo.relief);
+      reliefFor = photo.id;
+      if (onRelief) onRelief(photo.id, photo.relief);
+    } catch (e) {
+      reliefFor = photo.id; // pas de relief pour cette photo
+    }
+  }
+  // Position d'un œil par rapport au centre de prise de vue, en hauteurs d'objectif.
+  function eyeOffset(vec) {
+    const r = current && current.relief;
+    const k = controller.headset.relief ?? 1;
+    if (!r || !k) return null;
+    const s = k / (r.h || DEFAULT_CAMERA_HEIGHT);
+    return vec.map((v) => v * s);
+  }
+
   function loop(now) {
     if (disposed) return;
     raf = requestAnimationFrame(loop);
@@ -350,6 +389,10 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     if (!dirty && controller.mode !== 'gyro') return;
     dirty = false;
     const frame = controller.frame();
+    if (frame.stereo) {
+      ensureRelief(current);
+      frame.eyes.forEach((e, k) => (e.offset = eyeOffset(mat3Apply(e.cam, [(k ? 1 : -1) * EYE_HALF_GAP, 0, 0]))));
+    }
     renderer.draw({
       ...frame,
       hotAlpha: updateHotAlpha(now, frame),
@@ -450,6 +493,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
         const rot = rotY(offset);
         xrGaze = mat3Apply(mat3Mul(rot, head), [0, 0, 1]);
         updateGaze(now);
+        ensureRelief(current);
+        const hp = pose.transform.position;
         const eyes = pose.views.map((view) => {
           const vp = layer.getViewport(view);
           const P = view.projectionMatrix;
@@ -457,6 +502,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
             vp: [vp.x, vp.y, vp.width, vp.height],
             cam: mat3Mul(rot, toOurs(view.transform.matrix)),
             proj: [1 / P[0], P[8] / P[0], 1 / P[5], P[9] / P[5]],
+            // Écart réel des yeux donné par le casque (repère WebXR : z vers l'arrière).
+            offset: eyeOffset(mat3Apply(rot, [view.transform.position.x - hp.x, view.transform.position.y - hp.y, -(view.transform.position.z - hp.z)])),
           };
         });
         renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotAlpha: updateHotAlpha(now, null), hotSel: sel, dwell, hotSize: 0.09, reticle: 0 });
@@ -526,7 +573,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
   const syncHeadset = () => {
     hs.querySelectorAll('input').forEach((i) => {
       i.value = controller.headset[i.name];
-      i.previousElementSibling.textContent = i.name === 'eyeFov' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.value;
+      i.previousElementSibling.textContent = i.name === 'eyeFov' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.name === 'relief' ? '× ' + i.value : i.value;
     });
   };
   hs.querySelectorAll('input').forEach((i) =>

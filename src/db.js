@@ -86,6 +86,16 @@ export const putBlob = (key, blob) => tx('blobs', 'readwrite', (s) => s.put(blob
 export const getSetting = (key) => tx('settings', 'readonly', (s) => s.get(key));
 export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v, key));
 
+// Dessin du plan (traits des pièces, textes) : { lines: [{ x1, y1, x2, y2 }], texts: [{ x, y, text, size }] }.
+export async function getPlanDrawing() {
+  const d = await getSetting('planDrawing');
+  return { lines: (d && d.lines) || [], texts: (d && d.texts) || [] };
+}
+export async function putPlanDrawing(d) {
+  await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [] });
+  notify();
+}
+
 export async function deletePhoto(id) {
   await tx('photos', 'readwrite', (s) => s.delete(id));
   notify();

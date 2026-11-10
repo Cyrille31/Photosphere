@@ -114,7 +114,33 @@ uniform float uHotSize;
 uniform float uDwell;
 uniform float uReticle;
 uniform float uGrid;
+// Relief : distance des murs par azimut (en hauteurs d'objectif), plafond, position de l'œil.
+uniform sampler2D uWallTex;
+uniform vec2 uRelief;       // x : relief disponible (0 / 1), y : hauteur du plafond au-dessus de l'objectif (0 = aucun)
+uniform vec3 uEye;          // position de l'œil par rapport au centre de la photo (en hauteurs d'objectif)
+uniform float uDepthView;   // > 0 : colore l'image selon la distance estimée (vérification)
 out vec4 outColor;
+
+float sceneDist(vec3 d) {
+  float hz = length(d.xz);
+  float u = atan(d.x, d.z) / (2.0 * PI) + 0.5;
+  float t = texture(uWallTex, vec2(u, 0.5)).r / max(hz, 1e-4);
+  if (d.y < -1e-4) t = min(t, 1.0 / -d.y);
+  if (uRelief.y > 0.0 && d.y > 1e-4) t = min(t, uRelief.y / d.y);
+  return min(t, 1000.0);
+}
+
+// Rayon issu de l'œil (décalé du centre de prise de vue) : on cherche le point de la pièce qu'il
+// atteint, puis la direction de ce point vue du centre, celle où la photo l'a enregistré.
+vec3 reliefDir(vec3 e, vec3 d) {
+  float t = sceneDist(d);
+  for (int i = 0; i < 5; i++) {
+    vec3 x = e + t * d;
+    float r = length(x);
+    t = max(0.05, t + sceneDist(x / r) - r);
+  }
+  return normalize(e + t * d);
+}
 
 vec3 dirFromLonLat(float lon, float lat) {
   return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
@@ -137,9 +163,22 @@ void main() {
     float r2 = dot(t, t);
     t *= 1.0 + uDistort.x * r2 + uDistort.y * r2 * r2;
     dir = normalize(uCam * vec3(t, 1.0));
+    if (uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir);
   }
   float pixAng = length(fwidth(dir));
   vec3 col = sampleSource(dir, pixAng).rgb;
+
+  if (uDepthView > 0.0 && uRelief.x > 0.5) {
+    // Proche : rouge, 2 hauteurs : jaune, 5 : vert, au loin : bleu ; lignes tous les ~25 %.
+    float dist = sceneDist(dir);
+    float l = clamp(log(dist / 0.5) / log(40.0), 0.0, 1.0);
+    vec3 heat = clamp(vec3(1.5 - 2.0 * l, 1.0 - abs(l - 0.45) * 2.2, 2.0 * l - 0.6), 0.0, 1.0);
+    float iso = fract(log(dist) / log(1.25));
+    float isoW = max(fwidth(log(dist) / log(1.25)), 1e-4);
+    float isoLine = 1.0 - clamp(min(iso, 1.0 - iso) / isoW - 0.5, 0.0, 1.0);
+    col = mix(col, heat, 0.45 * uDepthView);
+    col = mix(col, vec3(0.0), isoLine * 0.35 * uDepthView);
+  }
 
   if (uGrid > 0.0) {
     float lat = asin(clamp(dir.y, -1.0, 1.0)) / PI * 180.0;
