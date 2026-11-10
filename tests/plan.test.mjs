@@ -34,3 +34,30 @@ test('déplacer une photo réoriente seulement les liens automatiques', () => {
   close(Math.abs(photos[1].hotspots[0].yaw), 180); // depuis b, a est au sud
   assert.equal(photos[0].hotspots[0].yaw, 90, 'lien placé à la main inchangé');
 });
+
+import { poolLayout, contactOffset, contactFromOffset } from '../src/plan.js';
+
+test('photos non reliées : en grille dans une zone, pas sur une seule ligne', () => {
+  const ids = Array.from({ length: 12 }, (_, i) => 'p' + i);
+  const { pos, zone } = poolLayout(ids, [{ x: 0, y: 0 }, { x: 300, y: 100 }], 'sphere');
+  const ys = new Set([...pos.values()].map((q) => Math.round(q.y)));
+  const xs = new Set([...pos.values()].map((q) => Math.round(q.x)));
+  assert.ok(ys.size >= 3 && xs.size <= 5, `grille ${xs.size} colonnes × ${ys.size} lignes`);
+  assert.ok(zone.y > 100, 'zone placée sous les photos reliées');
+  pos.forEach((q) => assert.ok(q.x >= zone.x && q.x <= zone.x + zone.w && q.y >= zone.y && q.y <= zone.y + zone.h));
+});
+
+test('point de contact d’un lien sur la vignette : aller-retour', () => {
+  for (const mode of ['sphere', 'rect']) {
+    for (const [rot, yaw, pitch] of [[0, 30, -10], [45, 100, 20], [-120, -170, 0]]) {
+      const o = contactOffset(mode, rot, yaw, pitch);
+      if (o.hidden) continue;
+      const back = contactFromOffset(mode, rot, o.x, o.y);
+      assert.ok(Math.abs(((back.yaw - yaw + 540) % 360) - 180) < 0.05, `${mode} cap ${back.yaw} ≠ ${yaw}`);
+      assert.ok(Math.abs(back.pitch - pitch) < 0.05);
+    }
+  }
+  // Sur la sphère, un lien situé derrière est ramené au bord et signalé caché.
+  const hidden = contactOffset('sphere', 0, 170, 0);
+  assert.ok(hidden.hidden && Math.abs(hidden.x) <= 42.01);
+});

@@ -403,6 +403,8 @@ try {
   await tour.mouse.move(5, 400);
   await tour.waitForTimeout(400);
   const hiddenAtStart = !(await tour.isVisible('.ps-label'));
+  const cur0 = await tour.$eval('.ps-cursor', (el) => ({ hidden: el.hidden, over: el.classList.contains('over'), t: el.style.transform }));
+  check(!cur0.hidden && !cur0.over && /rotate\(/.test(cur0.t), `curseur : flèche orientée vers la cible la plus proche (${cur0.t.match(/rotate\([^)]*\)/)})`);
   let found = false;
   for (let y = 150; y <= 650 && !found; y += 100) {
     for (let x = 100; x <= 1180 && !found; x += 120) {
@@ -416,6 +418,8 @@ try {
   await tour.mouse.move(lb.x + lb.width / 2, lb.y - 22);
   await tour.waitForTimeout(500);
   const opacity = await tour.$eval('.ps-label', (b) => +getComputedStyle(b).opacity);
+  const cur1 = await tour.$eval('.ps-cursor', (el) => el.classList.contains('over') && !el.hidden);
+  check(cur1, 'curseur : au-dessus d’une cible, la flèche devient un rond « entrer »');
   check(hiddenAtStart && found && opacity > 0.5, `cible d’un lien invisible au loin, apparaît à l’approche de la souris (opacité ${opacity.toFixed(2)})`);
   await tour.click('.ps-label');
   await tour.waitForTimeout(1200);

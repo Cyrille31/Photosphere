@@ -177,11 +177,23 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-links line.pair { stroke: rgba(255,255,255,.18); stroke-width: 8; }
 .plan-links line.auto { stroke: #22c1ee; stroke-width: 3.5; }
 .plan-links line.manual { stroke: #ffb23e; stroke-width: 3.5; }
-.plan-node { position: absolute; left: 0; top: 0; width: 120px; margin: -40px 0 0 -60px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: grab; user-select: none; -webkit-user-select: none; }
-.plan-ball { width: 80px; height: 80px; border-radius: 50%; background: #000 center / 200% 100%; position: relative; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
-.plan-ball::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.45), transparent 40%), radial-gradient(circle at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
-.plan-node span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; background: rgba(10,16,35,.8); padding: 2px 7px; border-radius: 6px; }
-.plan-node.selected .plan-ball { outline: 3px solid var(--accent); outline-offset: 2px; }
-.plan-actions { display: none; gap: 4px; }
+.plan-node { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: grab; user-select: none; -webkit-user-select: none; }
+.plan-pic { position: relative; flex: none; background-color: #000; background-repeat: repeat-x; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+.plan-node.sphere .plan-pic { border-radius: 50%; }
+.plan-node.sphere .plan-pic::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.4), transparent 40%), radial-gradient(circle at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+.plan-node.rect .plan-pic { border-radius: 6px; }
+.plan-name { width: 170px; text-align: center; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; font-size: 12.5px; font-weight: 600; text-shadow: 0 1px 3px #000, 0 0 6px rgba(0,0,0,.8); }
+.plan-node.selected .plan-pic { outline: 3px solid var(--accent); outline-offset: 3px; }
+.plan-actions { display: none; gap: 4px; flex-wrap: wrap; justify-content: center; width: 200px; }
 .plan-node.selected .plan-actions { display: flex; }
+.plan-contacts, .plan-links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.plan-contacts circle { stroke: #fff; stroke-width: 2; cursor: move; pointer-events: all; }
+.plan-contacts circle.auto { fill: #22c1ee; }
+.plan-contacts circle.manual { fill: #ffb23e; }
+.plan-contacts circle.hidden, .plan-links line.hidden { opacity: .45; }
+.plan-links line.hidden { stroke-dasharray: 6 5; }
+.plan-pool { position: absolute; border: 2px dashed rgba(255,255,255,.18); border-radius: 16px; background: rgba(255,255,255,.03); }
+.plan-pool span { position: absolute; left: 14px; top: 10px; font-size: 13px; color: var(--muted); }
+.plan-view.linking, .plan-view.linking .plan-node { cursor: crosshair; }
+.plan-modes { display: inline-flex; gap: 4px; }
 .check.small { font-size: 12.5px; margin: 0; }

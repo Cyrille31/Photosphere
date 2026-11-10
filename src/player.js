@@ -1,7 +1,7 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
-import { DEG, vecDot, mat3Mul, mat3Apply, rotY, headingOf, dirFromLonLat } from './math.js';
+import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
@@ -39,6 +39,10 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
   root.innerHTML = `
     <canvas class="ps-canvas"></canvas>
     <div class="ps-labels"></div>
+    <div class="ps-cursor" hidden>
+      <svg class="arrow" viewBox="-20 -14 40 28" width="40" height="28"><path d="M-14 -5 H4 V-12 L18 0 L4 12 V5 H-14 Z"/></svg>
+      <svg class="enter" viewBox="-20 -20 40 40" width="40" height="40"><circle r="15"/><path d="M-6 -8 L6 0 L-6 8 Z"/></svg>
+    </div>
     <div class="ps-eye-labels"><span></span><span></span></div>
     <div class="ps-fade"></div>
     <div class="ps-top">
@@ -257,6 +261,46 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     dirty = true;
   });
 
+  // Curseur de la souris : une flèche orientée vers la cible de lien la plus proche ; au-dessus
+  // d'une cible, elle devient un rond « entrer ». Sans lien, le curseur habituel est conservé.
+  const cursorEl = root.querySelector('.ps-cursor');
+  function updateCursor(frame) {
+    const dirs = hotDirs();
+    if (!mouse || controller.stereo || xrSession || !dirs.length || !frame) {
+      cursorEl.hidden = true;
+      canvas.style.cursor = '';
+      return;
+    }
+    const ref = renderer.pick(mouse.x, mouse.y, frame);
+    if (!ref) {
+      cursorEl.hidden = true;
+      canvas.style.cursor = '';
+      return;
+    }
+    let best = 0, bestAng = Infinity;
+    dirs.forEach((d, i) => {
+      const a = Math.acos(Math.max(-1, Math.min(1, vecDot(d, ref))));
+      if (a < bestAng) {
+        bestAng = a;
+        best = i;
+      }
+    });
+    const dpr = canvas.width / (canvas.clientWidth || 1);
+    const p = renderer.project(dirs[best], frame);
+    let angle;
+    if (p) angle = Math.atan2(p.y - mouse.y, p.x - mouse.x);
+    else {
+      // Cible hors de l'écran : direction indiquée depuis le centre, d'après sa position autour de soi.
+      const c = mat3Apply(mat3Transpose(frame.eyes[0].cam), dirs[best]);
+      angle = Math.atan2(-c[1], c[0]);
+    }
+    const over = p && Math.hypot(p.x - mouse.x, p.y - mouse.y) < 30 * dpr;
+    cursorEl.hidden = false;
+    cursorEl.classList.toggle('over', !!over);
+    cursorEl.style.transform = `translate(${mouse.x / dpr}px, ${mouse.y / dpr}px)` + (over ? '' : ` rotate(${angle}rad)`);
+    canvas.style.cursor = 'none';
+  }
+
   function updateGaze(now) {
     const useGaze = controller.stereo || controller.mode === 'gyro' || xrSession;
     if (!useGaze || !current) {
@@ -306,6 +350,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
     });
     placeLabels(frame);
+    updateCursor(frame);
   }
 
   async function lockScreen(on) {
