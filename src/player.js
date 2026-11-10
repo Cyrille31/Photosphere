@@ -176,9 +176,18 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     return best;
   }
 
+  // Suivre un lien : on arrive orienté selon la vue d'arrivée réglée, sinon dos au lien qui ramène
+  // à la photo d'où l'on vient (comme si l'on venait de franchir la porte).
   function follow(i) {
     const h = hotspotsOf(current)[i];
-    if (h) go(h.target, true, h.arrive || null);
+    if (!h) return;
+    let arrive = h.arrive || null;
+    if (!arrive) {
+      const target = byId.get(h.target);
+      const back = target && (target.hotspots || []).find((x) => x.target === current.id);
+      if (back) arrive = { yaw: back.yaw + 180, pitch: 0 };
+    }
+    go(h.target, true, arrive);
   }
 
   function onTap(x, y) {
@@ -351,6 +360,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     });
     placeLabels(frame);
     updateCursor(frame);
+    // Cap de la vue (degrés), lisible par les tests et les outils d'accessibilité.
+    root.dataset.yaw = (headingOf(controller.camMatrix()) / DEG).toFixed(1);
   }
 
   async function lockScreen(on) {

@@ -13,11 +13,11 @@ Application web installable (PWA) qui fonctionne sur ordinateur comme sur smartp
   - **calibrage automatique** de chaque photo : alignement des deux objectifs sur la zone de recouvrement, **correction du vignettage** (bords des objectifs plus sombres, profil mesuré sur la Gear 360 et cohérent avec le logiciel Samsung, sans saturer le ciel), **égalisation de l’exposition** le long de la couture, **correction de parallaxe** le long de la couture (les objets proches, vus sous un angle légèrement différent par chaque objectif, sont recalés) et **couture optimale** qui passe là où les deux images concordent. Réglages manuels possibles dans l’éditeur ;
   - les photos déjà assemblées (application Samsung) sont remises à la bonne taille ;
   - le JPEG produit contient les métadonnées **XMP GPano** (reconnu comme photosphère par Google Photos, Facebook, les visionneuses VR…) et conserve l’EXIF d’origine (date, GPS).
-- **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), ou outils automatiques en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
+- **Redressement** des photos prises de travers : curseurs de bascule avant/arrière et gauche/droite **relatifs à la vue affichée**, cap (rotation horizontale qui ne modifie pas le redressement), bouton **✨ Auto (verticales)** qui détecte les bords verticaux des murs, portes et meubles et redresse la photo (refusé au-delà de 15°, signe de verticales mal détectées ; « Défaire » pour annuler), ou outils en cliquant **2 points de l’horizon** ou **1 à 2 lignes verticales**. Grille et vue à plat pour vérifier.
 - **Nord** : points cardinaux sur l'horizon de l'éditeur ; « Indiquer le nord » puis un clic dans l'image règle le cap.
 - **Défaire** (bouton ou Ctrl+Z) la dernière action de l'éditeur ; renommage des photos directement dans la bibliothèque.
 - **Recherche** d'une photo par son nom (ou son nom de fichier), sans tenir compte des majuscules ni des accents : bibliothèque, choix des liens, liste de la visionneuse.
-- **Liens** : destination choisie dans une grille de vignettes avec recherche (taille réglable, Ctrl + molette) ; **vue d'arrivée** réglable par lien ; raccourci **« ↩ Lien retour »** pour placer le lien qui revient (par ex. sur la porte vue depuis la pièce).
+- **Liens** : destination choisie dans une grille de vignettes avec recherche (taille réglable, Ctrl + molette) ; **vue d'arrivée** réglable par lien (par défaut, on arrive dos au lien qui ramène à la photo d'où l'on vient) ; raccourci **« ↩ Lien retour »** pour placer le lien qui revient (par ex. sur la porte vue depuis la pièce).
 - **Liens** entre photos : on touche l’endroit (porte, passage) qui mène à une autre photo ; lien retour créé automatiquement.
 - **Visionneuse** (bouton ✏ Éditer pour redresser la photo affichée ou y ajouter un lien, puis revenir au même endroit) :
   - *Tactile* : doigt / souris, pincer ou molette pour zoomer ;
@@ -59,5 +59,6 @@ Le gyroscope et WebXR exigent une page servie en HTTPS (ou `localhost`).
 | `src/shaders.js`, `src/gl-source.js` | Projection fisheye → équirectangulaire, redressement, rendu de la vue |
 | `src/renderer.js`, `src/controls.js`, `src/player.js` | Visionneuse (perspective, plat, stéréo, WebXR, gyroscope, liens) |
 | `src/editor.js` | Redressement, calibrage, liens |
+| `src/autolevel.js` | Redressement automatique : détection des bords verticaux, estimation robuste de la verticale |
 | `src/math.js` | Rotations, orientation du téléphone, calculs d’horizon/verticales |
 | `src/metadata.js`, `src/zip.js`, `src/tour-export.js`, `src/db.js` | EXIF/XMP, ZIP, exports, stockage IndexedDB |

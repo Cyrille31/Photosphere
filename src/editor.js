@@ -4,7 +4,8 @@ import { PanoRenderer } from './renderer.js';
 import { ViewController } from './controls.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
-import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap } from './math.js';
+import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
+import { edgeConstraints, solveUp } from './autolevel.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { pickPhoto } from './photo-picker.js';
 import { chooseArrivalView } from './arrival-view.js';
@@ -80,6 +81,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           ${slider('cap', 'Cap : rotation horizontale (°)', -180, 180, 0.5)}
           <div class="tools">
             <button class="btn small" data-tool="horizon">📏 Horizon : 2 points</button>
+            <button class="btn small primary" data-autolevel title="Redresse la photo d’après les verticales des murs et des meubles">✨ Auto (verticales)</button>
             <button class="btn small" data-tool="verticals">📐 Verticales : 1 ou 2 lignes</button>
             <button class="btn small" data-reset-level>↺ Réinitialiser</button>
           </div>
@@ -377,7 +379,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         const t = photos.find((x) => x.id === h.target);
         const arrive = h.arrive
           ? `réglée (cap ${Math.round(h.arrive.yaw)}°)`
-          : 'automatique (on garde la même direction)';
+          : 'automatique (dos au lien retour, sinon même direction)';
         return `<div class="link-item" data-i="${i}">
         <button class="link-target" data-target title="Changer la photo de destination"><img alt=""><span>→ ${escapeHtml(t ? t.name : '?')}</span><small>changer</small></button>
         <div class="row2"><input type="text" name="label" value="${escapeHtml(h.label || '')}" placeholder="Texte affiché"></div>
@@ -421,7 +423,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       });
       item.querySelector('[data-arrive]').addEventListener('click', async () => {
         // Sans réglage, on arrive en regardant dans la direction du lien.
-        const v = await chooseArrivalView(h.target, h.arrive || { yaw: h.yaw, pitch: 0 });
+        // Sans réglage, on arrive dos au lien qui ramène ici (ou dans la direction du lien).
+        const t = photos.find((x) => x.id === h.target);
+        const back = t && (t.hotspots || []).find((x) => x.target === p.id);
+        const v = await chooseArrivalView(h.target, h.arrive || (back ? { yaw: wrapDeg(back.yaw + 180), pitch: 0 } : { yaw: h.yaw, pitch: 0 }));
         if (!v) return;
         snapshot();
         p.hotspots[i].arrive = v;
@@ -546,6 +551,60 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   $('[data-grid]').classList.toggle('active', grid);
 
   $$('[data-tool]').forEach((b) => b.addEventListener('click', () => (tool && tool.kind === b.dataset.tool ? stopTool() : startTool(b.dataset.tool))));
+
+  // Redressement automatique : 8 vues autour de la photo (telle qu'elle est redressée), relevé des
+  // bords presque verticaux, puis verticale la mieux accordée. Refusé au-delà de 15°.
+  $('[data-autolevel]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    stopTool();
+    btn.disabled = true;
+    hint('Recherche des verticales…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      // Plusieurs passes : chaque mesure est refaite sur l'image déjà corrigée, jusqu'à convergence.
+      const startUp = mat3Apply(levelMatrix(p.params.yaw, p.params.pitch, p.params.roll), [0, 1, 0]);
+      let lvl = { yaw: p.params.yaw, pitch: p.params.pitch, roll: p.params.roll };
+      let result = null, support = 0;
+      for (let pass = 0; pass < 3; pass++) {
+        renderer.setParams({ ...p.params, ...lvl }, p.srcType);
+        const constraints = [];
+        for (let k = 0; k < 8; k++) {
+          const cam = cameraMatrix(k * 45 * DEG, 0);
+          constraints.push(...edgeConstraints(renderer.readView(cam, 75, 512), 512, cam, 75));
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        const r = solveUp(constraints);
+        if (!r.ok) {
+          if (pass === 0) result = r;
+          break;
+        }
+        support = r.support;
+        const next = applyUpCorrection(lvl, r.up);
+        lvl = { ...next, yaw: lvl.yaw + wrapDeg(next.yaw - lvl.yaw) };
+        result = { ok: true };
+        if (r.tiltDeg < 0.1) break;
+      }
+      renderer.setParams(p.params, p.srcType);
+      const endUp = mat3Apply(levelMatrix(lvl.yaw, lvl.pitch, lvl.roll), [0, 1, 0]);
+      const total = Math.acos(Math.max(-1, Math.min(1, vecDot(startUp, endUp)))) / DEG;
+      if (!result || !result.ok) {
+        toast('Redressement automatique impossible : ' + (result ? result.reason : 'aucune mesure') + '. Utilisez les outils manuels.', true, 7000);
+      } else if (total > 15) {
+        toast(`Redressement automatique impossible : correction trouvée trop forte (${total.toFixed(1)}°), verticales peu fiables. Utilisez les outils manuels.`, true, 7000);
+      } else if (total < 0.05) {
+        toast('La photo est déjà droite.');
+      } else {
+        snapshot();
+        setLevel(lvl);
+        toast(`Photo redressée de ${total.toFixed(1)}° d’après ${support} points de verticales. Vérifiez avec la grille (Défaire pour annuler).`, false, 6000);
+      }
+    } catch (err) {
+      toast('Redressement automatique impossible : ' + err.message, true);
+    }
+    hint('');
+    btn.disabled = false;
+    redraw();
+  });
   $('[data-reset-level]').addEventListener('click', () => {
     snapshot();
     setLevel({ yaw: 0, pitch: 0, roll: 0 });
