@@ -2,7 +2,7 @@
 // traits sont les liens. Déplacer une photo réoriente ses liens « automatiques » (les liens retour
 // créés automatiquement), qui pointent alors vers la position des photos voisines sur le plan.
 import * as db from './db.js';
-import { escapeHtml } from './ui.js';
+import { escapeHtml, toast } from './ui.js';
 
 const SPACING = 170; // distance entre deux photos liées lors de la disposition automatique
 
@@ -12,7 +12,7 @@ export function bearing(a, b) {
 }
 
 // Positions des photos qui n'en ont pas encore : en suivant les liens à partir des photos déjà
-// placées (direction du lien = direction sur le plan), puis en ligne pour les photos isolées.
+// placées (direction du lien = direction sur le plan), groupe par groupe.
 export function autoLayout(photos) {
   const pos = new Map();
   photos.forEach((p) => p.mapPos && pos.set(p.id, { ...p.mapPos }));
@@ -81,157 +81,369 @@ export function retargetAutoLinks(photos, pos, id) {
   return changed;
 }
 
+// ---------- géométrie des vignettes ----------
+// Chaque photo est dessinée en sphère (diamètre BALL, on voit la moitié tournée vers soi) ou en
+// rectangle (photo à plat, RECT_W × RECT_H). `rot` est le cap affiché au centre (rotation de la
+// vignette). Un lien part du point de la vignette qui correspond à sa direction dans la photo.
+export const BALL = 84, RECT_W = 176, RECT_H = 88;
+
+const wrap180 = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
+
+export function picSize(mode) {
+  return mode === 'rect' ? { w: RECT_W, h: RECT_H } : { w: BALL, h: BALL };
+}
+
+// Décalage (par rapport au centre de la vignette) du point de contact d'un lien de cap `yaw`,
+// d'élévation `pitch`. Sur la sphère, un lien situé dans la moitié cachée est ramené au bord.
+export function contactOffset(mode, rot, yaw, pitch) {
+  const rel = wrap180(yaw - rot);
+  if (mode === 'rect') return { x: (rel / 360) * RECT_W, y: (-pitch / 180) * RECT_H, hidden: false };
+  return { x: (Math.max(-90, Math.min(90, rel)) / 180) * BALL, y: (-pitch / 180) * BALL, hidden: Math.abs(rel) > 90 };
+}
+
+// Inverse : direction (cap, élévation) d'un point de la vignette.
+export function contactFromOffset(mode, rot, dx, dy) {
+  const { w, h } = picSize(mode);
+  const span = mode === 'rect' ? 360 : 180;
+  const rel = Math.max(-span / 2, Math.min(span / 2, (dx / w) * span));
+  return { yaw: +wrap180(rot + rel).toFixed(2), pitch: +Math.max(-85, Math.min(85, (-dy / h) * 180)).toFixed(2) };
+}
+
+// Photos sans lien : en grille dans une zone rectangulaire sous les photos reliées.
+export function poolLayout(ids, linkedPositions, mode) {
+  const { w, h } = picSize(mode);
+  const cellW = w + 96, cellH = h + 84;
+  const pts = [...linkedPositions];
+  const left = pts.length ? Math.min(...pts.map((q) => q.x)) - w : 0;
+  const top = pts.length ? Math.max(...pts.map((q) => q.y)) + h + 120 : 0;
+  const cols = Math.max(3, Math.ceil(Math.sqrt(ids.length * 1.8)));
+  const pos = new Map();
+  // Marge du haut : place pour le titre de la zone (sur deux lignes au plus).
+  ids.forEach((id, k) => pos.set(id, { x: left + cellW / 2 + (k % cols) * cellW, y: top + 72 + h / 2 + Math.floor(k / cols) * cellH }));
+  const rows = Math.ceil(ids.length / cols);
+  return { pos, zone: { x: left, y: top, w: Math.max(Math.min(cols, ids.length) * cellW, 380), h: rows * cellH + 52 } };
+}
+
 // container : élément où dessiner. onOpen(id, 'view' | 'edit').
 export async function openPlan(container, { photos, onOpen }) {
   const list = photos.map((p) => JSON.parse(JSON.stringify(p)));
   const byId = new Map(list.map((p) => [p.id, p]));
-  const pos = autoLayout(list);
-  // Les positions calculées sont enregistrées pour rester stables.
-  for (const p of list) {
-    if (!p.mapPos) {
-      p.mapPos = pos.get(p.id);
-      await db.updatePhoto(p.id, (cur) => ({ ...cur, mapPos: p.mapPos }));
+  let mode = 'sphere';
+  try {
+    mode = localStorage.getItem('ps-plan-mode') === 'rect' ? 'rect' : 'sphere';
+  } catch (e) {
+    // préférence non mémorisée
+  }
+  const rot = new Map(list.map((p) => [p.id, p.mapRot || 0]));
+  let pos = new Map();
+  let pool = new Set();
+  let zone = null;
+  let linkFrom = null;
+  let selected = null;
+  // Échelle d'affichage : les rectangles, plus larges, demandent plus d'écart entre les photos.
+  // Les positions enregistrées (et donc les directions entre photos) ne changent pas.
+  const scale = () => (mode === 'rect' ? 1.75 : 1);
+  const disp = (q) => ({ x: q.x * scale(), y: q.y * scale() });
+
+  const isLinked = (id) => byId.get(id).hotspots.some((h) => byId.has(h.target)) || list.some((p) => p.hotspots.some((h) => h.target === id));
+  list.forEach((p) => (p.hotspots = p.hotspots || []));
+
+  // Positions : photos reliées d'après le plan (ou les liens), photos isolées dans la zone.
+  async function layout() {
+    const linked = list.filter((p) => isLinked(p.id));
+    pool = new Set(list.filter((p) => !isLinked(p.id)).map((p) => p.id));
+    pos = autoLayout(linked);
+    for (const p of linked) {
+      if (!p.mapPos) {
+        p.mapPos = pos.get(p.id);
+        await db.updatePhoto(p.id, (cur) => ({ ...cur, mapPos: p.mapPos }));
+      }
     }
+    const pl = poolLayout([...pool], [...pos.values()].map(disp), mode);
+    pl.pos.forEach((v, k) => pos.set(k, { x: v.x / scale(), y: v.y / scale() }));
+    zone = pool.size ? pl.zone : null;
   }
 
   container.innerHTML = `<div class="plan">
     <div class="plan-bar">
       <span class="plan-north" title="Le haut du plan est le nord">N ↑</span>
       <button class="btn small" data-fit>⤢ Tout afficher</button>
-      <span class="note">Faites glisser une photo pour la placer : ses liens <span class="plan-key auto">automatiques</span> se réorientent vers les photos voisines ; les liens <span class="plan-key manual">placés à la main</span> ne bougent pas. Double-clic : voir la photo.</span>
+      <span class="plan-modes">
+        <button class="btn small" data-mode="sphere" title="Photos en sphères">◯ Sphères</button>
+        <button class="btn small" data-mode="rect" title="Photos à plat : chaque lien aboutit à sa position dans l’image">▭ Rectangles</button>
+      </span>
+      <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> sur une photo : la faire tourner · glisser un <b>point de contact</b> : placer le lien · <b>🔗 Relier</b> ou déposer une photo sur une autre : les relier · double-clic : voir. Liens <span class="plan-key auto">automatiques</span> (suivent le plan) et <span class="plan-key manual">placés à la main</span>.</span>
     </div>
     <div class="plan-view">
-      <div class="plan-world">
-        <svg class="plan-links" width="1" height="1"></svg>
-        ${list
-          .map(
-            (p) => `<div class="plan-node" data-id="${p.id}" tabindex="0">
-              <div class="plan-ball"></div>
-              <span>${escapeHtml(p.name)}</span>
-              <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button></div>
-            </div>`
-          )
-          .join('')}
-      </div>
+      <div class="plan-world"></div>
     </div>
   </div>`;
   const view = container.querySelector('.plan-view');
   const world = container.querySelector('.plan-world');
-  const svg = container.querySelector('.plan-links');
+  const help = container.querySelector('.plan-help');
+  const helpDefault = help.innerHTML;
   let zoom = 1, panX = 0, panY = 0;
   const applyView = () => (world.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`);
 
-  function drawLinks() {
-    let html = '';
-    const seen = new Set();
-    // Trait de fond pour chaque paire de photos liées.
-    const pairs = new Set();
-    list.forEach((p) =>
-      (p.hotspots || []).forEach((h) => {
-        if (!byId.has(h.target)) return;
-        const k = [p.id, h.target].sort().join('|');
-        if (pairs.has(k)) return;
-        pairs.add(k);
-        const a = pos.get(p.id), b = pos.get(h.target);
-        html += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+  // Vignettes des photos.
+  const thumbs = new Map();
+  await Promise.all(
+    list.map(async (p) => {
+      const b = await db.getBlob(p.id + ':thumb');
+      if (b) thumbs.set(p.id, URL.createObjectURL(b));
+    })
+  );
+
+  function render() {
+    const { w, h } = picSize(mode);
+    world.innerHTML = `${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non reliées (${pool.size}) — déposez-en une sur une photo du plan pour les relier</span></div>` : ''}
+      <svg class="plan-links" width="1" height="1"></svg>
+      ${list
+        .map(
+          (p) => `<div class="plan-node ${mode}${p.id === selected ? ' selected' : ''}" data-id="${p.id}" style="width:${w}px;margin:${-h / 2}px 0 0 ${-w / 2}px">
+            <div class="plan-pic" style="width:${w}px;height:${h}px;${thumbs.has(p.id) ? `background-image:url('${thumbs.get(p.id)}');` : ''}"></div>
+            <span class="plan-name">${escapeHtml(p.name)}</span>
+            <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button></div>
+          </div>`
+        )
+        .join('')}
+      <svg class="plan-contacts" width="1" height="1"></svg>`;
+    container.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    world.querySelectorAll('.plan-node [data-act]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const id = b.closest('.plan-node').dataset.id;
+        if (b.dataset.act === 'link') startLink(id);
+        else onOpen(id, b.dataset.act);
       })
     );
-    list.forEach((p) =>
-      (p.hotspots || []).forEach((h) => {
-        if (!byId.has(h.target)) return;
-        const a = pos.get(p.id), b = pos.get(h.target);
-        // Chaque sens est dessiné sur la moitié du trait qui part de sa photo.
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        html += `<line class="${h.auto ? 'auto' : 'manual'}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
-        seen.add(p.id + '>' + h.target);
-      })
-    );
-    svg.innerHTML = html;
+    placeNodes();
+    drawLinks();
   }
 
   function placeNodes() {
-    container.querySelectorAll('.plan-node').forEach((n) => {
-      const q = pos.get(n.dataset.id);
+    const { w, h } = picSize(mode);
+    world.querySelectorAll('.plan-node').forEach((n) => {
+      const id = n.dataset.id;
+      const q = disp(pos.get(id));
       n.style.transform = `translate(${q.x}px, ${q.y}px)`;
+      // Texture décalée selon la rotation : le cap `rot` est au centre de la vignette.
+      const pic = n.querySelector('.plan-pic');
+      const tw = mode === 'rect' ? w : 2 * w;
+      pic.style.backgroundSize = `${tw}px ${h}px`;
+      pic.style.backgroundPositionX = `${w / 2 - (rot.get(id) / 360 + 0.5) * tw}px`;
     });
   }
 
+  function contact(p, hs) {
+    const o = contactOffset(mode, rot.get(p.id), hs.yaw, hs.pitch);
+    const c = disp(pos.get(p.id));
+    return { x: c.x + o.x, y: c.y + o.y, hidden: o.hidden };
+  }
+
+  function drawLinks() {
+    let lines = '', dots = '';
+    list.forEach((p) =>
+      p.hotspots.forEach((hs, k) => {
+        if (!byId.has(hs.target)) return;
+        const q = byId.get(hs.target);
+        const a = contact(p, hs);
+        const back = q.hotspots.find((x) => x.target === p.id);
+        const b = back ? contact(q, back) : disp(pos.get(q.id));
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const cls = hs.auto ? 'auto' : 'manual';
+        // Chaque sens est dessiné sur la moitié du trait qui part de son point de contact.
+        lines += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/><line class="${cls}${a.hidden ? ' hidden' : ''}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
+        dots += `<circle class="contact ${cls}${a.hidden ? ' hidden' : ''}" data-contact="${p.id}" data-k="${k}" cx="${a.x}" cy="${a.y}" r="7"><title>Lien vers « ${escapeHtml(q.name)} » : glisser pour le placer</title></circle>`;
+      })
+    );
+    world.querySelector('.plan-links').innerHTML = lines;
+    world.querySelector('.plan-contacts').innerHTML = dots;
+  }
+
   function fit() {
-    const pts = [...pos.values()];
+    const pts = [...pos.values()].map(disp);
+    if (!pts.length) return;
     const r = view.getBoundingClientRect();
-    const minX = Math.min(...pts.map((q) => q.x)) - 110, maxX = Math.max(...pts.map((q) => q.x)) + 110;
-    const minY = Math.min(...pts.map((q) => q.y)) - 90, maxY = Math.max(...pts.map((q) => q.y)) + 110;
-    zoom = Math.min(1.6, Math.max(0.2, Math.min(r.width / (maxX - minX), r.height / (maxY - minY))));
+    const { w, h } = picSize(mode);
+    let minX = Math.min(...pts.map((q) => q.x)) - w, maxX = Math.max(...pts.map((q) => q.x)) + w;
+    let minY = Math.min(...pts.map((q) => q.y)) - h, maxY = Math.max(...pts.map((q) => q.y)) + h + 40;
+    if (zone) {
+      minX = Math.min(minX, zone.x);
+      maxX = Math.max(maxX, zone.x + zone.w);
+      maxY = Math.max(maxY, zone.y + zone.h);
+    }
+    zoom = Math.min(1.5, Math.max(0.15, Math.min(r.width / (maxX - minX), r.height / (maxY - minY))));
     panX = r.width / 2 - ((minX + maxX) / 2) * zoom;
     panY = r.height / 2 - ((minY + maxY) / 2) * zoom;
     applyView();
   }
 
-  // Mini-sphères : vignette de la photo plaquée sur un disque ombré.
-  const urls = [];
-  list.forEach(async (p) => {
-    const b = await db.getBlob(p.id + ':thumb');
-    if (!b) return;
-    const u = URL.createObjectURL(b);
-    urls.push(u);
-    container.querySelector(`.plan-node[data-id="${p.id}"] .plan-ball`).style.backgroundImage = `url("${u}")`;
-  });
+  // ---------- création de liens ----------
+  function startLink(id) {
+    linkFrom = id;
+    view.classList.add('linking');
+    help.innerHTML = `🔗 Cliquez la photo à relier à « ${escapeHtml(byId.get(id).name)} » — <button class="btn small" data-cancel-link>Annuler</button>`;
+    help.querySelector('[data-cancel-link]').addEventListener('click', stopLink);
+  }
+  function stopLink() {
+    linkFrom = null;
+    view.classList.remove('linking');
+    help.innerHTML = helpDefault;
+  }
 
-  // Glisser une photo / le fond, molette pour zoomer.
+  // Place `id` près de `other`, dans la première direction libre.
+  function placeNear(id, other) {
+    const o = pos.get(other);
+    for (const ang of [90, 0, 180, 270, 45, 135, 225, 315]) {
+      const a = (ang * Math.PI) / 180;
+      const c = { x: o.x + SPACING * Math.sin(a), y: o.y - SPACING * Math.cos(a) };
+      const free = list.every((p) => p.id === id || pool.has(p.id) || Math.hypot(pos.get(p.id).x - c.x, pos.get(p.id).y - c.y) > SPACING * 0.6);
+      if (free) return c;
+    }
+    return { x: o.x + SPACING * 1.5, y: o.y };
+  }
+
+  // Liens automatiques réciproques entre deux photos, orientés d'après le plan.
+  async function createLink(aId, bId) {
+    if (aId === bId) return;
+    const a = byId.get(aId), b = byId.get(bId);
+    if (pool.has(aId) && !pool.has(bId)) pos.set(aId, placeNear(aId, bId));
+    else if (pool.has(bId)) pos.set(bId, placeNear(bId, aId));
+    a.mapPos = { x: Math.round(pos.get(aId).x), y: Math.round(pos.get(aId).y) };
+    b.mapPos = { x: Math.round(pos.get(bId).x), y: Math.round(pos.get(bId).y) };
+    const add = (p, q) => {
+      if (p.hotspots.some((x) => x.target === q.id)) return null;
+      const hs = { id: newHotspotId(), target: q.id, yaw: +bearing(p.mapPos, q.mapPos).toFixed(2), pitch: 0, label: '', auto: true };
+      p.hotspots.push(hs);
+      return hs;
+    };
+    const ha = add(a, b), hb = add(b, a);
+    for (const [p, hs] of [[a, ha], [b, hb]]) {
+      await db.updatePhoto(p.id, (cur) => ({ ...cur, mapPos: p.mapPos, hotspots: hs ? [...(cur.hotspots || []), hs] : cur.hotspots || [] }));
+    }
+    toast(ha || hb ? `« ${a.name} » et « ${b.name} » sont reliées.` : 'Ces deux photos sont déjà reliées.');
+    await layout();
+    render();
+  }
+
+  // ---------- interactions ----------
   let drag = null;
+  let lastTap = { id: null, t: 0 };
+  const toWorld = (e) => {
+    const r = view.getBoundingClientRect();
+    return { x: (e.clientX - r.left - panX) / zoom, y: (e.clientY - r.top - panY) / zoom };
+  };
+
   view.addEventListener('pointerdown', (e) => {
     if (e.target.closest('button')) return;
+    const dot = e.target.closest('[data-contact]');
     const node = e.target.closest('.plan-node');
     view.setPointerCapture(e.pointerId);
-    drag = node
-      ? { kind: 'node', id: node.dataset.id, sx: e.clientX, sy: e.clientY, start: { ...pos.get(node.dataset.id) }, moved: false }
-      : { kind: 'pan', sx: e.clientX, sy: e.clientY, px: panX, py: panY, moved: false };
-    container.querySelectorAll('.plan-node.selected').forEach((n) => n.classList.remove('selected'));
-    if (node) node.classList.add('selected');
+    if (dot) {
+      drag = { kind: 'contact', id: dot.dataset.contact, k: +dot.dataset.k, moved: false, sx: e.clientX, sy: e.clientY };
+    } else if (node && (e.ctrlKey || e.metaKey) && e.target.closest('.plan-pic')) {
+      drag = { kind: 'rotate', id: node.dataset.id, sx: e.clientX, start: rot.get(node.dataset.id), moved: false };
+    } else if (node) {
+      drag = { kind: 'node', id: node.dataset.id, sx: e.clientX, sy: e.clientY, start: { ...pos.get(node.dataset.id) }, moved: false };
+    } else {
+      drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, px: panX, py: panY, moved: false };
+    }
   });
+
   view.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    const dx = e.clientX - (drag.sx || 0), dy = e.clientY - (drag.sy || 0);
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    if (!drag.moved) return;
     if (drag.kind === 'pan') {
       panX = drag.px + dx;
       panY = drag.py + dy;
       applyView();
-    } else if (drag.moved) {
-      pos.set(drag.id, { x: drag.start.x + dx / zoom, y: drag.start.y + dy / zoom });
+    } else if (drag.kind === 'node') {
+      pos.set(drag.id, { x: drag.start.x + dx / zoom / scale(), y: drag.start.y + dy / zoom / scale() });
       placeNodes();
+      drawLinks();
+    } else if (drag.kind === 'rotate') {
+      // Faire glisser vers la droite fait tourner la vue vers la gauche, comme dans la visionneuse.
+      const { w } = picSize(mode);
+      const span = mode === 'rect' ? 360 : 180;
+      rot.set(drag.id, wrap180(drag.start - (dx / zoom / w) * span));
+      placeNodes();
+      drawLinks();
+    } else if (drag.kind === 'contact') {
+      const p = byId.get(drag.id);
+      const c = disp(pos.get(p.id));
+      const m = toWorld(e);
+      const d = contactFromOffset(mode, rot.get(p.id), m.x - c.x, m.y - c.y);
+      Object.assign(p.hotspots[drag.k], d, { auto: false });
       drawLinks();
     }
   });
-  let lastTap = { id: null, t: 0 };
-  view.addEventListener('pointerup', async () => {
+
+  view.addEventListener('pointerup', async (e) => {
     const d = drag;
     drag = null;
-    if (d && d.kind === 'node' && !d.moved) {
-      // Double-clic (ou double appui) sur une photo : on l'ouvre dans la visionneuse.
+    if (!d) return;
+    if (d.kind === 'node' && !d.moved) {
       const now = performance.now();
+      if (linkFrom && linkFrom !== d.id) {
+        const from = linkFrom;
+        stopLink();
+        await createLink(from, d.id);
+        return;
+      }
+      selected = d.id;
+      world.querySelectorAll('.plan-node').forEach((n) => n.classList.toggle('selected', n.dataset.id === d.id));
+      // Double-clic (ou double appui) : la photo s'ouvre dans la visionneuse.
       if (lastTap.id === d.id && now - lastTap.t < 400) onOpen(d.id, 'view');
       lastTap = { id: d.id, t: now };
       return;
     }
-    if (!d || d.kind !== 'node' || !d.moved) return;
-    const p = pos.get(d.id);
-    byId.get(d.id).mapPos = { x: Math.round(p.x), y: Math.round(p.y) };
-    const changed = retargetAutoLinks(list, pos, d.id);
-    drawLinks();
-    await db.updatePhoto(d.id, (cur) => ({ ...cur, mapPos: byId.get(d.id).mapPos }));
-    for (const id of changed) {
-      const hs = byId.get(id).hotspots;
-      // On ne recopie que les caps des liens automatiques, sans écraser le reste de la fiche.
-      await db.updatePhoto(id, (cur) => ({
+    if (!d.moved) return;
+    if (d.kind === 'rotate') {
+      const r = +rot.get(d.id).toFixed(1);
+      await db.updatePhoto(d.id, (cur) => ({ ...cur, mapRot: r }));
+    } else if (d.kind === 'contact') {
+      const hs = byId.get(d.id).hotspots[d.k];
+      await db.updatePhoto(d.id, (cur) => ({
         ...cur,
-        hotspots: (cur.hotspots || []).map((h) => {
-          const n = hs.find((x) => x.id === h.id);
-          return n && h.auto ? { ...h, yaw: n.yaw } : h;
-        }),
+        hotspots: (cur.hotspots || []).map((x, k) => ((hs.id ? x.id === hs.id : k === d.k) ? { ...x, yaw: hs.yaw, pitch: hs.pitch, auto: false } : x)),
       }));
+    } else if (d.kind === 'node') {
+      // Déposée sur une autre photo : on les relie.
+      const p = pos.get(d.id);
+      const target = list.find((q) => q.id !== d.id && Math.hypot(pos.get(q.id).x - p.x, pos.get(q.id).y - p.y) < 60 / scale());
+      if (target) {
+        if (pool.has(d.id)) pos.set(d.id, d.start);
+        await createLink(d.id, target.id);
+        return;
+      }
+      if (pool.has(d.id)) {
+        // Une photo isolée reste dans sa zone tant qu'elle n'est reliée à aucune autre.
+        pos.set(d.id, d.start);
+        placeNodes();
+        drawLinks();
+        toast('Déposez la photo sur une photo du plan pour les relier.');
+        return;
+      }
+      byId.get(d.id).mapPos = { x: Math.round(p.x), y: Math.round(p.y) };
+      const changed = retargetAutoLinks(list, pos, d.id);
+      drawLinks();
+      await db.updatePhoto(d.id, (cur) => ({ ...cur, mapPos: byId.get(d.id).mapPos }));
+      for (const id of changed) {
+        const hs = byId.get(id).hotspots;
+        // On ne recopie que les caps des liens automatiques, sans écraser le reste de la fiche.
+        await db.updatePhoto(id, (cur) => ({
+          ...cur,
+          hotspots: (cur.hotspots || []).map((h) => {
+            const n = hs.find((x) => x.id === h.id);
+            return n && h.auto ? { ...h, yaw: n.yaw } : h;
+          }),
+        }));
+      }
     }
   });
+
   view.addEventListener(
     'wheel',
     (e) => {
@@ -239,7 +451,7 @@ export async function openPlan(container, { photos, onOpen }) {
       const r = view.getBoundingClientRect();
       const mx = e.clientX - r.left, my = e.clientY - r.top;
       const f = Math.exp(-e.deltaY * 0.0015);
-      const nz = Math.min(3, Math.max(0.15, zoom * f));
+      const nz = Math.min(3, Math.max(0.1, zoom * f));
       panX = mx - ((mx - panX) * nz) / zoom;
       panY = my - ((my - panY) * nz) / zoom;
       zoom = nz;
@@ -247,17 +459,36 @@ export async function openPlan(container, { photos, onOpen }) {
     },
     { passive: false }
   );
-  container.querySelectorAll('.plan-node').forEach((n) => {
-    n.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => onOpen(n.dataset.id, b.dataset.act)));
-  });
+  const onKey = (e) => {
+    if (e.key === 'Escape' && linkFrom) stopLink();
+  };
+  window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
+  container.querySelectorAll('[data-mode]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      mode = b.dataset.mode;
+      try {
+        localStorage.setItem('ps-plan-mode', mode);
+      } catch (e) {
+        // préférence non mémorisée
+      }
+      await layout();
+      render();
+      fit();
+    })
+  );
 
-  placeNodes();
-  drawLinks();
+  await layout();
+  render();
   requestAnimationFrame(fit);
   return {
     dispose() {
-      urls.forEach((u) => URL.revokeObjectURL(u));
+      window.removeEventListener('keydown', onKey);
+      thumbs.forEach((u) => URL.revokeObjectURL(u));
     },
   };
+}
+
+function newHotspotId() {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
