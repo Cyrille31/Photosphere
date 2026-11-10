@@ -140,6 +140,14 @@ export async function openPlan(container, { photos, onOpen }) {
   let zone = null;
   let linkFrom = null;
   let selected = null;
+  // Dessin du plan (murs, textes), en coordonnées du plan comme les photos.
+  let drawing = await db.getPlanDrawing();
+  let tool = 'photos'; // photos | line | text | erase
+  let poly = null; // trait en cours : { last: point }
+  let hover = null; // point sous la souris (aperçu du trait)
+  let lastClick = null;
+  let textSize = 20;
+  const undoStack = [];
   // Échelle d'affichage : les rectangles, plus larges, demandent plus d'écart entre les photos.
   // Les positions enregistrées (et donc les directions entre photos) ne changent pas.
   const scale = () => (mode === 'rect' ? 1.75 : 1);
@@ -168,6 +176,16 @@ export async function openPlan(container, { photos, onOpen }) {
     <div class="plan-bar">
       <span class="plan-north" title="Le haut du plan est le nord">N ↑</span>
       <button class="btn small" data-fit>⤢ Tout afficher</button>
+      <span class="plan-tools">
+        <button class="btn small" data-tool="photos" title="Déplacer, tourner et relier les photos">✋ Photos</button>
+        <button class="btn small" data-tool="line" title="Tracer les murs des pièces : un clic par angle, double-clic ou Échap pour finir">✏ Traits</button>
+        <button class="btn small" data-tool="text" title="Cliquez pour écrire ; cliquez un texte pour le modifier, glissez-le pour le déplacer">T Texte</button>
+        <select class="plan-text-size" data-text-size title="Taille du texte" hidden>
+          <option value="14">Petit</option><option value="20" selected>Moyen</option><option value="32">Grand</option><option value="48">Très grand</option>
+        </select>
+        <button class="btn small" data-tool="erase" title="Cliquez un trait ou un texte pour l’effacer">⌫ Effacer</button>
+        <button class="btn small" data-draw-undo disabled title="Défaire la dernière modification du dessin (Ctrl+Z)">↶ Défaire</button>
+      </span>
       <span class="plan-modes">
         <button class="btn small" data-mode="sphere" title="Photos en sphères">◯ Sphères</button>
         <button class="btn small" data-mode="rect" title="Photos à plat : chaque lien aboutit à sa position dans l’image">▭ Rectangles</button>
@@ -196,7 +214,8 @@ export async function openPlan(container, { photos, onOpen }) {
 
   function render() {
     const { w, h } = picSize(mode);
-    world.innerHTML = `${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non reliées (${pool.size}) — déposez-en une sur une photo du plan pour les relier</span></div>` : ''}
+    world.innerHTML = `<svg class="plan-drawing" width="1" height="1"></svg>
+      ${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non reliées (${pool.size}) — déposez-en une sur une photo du plan pour les relier</span></div>` : ''}
       <svg class="plan-links" width="1" height="1"></svg>
       ${list
         .map(
@@ -207,6 +226,7 @@ export async function openPlan(container, { photos, onOpen }) {
           </div>`
         )
         .join('')}
+      <svg class="plan-links over" width="1" height="1"></svg>
       <svg class="plan-contacts" width="1" height="1"></svg>`;
     container.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
     world.querySelectorAll('.plan-node [data-act]').forEach((b) =>
@@ -218,6 +238,169 @@ export async function openPlan(container, { photos, onOpen }) {
     );
     placeNodes();
     drawLinks();
+    drawDrawing();
+  }
+
+  // ---------- dessin : murs et textes ----------
+  function drawDrawing() {
+    const svg = world.querySelector('.plan-drawing');
+    if (!svg) return;
+    const k = scale();
+    let html = '';
+    drawing.lines.forEach((l, i) => {
+      const a = `x1="${l.x1 * k}" y1="${l.y1 * k}" x2="${l.x2 * k}" y2="${l.y2 * k}"`;
+      html += `<line class="wall" ${a}/><line class="wall-hit" data-line="${i}" ${a}/>`;
+    });
+    drawing.texts.forEach((t, i) => {
+      html += `<text class="plan-label" data-text="${i}" x="${t.x * k}" y="${t.y * k}" font-size="${(t.size || 20) * k}">${escapeHtml(t.text)}</text>`;
+    });
+    if (tool === 'line') {
+      // Extrémités existantes (points d'accroche) et aperçu du trait en cours.
+      const ends = new Set();
+      drawing.lines.forEach((l) => [[l.x1, l.y1], [l.x2, l.y2]].forEach(([x, y]) => ends.add(x * k + ',' + y * k)));
+      ends.forEach((s) => {
+        const [x, y] = s.split(',');
+        html += `<circle class="wall-end" cx="${x}" cy="${y}" r="3.5"/>`;
+      });
+      if (poly && hover) html += `<line class="wall preview" x1="${poly.last.x * k}" y1="${poly.last.y * k}" x2="${hover.x * k}" y2="${hover.y * k}"/>`;
+      if (hover) html += `<circle class="wall-cursor" cx="${hover.x * k}" cy="${hover.y * k}" r="5"/>`;
+    }
+    svg.innerHTML = html;
+  }
+
+  async function saveDrawing() {
+    container.querySelector('[data-draw-undo]').disabled = !undoStack.length;
+    await db.putPlanDrawing(drawing);
+  }
+  function pushUndo() {
+    undoStack.push(JSON.stringify(drawing));
+    if (undoStack.length > 100) undoStack.shift();
+  }
+  async function undoDrawing() {
+    if (!undoStack.length) return;
+    drawing = JSON.parse(undoStack.pop());
+    poly = null;
+    drawDrawing();
+    await saveDrawing();
+  }
+
+  // Accroche : extrémité existante, sinon trait horizontal / vertical, sinon alignement sur une
+  // extrémité (Alt : sans accroche).
+  function snap(pt, from, free) {
+    if (free) return { x: Math.round(pt.x), y: Math.round(pt.y) };
+    const tol = 12 / zoom / scale();
+    let best = null, bd = tol;
+    for (const l of drawing.lines) {
+      for (const q of [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]) {
+        const d = Math.hypot(q.x - pt.x, q.y - pt.y);
+        if (d < bd) (bd = d), (best = q);
+      }
+    }
+    if (best) return { ...best };
+    let { x, y } = pt;
+    if (from) {
+      const a = (Math.abs(Math.atan2(y - from.y, x - from.x)) * 180) / Math.PI;
+      if (a < 7 || a > 173) y = from.y;
+      else if (Math.abs(a - 90) < 7) x = from.x;
+    }
+    for (const l of drawing.lines) {
+      for (const q of [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]) {
+        if (x !== (from && from.x) && Math.abs(q.x - x) < tol) x = q.x;
+        if (y !== (from && from.y) && Math.abs(q.y - y) < tol) y = q.y;
+      }
+    }
+    return { x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2 };
+  }
+
+  function endPoly() {
+    poly = null;
+    drawDrawing();
+  }
+
+  function editText(i, pt) {
+    const t = i >= 0 ? drawing.texts[i] : null;
+    const at = t ? { x: t.x, y: t.y } : pt;
+    const inp = document.createElement('input');
+    inp.className = 'plan-text-input';
+    inp.placeholder = 'Texte (Entrée pour valider)';
+    inp.value = t ? t.text : '';
+    inp.style.left = at.x * scale() * zoom + panX + 'px';
+    inp.style.top = at.y * scale() * zoom + panY + 'px';
+    inp.style.fontSize = Math.max(12, Math.min(40, (t ? t.size : textSize) * scale() * zoom)) + 'px';
+    inp.addEventListener('pointerdown', (e) => e.stopPropagation());
+    view.appendChild(inp);
+    inp.focus();
+    inp.select();
+    let finished = false;
+    const done = async (ok) => {
+      if (finished) return;
+      finished = true;
+      const v = inp.value.trim();
+      inp.remove();
+      if (!ok || (t && v === t.text) || (!t && !v)) return;
+      pushUndo();
+      if (t && v) t.text = v;
+      else if (t) drawing.texts.splice(i, 1);
+      else drawing.texts.push({ x: Math.round(at.x), y: Math.round(at.y), text: v, size: textSize });
+      drawDrawing();
+      await saveDrawing();
+    };
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') done(true);
+      if (e.key === 'Escape') done(false);
+    });
+    inp.addEventListener('blur', () => done(true));
+  }
+
+  async function drawClick(e, target) {
+    const m = toWorld(e);
+    const pt = { x: m.x / scale(), y: m.y / scale() };
+    if (tool === 'line') {
+      const now = performance.now();
+      const dbl = lastClick && now - lastClick.t < 350 && Math.hypot(e.clientX - lastClick.x, e.clientY - lastClick.y) < 8;
+      lastClick = { t: now, x: e.clientX, y: e.clientY };
+      if (dbl) return endPoly();
+      const q = snap(pt, poly && poly.last, e.altKey);
+      if (poly && (q.x !== poly.last.x || q.y !== poly.last.y)) {
+        pushUndo();
+        drawing.lines.push({ x1: poly.last.x, y1: poly.last.y, x2: q.x, y2: q.y });
+        await saveDrawing();
+      }
+      poly = { last: q };
+      hover = q;
+      drawDrawing();
+    } else if (tool === 'text') {
+      const tEl = target.closest && target.closest('[data-text]');
+      editText(tEl ? +tEl.dataset.text : -1, pt);
+    } else if (tool === 'erase') {
+      const l = target.closest && target.closest('[data-line]');
+      const t = target.closest && target.closest('[data-text]');
+      if (!l && !t) return;
+      pushUndo();
+      if (l) drawing.lines.splice(+l.dataset.line, 1);
+      else drawing.texts.splice(+t.dataset.text, 1);
+      drawDrawing();
+      await saveDrawing();
+    }
+  }
+
+  const TOOL_HELP = {
+    line: '✏ <b>Traits</b> : cliquez chaque angle des murs ; <b>double-clic</b> ou <b>Échap</b> pour finir le trait. Les traits s’accrochent aux extrémités et à l’horizontale / verticale (<b>Alt</b> : sans accroche). Glisser : déplacer le plan.',
+    text: 'T <b>Texte</b> : cliquez pour écrire (nom de pièce…), cliquez un texte pour le modifier (vide = supprimé), glissez-le pour le déplacer.',
+    erase: '⌫ <b>Effacer</b> : cliquez un trait ou un texte.',
+  };
+  function setTool(t) {
+    tool = t;
+    poly = null;
+    hover = null;
+    if (linkFrom) stopLink();
+    view.classList.toggle('drawing', t !== 'photos');
+    view.dataset.tool = t;
+    container.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
+    container.querySelector('[data-text-size]').hidden = t !== 'text';
+    help.innerHTML = TOOL_HELP[t] || helpDefault;
+    drawDrawing();
   }
 
   function placeNodes() {
@@ -241,7 +424,7 @@ export async function openPlan(container, { photos, onOpen }) {
   }
 
   function drawLinks() {
-    let lines = '', dots = '';
+    let lines = '', over = '', dots = '';
     list.forEach((p) =>
       p.hotspots.forEach((hs, k) => {
         if (!byId.has(hs.target)) return;
@@ -252,16 +435,20 @@ export async function openPlan(container, { photos, onOpen }) {
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
         const cls = hs.auto ? 'auto' : 'manual';
         // Chaque sens est dessiné sur la moitié du trait qui part de son point de contact.
-        lines += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/><line class="${cls}${a.hidden ? ' hidden' : ''}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
+        const seg = `<line class="${cls}${a.hidden ? ' hidden' : ''}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
+        lines += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>` + seg;
+        // Copie translucide au-dessus des photos : le lien reste visible là où il passe sur une image.
+        over += seg;
         dots += `<circle class="contact ${cls}${a.hidden ? ' hidden' : ''}" data-contact="${p.id}" data-k="${k}" cx="${a.x}" cy="${a.y}" r="7"><title>Lien vers « ${escapeHtml(q.name)} » : glisser pour le placer</title></circle>`;
       })
     );
     world.querySelector('.plan-links').innerHTML = lines;
+    world.querySelector('.plan-links.over').innerHTML = over;
     world.querySelector('.plan-contacts').innerHTML = dots;
   }
 
   function fit() {
-    const pts = [...pos.values()].map(disp);
+    const pts = [...pos.values(), ...drawing.lines.flatMap((l) => [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]), ...drawing.texts].map(disp);
     if (!pts.length) return;
     const r = view.getBoundingClientRect();
     const { w, h } = picSize(mode);
@@ -335,7 +522,18 @@ export async function openPlan(container, { photos, onOpen }) {
   };
 
   view.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button, input, select')) return;
+    if (tool !== 'photos') {
+      view.setPointerCapture(e.pointerId);
+      const tEl = tool === 'text' && e.target.closest('[data-text]');
+      if (tEl) {
+        const i = +tEl.dataset.text;
+        drag = { kind: 'dtext', i, sx: e.clientX, sy: e.clientY, start: { ...drawing.texts[i] }, moved: false, target: e.target };
+      } else {
+        drag = { kind: 'pan', draw: true, sx: e.clientX, sy: e.clientY, px: panX, py: panY, moved: false, target: e.target };
+      }
+      return;
+    }
     const dot = e.target.closest('[data-contact]');
     const node = e.target.closest('.plan-node');
     view.setPointerCapture(e.pointerId);
@@ -351,11 +549,23 @@ export async function openPlan(container, { photos, onOpen }) {
   });
 
   view.addEventListener('pointermove', (e) => {
-    if (!drag) return;
+    if (!drag) {
+      if (tool === 'line') {
+        const m = toWorld(e);
+        hover = snap({ x: m.x / scale(), y: m.y / scale() }, poly && poly.last, e.altKey);
+        drawDrawing();
+      }
+      return;
+    }
     const dx = e.clientX - (drag.sx || 0), dy = e.clientY - (drag.sy || 0);
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
     if (!drag.moved) return;
-    if (drag.kind === 'pan') {
+    if (drag.kind === 'dtext') {
+      const t = drawing.texts[drag.i];
+      t.x = Math.round(drag.start.x + dx / zoom / scale());
+      t.y = Math.round(drag.start.y + dy / zoom / scale());
+      drawDrawing();
+    } else if (drag.kind === 'pan') {
       panX = drag.px + dx;
       panY = drag.py + dy;
       applyView();
@@ -384,6 +594,15 @@ export async function openPlan(container, { photos, onOpen }) {
     const d = drag;
     drag = null;
     if (!d) return;
+    if (d.kind === 'dtext') {
+      if (!d.moved) return editText(d.i);
+      const moved = drawing.texts[d.i];
+      drawing.texts[d.i] = d.start;
+      pushUndo();
+      drawing.texts[d.i] = moved;
+      return saveDrawing();
+    }
+    if (d.draw && !d.moved) return drawClick(e, d.target);
     if (d.kind === 'node' && !d.moved) {
       const now = performance.now();
       if (linkFrom && linkFrom !== d.id) {
@@ -460,10 +679,25 @@ export async function openPlan(container, { photos, onOpen }) {
     { passive: false }
   );
   const onKey = (e) => {
+    if (e.target.closest && e.target.closest('input, select, textarea')) return;
     if (e.key === 'Escape' && linkFrom) stopLink();
+    if (e.key === 'Escape' && poly) endPoly();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      undoDrawing();
+    }
   };
   window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
+  container.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  container.querySelector('[data-text-size]').addEventListener('change', (e) => (textSize = +e.target.value));
+  container.querySelector('[data-draw-undo]').addEventListener('click', undoDrawing);
+  view.addEventListener('contextmenu', (e) => {
+    if (tool === 'line' && poly) {
+      e.preventDefault();
+      endPoly();
+    }
+  });
   container.querySelectorAll('[data-mode]').forEach((b) =>
     b.addEventListener('click', async () => {
       mode = b.dataset.mode;
@@ -480,6 +714,7 @@ export async function openPlan(container, { photos, onOpen }) {
 
   await layout();
   render();
+  setTool('photos');
   requestAnimationFrame(fit);
   return {
     dispose() {

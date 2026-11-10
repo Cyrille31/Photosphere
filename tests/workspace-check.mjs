@@ -133,7 +133,7 @@ try {
   await page.goto(base + '#/plan');
   await page.waitForSelector('.plan-node');
   await page.waitForTimeout(800);
-  check((await page.locator('.plan-node').count()) === 2 && (await page.locator('.plan-links line.auto').count()) === 1, 'plan : deux photos et leurs liens');
+  check((await page.locator('.plan-node').count()) === 2 && (await page.locator('.plan-links:not(.over) line.auto').count()) === 1, 'plan : deux photos et leurs liens');
   const na = await page.locator(`.plan-node[data-id="${ids.a}"] .plan-pic`).boundingBox();
   const nb = await page.locator(`.plan-node[data-id="${ids.b}"] .plan-pic`).boundingBox();
   check(nb.x > na.x + 40 && Math.abs(nb.y - na.y) < 10, 'plan : la photo liée vers l’est est placée à droite');

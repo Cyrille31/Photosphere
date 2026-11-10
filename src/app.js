@@ -8,6 +8,7 @@ import * as ws from './workspace.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
 import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
+import { reliefKey } from './relief.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
 const app = document.getElementById('app');
@@ -501,7 +502,7 @@ async function onAction(act, p, el) {
       return b.close();
     }
     case 'export-settings':
-      download(settingsBlob(state.photos), SETTINGS_FILE_NAME);
+      download(settingsBlob(state.photos, await db.getPlanDrawing()), SETTINGS_FILE_NAME);
       toast(`Rangez « ${SETTINGS_FILE_NAME} » dans le dossier de vos photos d’origine. Pour tout retrouver, importez ce dossier (ou les photos avec ce fichier).`, false, 9000);
       return;
     case 'load-settings':
@@ -635,6 +636,8 @@ async function photoSources(photos) {
       srcType: out ? 'equirect' : p.srcType,
       params: out ? {} : p.params,
       hotspots: p.hotspots || [],
+      relief: p.relief || null,
+      reliefKey: reliefKey(p.params),
     });
   }
   return { list, revoke: () => urls.forEach((u) => URL.revokeObjectURL(u)) };
@@ -655,6 +658,9 @@ async function openViewer(id) {
       title: 'PhotoSphère',
       initialView: state.lastView,
       onExit: () => (location.hash = state.origin === 'plan' ? '#/plan' : '#/'),
+      // Relief estimé à la volée dans le casque : mémorisé s'il correspond toujours au redressement.
+      onRelief: (photoId, relief) =>
+        db.updatePhoto(photoId, (cur) => (reliefKey(cur.params) === relief.key ? { ...cur, relief } : null)).catch(() => {}),
       onEdit: (photoId, view) => {
         state.lastView = view;
         state.returnToViewer = true;
