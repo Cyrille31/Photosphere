@@ -99,7 +99,7 @@ export async function putPlanDrawing(d) {
 export async function deletePhoto(id) {
   await tx('photos', 'readwrite', (s) => s.delete(id));
   notify();
-  for (const k of ['orig', 'out', 'thumb']) await tx('blobs', 'readwrite', (s) => s.delete(`${id}:${k}`));
+  for (const k of ['orig', 'out', 'thumb', 'depth']) await tx('blobs', 'readwrite', (s) => s.delete(`${id}:${k}`));
   // Supprime les liens qui pointaient vers cette photo.
   for (const p of await listPhotos()) {
     const kept = (p.hotspots || []).filter((h) => h.target !== id);

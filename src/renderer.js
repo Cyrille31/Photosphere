@@ -110,68 +110,39 @@ export class PanoRenderer {
       gl.uniformMatrix3fv(u.uCam, false, new Float32Array(mat3Transpose(eye.cam || mat3Identity())));
       const d = eye.distort || [0, 0];
       gl.uniform2f(u.uDistort, d[0], d[1]);
-      const e = (this.relief && eye.offset) || [0, 0, 0];
+      const e = (this.depth && eye.offset) || [0, 0, 0];
       gl.uniform3f(u.uEye, e[0], e[1], e[2]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     gl.disable(gl.SCISSOR_TEST);
   }
 
-  // Relief estimé (voir relief.js) : { walls: [360 distances], ceil } ou null.
-  setRelief(relief) {
+  // Carte de profondeur (voir depth.js) : Float32Array w × h (ligne 0 = latitude +90°, distances en
+  // hauteurs d'objectif), ou null pour un affichage sans relief.
+  setDepth(depth, w = 1024, h = 512) {
     const gl = this.gl;
-    const next = relief && relief.walls && relief.walls.length ? relief : null;
-    // Même forme de pièce (seuls la hauteur ou le plafond changent) : rien à transférer.
-    if (this.wallTex && next && this.relief && next.walls === this.relief.walls) {
-      this.relief = next;
-      return;
-    }
-    if (this.wallTex && !next && !this.relief) return;
-    this.relief = next;
-    if (!this.wallTex) {
-      this.wallTex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, this.wallTex);
+    if (!this.depthTex) {
+      this.depthTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    }
-    const data = this.relief ? Float32Array.from(this.relief.walls) : new Float32Array([1]);
-    gl.bindTexture(gl.TEXTURE_2D, this.wallTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, data.length, 1, 0, gl.RED, gl.FLOAT, data);
+    } else if (depth === this.depth) return;
+    this.depth = depth || null;
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+    if (depth) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, w, h, 0, gl.RED, gl.FLOAT, depth);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1]));
   }
 
   bindRelief() {
     const gl = this.gl, u = this.u;
-    if (!this.wallTex) this.setRelief(null);
+    if (!this.depthTex) this.setDepth(null);
     gl.activeTexture(gl.TEXTURE3);
-    gl.bindTexture(gl.TEXTURE_2D, this.wallTex);
-    gl.uniform1i(u.uWallTex, 3);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+    gl.uniform1i(u.uDepthTex, 3);
     gl.activeTexture(gl.TEXTURE0);
-    gl.uniform2f(u.uRelief, this.relief ? 1 : 0, this.relief ? this.relief.ceil || 0 : 0);
-  }
-
-  // Image équirectangulaire redressée w × h, lignes de bas en haut (latitude -90° en
-  // ligne 0). Sert à l'estimation du relief.
-  readFlat(w, h) {
-    const gl = this.gl;
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
-    const fbo = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    const saved = this.relief;
-    this.relief = null;
-    this.draw({ mode: 'flat', flat: [0, 0, w, h], eyes: [{ vp: [0, 0, w, h] }], framebuffer: fbo, hotAlpha: this.hotspots.map(() => 0), hotSel: -1 });
-    this.relief = saved;
-    const px = new Uint8Array(w * h * 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.deleteFramebuffer(fbo);
-    gl.deleteTexture(tex);
-    return px;
+    gl.uniform2f(u.uRelief, this.depth ? 1 : 0, 0);
   }
 
   // Direction (repère de sortie) sous un point écran en pixels canvas (origine en haut à gauche).

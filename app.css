@@ -187,6 +187,9 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-view[data-tool=erase] .plan-drawing line.wall-hit:hover { stroke: rgba(229,72,77,.35); }
 .plan-view[data-tool=erase] .plan-drawing text:hover { fill: #e5484d; }
 .plan-view[data-tool=text] .plan-drawing text { cursor: move; }
+.plan-view[data-tool=move] .plan-drawing line.wall-hit, .plan-view[data-tool=move] .plan-drawing text, .plan-view[data-tool=move] .plan-drawing circle.wall-end { pointer-events: all; cursor: move; }
+.plan-view[data-tool=move] .plan-drawing line.wall-hit:hover { stroke: rgba(11,152,208,.3); }
+.plan-view[data-tool=move] .plan-drawing circle.wall-end:hover { fill: #0b98d0; }
 .plan-text-input { position: absolute; transform: translate(-50%, -50%); min-width: 160px; padding: 4px 8px; border: 2px solid var(--accent); border-radius: 6px; background: #fff; color: #111; font-weight: 600; text-align: center; z-index: 5; }
 .plan-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .plan-links { position: absolute; left: 0; top: 0; overflow: visible; }

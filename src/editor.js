@@ -6,7 +6,8 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
 import { edgeConstraints, solveUp } from './autolevel.js';
-import { estimateRelief, reliefDistance, reliefKey } from './relief.js';
+import { reliefKey, depthAt, loadDepthImage } from './depth.js';
+import { computeDepth } from './depth-ai.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { pickPhoto } from './photo-picker.js';
 import { chooseArrivalView } from './arrival-view.js';
@@ -117,19 +118,17 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           </div>
         </section>
         <section data-panel="relief" hidden>
-          <p class="note">Dans le casque, chaque œil voit la photo d’un point légèrement différent pour donner du relief. Une photo seule ne contient pas de mesure de distance : PhotoSphère estime la forme de la pièce (sol, murs, plafond) à partir des jonctions visibles dans l’image. Les couleurs montrent les distances estimées : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>.</p>
+          <p class="note">Dans le casque, chaque œil voit la photo d’un point légèrement différent pour donner du relief. Une intelligence artificielle (Depth Anything V2, exécutée dans votre navigateur, sans envoi de la photo) estime la distance de chaque point : murs, sol, plafond, meubles, personnes. Les couleurs montrent les distances : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>.</p>
           <div class="tools">
-            <button class="btn small primary" data-relief-estimate>✨ Estimer le relief</button>
+            <button class="btn small primary" data-depth-compute>🧠 Calculer le relief (IA)</button>
             <label class="check"><input type="checkbox" data-depth-view checked> Colorer selon la distance</label>
           </div>
+          <p class="note depth-status" hidden></p>
           <label class="slider relief-slider"><span>Hauteur de l’objectif au-dessus du sol (m)</span>
             <input type="range" name="reliefH" min="0.3" max="2.5" step="0.05">
             <input type="number" name="reliefH" min="0.3" max="2.5" step="0.05"></label>
-          <label class="slider relief-slider"><span>Hauteur du plafond (m, 0 = pas de plafond / extérieur)</span>
-            <input type="range" name="reliefCeil" min="0" max="6" step="0.05">
-            <input type="number" name="reliefCeil" min="0" max="6" step="0.05"></label>
           <p class="note relief-info"></p>
-          <p class="note">La hauteur de l’objectif fixe l’échelle : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »). Les meubles et objets ne sont pas mesurés : ils apparaissent plaqués sur le sol ou les murs.</p>
+          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).</p>
         </section>
         <section data-panel="links" hidden>
           <p class="note">Un lien est une pastille sur laquelle on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo.</p>
@@ -162,8 +161,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   let raf = 0;
   let depthView = true;
   const DEFAULT_CAMERA_HEIGHT = 1.6;
-  // Relief valable pour le redressement actuel (sinon il est à refaire).
-  const currentRelief = () => (p.relief && p.relief.walls && p.relief.key === reliefKey(p.params) ? p.relief : null);
+  // Carte de profondeur (IA) : valable pour le redressement actuel, sinon à refaire.
+  let depthMap = null; // Float32Array
+  let depthPng = null; // nouvelle carte à enregistrer
+  let depthBusy = false;
+  const currentRelief = () => (p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) && depthMap ? p.relief : null);
   const reliefTabOpen = () => !$('[data-panel=relief]').hidden;
 
   const controller = new ViewController(canvas, renderer, {
@@ -187,7 +189,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const frame = controller.frame();
       renderer.setParams(p.params, p.srcType);
       renderer.setHotspots(p.hotspots);
-      renderer.setRelief(currentRelief());
+      renderer.setDepth(currentRelief() ? depthMap : null);
       renderer.draw({ ...frame, grid, hotSel: -1, hotSize: controller.mode === 'flat' ? 0.05 : 0.06, depthView: depthView && reliefTabOpen() });
       drawMarkers(frame);
       if (reliefTabOpen()) updateReliefInfo();
@@ -558,68 +560,83 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     b.addEventListener('click', () => {
       $$('[data-tab]').forEach((x) => x.classList.toggle('active', x === b));
       $$('[data-panel]').forEach((s) => (s.hidden = s.dataset.panel !== b.dataset.tab));
-      if (b.dataset.tab === 'relief' && !currentRelief()) estimateNow();
       syncRelief();
       redraw();
     })
   );
 
-  // ---------- relief ----------
-  function estimateNow() {
+  // ---------- relief (profondeur par IA) ----------
+  const depthStatus = (txt) => {
+    const el = $('.depth-status');
+    el.hidden = !txt;
+    el.textContent = txt || '';
+  };
+  async function computeNow() {
+    if (depthBusy) return;
+    depthBusy = true;
+    const btn = $('[data-depth-compute]');
+    btn.disabled = true;
     try {
       renderer.setParams(p.params, p.srcType);
-      const r = estimateRelief(renderer.readFlat(1024, 512), 1024, 512);
-      p.relief = { h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, walls: r.walls, ceil: r.ceil, key: reliefKey(p.params) };
+      const t0 = performance.now();
+      const r = await computeDepth(renderer, depthStatus);
+      depthMap = r.depth;
+      depthPng = r.png;
+      p.relief = { kind: 'ai', h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(p.params), floor: r.floorOk };
       dirty = true;
+      depthStatus('');
+      toast(`Relief calculé en ${((performance.now() - t0) / 1000).toFixed(0)} s${r.floorOk ? '' : ' (sol peu visible : échelle approximative)'}. Enregistrez pour le garder.`, false, 6000);
     } catch (err) {
-      toast('Estimation du relief impossible : ' + err.message, true);
+      depthStatus('');
+      toast('Calcul du relief impossible : ' + err.message + '. Une connexion Internet est nécessaire la première fois.', true, 8000);
     }
+    depthBusy = false;
+    btn.disabled = false;
     syncRelief();
     redraw();
   }
   function syncRelief() {
-    const r = p.relief || { h: DEFAULT_CAMERA_HEIGHT, ceil: 0 };
-    const vals = { reliefH: r.h, reliefCeil: r.ceil > 0 ? +(r.h * (1 + r.ceil)).toFixed(2) : 0 };
+    const r = p.relief || { h: DEFAULT_CAMERA_HEIGHT };
     $$('.relief-slider input').forEach((i) => {
-      if (document.activeElement !== i) i.value = vals[i.name];
+      if (document.activeElement !== i) i.value = r.h || DEFAULT_CAMERA_HEIGHT;
     });
+    $('[data-depth-compute]').textContent = currentRelief() ? '🧠 Recalculer le relief (IA)' : '🧠 Calculer le relief (IA)';
   }
   function updateReliefInfo() {
     const r = currentRelief();
     const info = $('.relief-info');
     if (!r) {
-      info.textContent = 'Relief non estimé pour ce redressement : appuyez sur « Estimer le relief ».';
+      info.textContent =
+        p.relief && p.relief.kind === 'ai' && depthMap ? 'Le redressement a changé : recalculez le relief.' : 'Pas encore de relief pour cette photo : appuyez sur « Calculer le relief ».';
       return;
     }
-    const walls = r.walls.filter((v) => v < 29);
-    const near = walls.length ? Math.min(...walls) * r.h : 0;
-    const far = walls.length ? Math.max(...walls) * r.h : 0;
-    let txt = walls.length ? `Murs trouvés entre ${near.toFixed(1)} et ${far.toFixed(1)} m` : 'Aucun mur trouvé (extérieur ?)';
-    txt += r.ceil > 0 ? `, plafond à ${(r.h * (1 + r.ceil)).toFixed(2)} m du sol.` : ', pas de plafond.';
-    if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(reliefDistance(controller.gazeDir(), r) * r.h).toFixed(2)} m.`;
+    let txt = r.floor === false ? 'Sol peu visible : l’échelle des distances est approximative.' : 'Échelle déduite du sol.';
+    if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(depthAt(depthMap, controller.gazeDir()) * r.h).toFixed(2)} m.`;
     info.textContent = txt;
   }
-  $('[data-relief-estimate]').addEventListener('click', () => {
-    estimateNow();
-    toast('Relief estimé. Vérifiez les couleurs : le sol passe du rouge (au pied) au vert, chaque mur garde une teinte régulière.', false, 6000);
-  });
+  $('[data-depth-compute]').addEventListener('click', computeNow);
   $('[data-depth-view]').addEventListener('change', (e) => {
     depthView = e.target.checked;
     redraw();
   });
+  // Carte déjà enregistrée pour cette photo.
+  if (p.relief && p.relief.kind === 'ai') {
+    db.getBlob(p.id + ':depth')
+      .then((b) => (b ? loadDepthImage(b) : null))
+      .then((d) => {
+        if (d) {
+          depthMap = d;
+          syncRelief();
+          redraw();
+        }
+      })
+      .catch(() => {});
+  }
   $$('.relief-slider input').forEach((i) =>
     i.addEventListener('input', () => {
       const v = parseFloat(i.value);
       if (!Number.isFinite(v)) return;
-      if (!p.relief) p.relief = { h: DEFAULT_CAMERA_HEIGHT, ceil: 0 };
-      const r = p.relief;
-      if (i.name === 'reliefH') {
-        const ceilM = r.ceil > 0 ? r.h * (1 + r.ceil) : 0;
-        r.h = Math.max(0.3, v);
-        if (ceilM) r.ceil = Math.max(0.05, ceilM / r.h - 1);
-      } else {
-        r.ceil = v > r.h + 0.05 ? v / r.h - 1 : 0;
-      }
+      p.relief = { ...(p.relief || {}), h: Math.max(0.3, v) };
       dirty = true;
       syncRelief();
       redraw();
@@ -784,10 +801,14 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       srcType: p.srcType,
       params: p.params,
       hotspots: p.hotspots,
-      // Relief : gardé s'il correspond au redressement, sinon seule la hauteur de l'objectif reste.
-      ...(p.relief ? { relief: currentRelief() ? p.relief : { h: p.relief.h } } : {}),
+      // Relief : gardé s'il correspond au redressement (la carte est refaite sinon).
+      ...(p.relief ? { relief: p.relief } : {}),
       status: imageChanged || cur.status !== 'done' ? 'pending' : 'done',
     };
+    if (depthPng) {
+      await db.putBlob(p.id + ':depth', depthPng);
+      depthPng = null;
+    }
     await db.putPhoto(updated);
     for (const r of reverseLinks) {
       const t = await db.getPhoto(r.target);

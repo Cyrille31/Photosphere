@@ -2,7 +2,7 @@
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
-import { estimateRelief, reliefKey } from './relief.js';
+import { reliefKey, loadDepthImage } from './depth.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
@@ -35,10 +35,10 @@ function saveHeadsetSettings(h) {
 }
 
 // photos : [{ id, name, src, srcType, params, hotspots: [{ target, yaw, pitch, label }] }]
-// photo.relief : forme estimée de la pièce (relief.js), photo.reliefKey : redressement de l'image affichée.
-// onRelief(id, relief) : relief calculé à la volée, à mémoriser.
+// photo.depthSrc : carte de profondeur (PNG, voir depth.js), photo.relief : { h, key }, photo.reliefKey :
+// redressement de l'image affichée (la carte n'est utilisée que si elle lui correspond).
 // onEdit(id, vue) : ouvre l'éditeur sur la photo affichée ; initialView : { yaw, pitch } en radians.
-export function createPlayer(container, { photos, startId, onExit, onEdit, onRelief, title, initialView }) {
+export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
@@ -137,9 +137,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onRel
     }
     try {
       await renderer.load(photo.src, photo.srcType || 'equirect', photo.params || {});
-      renderer.setRelief(null);
+      renderer.setDepth(null);
       reliefFor = null;
-      ensureRelief(photo);
+      loadRelief(photo);
     } catch (e) {
       toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
     }
@@ -351,32 +351,33 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onRel
     eyeLabels.forEach((s) => (s.textContent = controller.stereo ? name : ''));
   }
 
-  // Relief : forme de la pièce enregistrée, sinon estimée (une seule fois) dès qu'on passe au casque.
+  // Relief : carte de profondeur calculée dans l'éditeur (IA), si elle correspond au redressement.
   let reliefFor = null;
-  function ensureRelief(photo) {
-    if (!photo || reliefFor === photo.id) return;
-    const key = photo.reliefKey ?? reliefKey(photo.params);
-    if (photo.relief && photo.relief.walls && photo.relief.key === key) {
-      renderer.setRelief(photo.relief);
-      reliefFor = photo.id;
-      return;
-    }
-    if (!controller.stereo && !xrSession) return;
+  const hasRelief = (photo) => !!(photo && photo.depthSrc && photo.relief && photo.relief.key === (photo.reliefKey ?? reliefKey(photo.params)));
+  async function loadRelief(photo) {
+    reliefFor = photo.id;
+    if (!hasRelief(photo)) return;
     try {
-      const r = estimateRelief(renderer.readFlat(1024, 512), 1024, 512);
-      photo.relief = { h: (photo.relief && photo.relief.h) || DEFAULT_CAMERA_HEIGHT, walls: r.walls, ceil: r.ceil, key };
-      renderer.setRelief(photo.relief);
-      reliefFor = photo.id;
-      if (onRelief) onRelief(photo.id, photo.relief);
+      if (!photo.depth) photo.depth = await loadDepthImage(photo.depthSrc);
+      if (current === photo || reliefFor === photo.id) {
+        renderer.setDepth(photo.depth);
+        dirty = true;
+      }
     } catch (e) {
-      reliefFor = photo.id; // pas de relief pour cette photo
+      // carte illisible : pas de relief
     }
+  }
+  let reliefHintFor = null;
+  function reliefHint() {
+    if (!current || reliefHintFor === current.id || hasRelief(current)) return;
+    reliefHintFor = current.id;
+    if ((controller.headset.relief ?? 1) > 0) toast('Pas de relief pour cette photo : calculez-le dans l’éditeur (onglet « Relief »).');
   }
   // Position d'un œil par rapport au centre de prise de vue, en hauteurs d'objectif.
   function eyeOffset(vec) {
     const r = current && current.relief;
     const k = controller.headset.relief ?? 1;
-    if (!r || !k) return null;
+    if (!r || !k || !renderer.depth) return null;
     const s = k / (r.h || DEFAULT_CAMERA_HEIGHT);
     return vec.map((v) => v * s);
   }
@@ -390,7 +391,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onRel
     dirty = false;
     const frame = controller.frame();
     if (frame.stereo) {
-      ensureRelief(current);
+      reliefHint();
       frame.eyes.forEach((e, k) => (e.offset = eyeOffset(mat3Apply(e.cam, [(k ? 1 : -1) * EYE_HALF_GAP, 0, 0]))));
     }
     renderer.draw({
@@ -493,7 +494,6 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onRel
         const rot = rotY(offset);
         xrGaze = mat3Apply(mat3Mul(rot, head), [0, 0, 1]);
         updateGaze(now);
-        ensureRelief(current);
         const hp = pose.transform.position;
         const eyes = pose.views.map((view) => {
           const vp = layer.getViewport(view);

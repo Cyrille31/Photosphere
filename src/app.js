@@ -8,7 +8,7 @@ import * as ws from './workspace.js';
 import { exportTourHtml, exportJpegZip, exportProject, importProject } from './tour-export.js';
 import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
-import { reliefKey } from './relief.js';
+import { reliefKey } from './depth.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
 const app = document.getElementById('app');
@@ -628,6 +628,9 @@ async function photoSources(photos) {
     if (!blob) continue;
     const url = URL.createObjectURL(blob);
     urls.push(url);
+    const depth = p.relief && p.relief.kind === 'ai' ? await db.getBlob(p.id + ':depth') : null;
+    const depthSrc = depth ? URL.createObjectURL(depth) : null;
+    if (depthSrc) urls.push(depthSrc);
     list.push({
       id: p.id,
       name: p.name,
@@ -638,6 +641,7 @@ async function photoSources(photos) {
       hotspots: p.hotspots || [],
       relief: p.relief || null,
       reliefKey: reliefKey(p.params),
+      depthSrc,
     });
   }
   return { list, revoke: () => urls.forEach((u) => URL.revokeObjectURL(u)) };
@@ -658,9 +662,6 @@ async function openViewer(id) {
       title: 'PhotoSphère',
       initialView: state.lastView,
       onExit: () => (location.hash = state.origin === 'plan' ? '#/plan' : '#/'),
-      // Relief estimé à la volée dans le casque : mémorisé s'il correspond toujours au redressement.
-      onRelief: (photoId, relief) =>
-        db.updatePhoto(photoId, (cur) => (reliefKey(cur.params) === relief.key ? { ...cur, relief } : null)).catch(() => {}),
       onEdit: (photoId, view) => {
         state.lastView = view;
         state.returnToViewer = true;
