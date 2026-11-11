@@ -311,12 +311,14 @@ export async function openPlan(container, { photos, onOpen }) {
       if (a < 7 || a > 173) y = from.y;
       else if (Math.abs(a - 90) < 7) x = from.x;
     }
-    {
-      for (const q of ends) {
-        if (x !== (from && from.x) && Math.abs(q.x - x) < tol) x = q.x;
-        if (y !== (from && from.y) && Math.abs(q.y - y) < tol) y = q.y;
-      }
+    // Alignement sur l'extrémité la plus proche en x et en y (sauf axe déjà fixé par l'accroche).
+    let bx = tol, by = tol, ax = x, ay = y;
+    for (const q of ends) {
+      if (x !== (from && from.x) && Math.abs(q.x - x) < bx) (bx = Math.abs(q.x - x)), (ax = q.x);
+      if (y !== (from && from.y) && Math.abs(q.y - y) < by) (by = Math.abs(q.y - y)), (ay = q.y);
     }
+    x = ax;
+    y = ay;
     return { x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2 };
   }
 
