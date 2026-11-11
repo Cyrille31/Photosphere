@@ -114,29 +114,69 @@ uniform float uHotSize;
 uniform float uDwell;
 uniform float uReticle;
 uniform float uGrid;
-// Relief : carte de profondeur équirectangulaire (distances en hauteurs d'objectif), position de l'œil.
+// Relief : carte de profondeur équirectangulaire (R : distance, G : distance du fond caché derrière les
+// objets proches, en hauteurs d'objectif), couleurs de ce fond, position de l'œil.
 uniform sampler2D uDepthTex;
-uniform vec2 uRelief;       // x : relief disponible (0 / 1)
+uniform sampler2D uBgTex;
+uniform vec2 uRelief;       // x : relief disponible (0 / 1), y : couleurs du fond disponibles
 uniform vec3 uEye;          // position de l'œil par rapport au centre de la photo (en hauteurs d'objectif)
 uniform float uDepthView;   // > 0 : colore l'image selon la distance estimée (vérification)
 out vec4 outColor;
 
-float sceneDist(vec3 d) {
-  float u = atan(d.x, d.z) / (2.0 * PI) + 0.5;
-  float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
-  return textureLod(uDepthTex, vec2(u, v), 0.0).r;
+vec2 eqUv(vec3 d) {
+  return vec2(atan(d.x, d.z) / (2.0 * PI) + 0.5, 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI);
 }
+vec2 depth2(vec3 d) { return textureLod(uDepthTex, eqUv(d), 0.0).rg; }
+float sceneDist(vec3 d) { return depth2(d).r; }
 
-// Rayon issu de l'œil (décalé du centre de prise de vue) : on cherche le point de la pièce qu'il
-// atteint, puis la direction de ce point vue du centre, celle où la photo l'a enregistré.
-vec3 reliefDir(vec3 e, vec3 d) {
-  float t = sceneDist(d);
-  for (int i = 0; i < 6; i++) {
+// Premier point où le rayon e + t·d passe derrière la scène (couche 0) ou le fond (couche 1) :
+// pas croissants (+25 %), puis dichotomie. -1 : rien touché (au loin).
+float marchLayer(vec3 e, vec3 d, int layer) {
+  float lo = 0.1, t = 0.1;
+  for (int i = 0; i < 26; i++) {
     vec3 x = e + t * d;
     float r = length(x);
-    t = max(0.05, t + 0.85 * (sceneDist(x / r) - r));
+    vec2 dd = depth2(x / r);
+    if (r >= (layer == 0 ? dd.r : dd.g)) {
+      float hi = t;
+      for (int k = 0; k < 6; k++) {
+        float m = 0.5 * (lo + hi);
+        vec3 xm = e + m * d;
+        float rm = length(xm);
+        vec2 dm = depth2(xm / rm);
+        if (rm >= (layer == 0 ? dm.r : dm.g)) hi = m; else lo = m;
+      }
+      return hi;
+    }
+    lo = t;
+    t *= 1.25;
   }
-  return normalize(e + t * d);
+  return -1.0;
+}
+
+// Rayon issu de l'œil (décalé du centre de prise de vue) : point de la scène qu'il atteint, puis
+// direction de ce point vue du centre (celle où la photo l'a enregistré). Si ce point tombe sur la
+// « pente » entre un objet proche et le fond (ce que la caméra n'a pas vu), on prend le fond caché,
+// reconstitué : l'objet n'est pas étiré.
+vec3 reliefDir(vec3 e, vec3 d, out bool useBg) {
+  useBg = false;
+  float t = marchLayer(e, d, 0);
+  if (t < 0.0) return d;
+  vec3 x = normalize(e + t * d);
+  vec2 uv = eqUv(x);
+  vec2 tx = 1.5 / vec2(textureSize(uDepthTex, 0));
+  float c0 = textureLod(uDepthTex, uv, 0.0).r;
+  float a = textureLod(uDepthTex, uv + vec2(tx.x, 0.0), 0.0).r;
+  float b = textureLod(uDepthTex, uv - vec2(tx.x, 0.0), 0.0).r;
+  float c = textureLod(uDepthTex, uv + vec2(0.0, tx.y), 0.0).r;
+  float f = textureLod(uDepthTex, uv - vec2(0.0, tx.y), 0.0).r;
+  float mn = min(min(a, b), min(c, f)), mx = max(max(a, b), max(c, f));
+  if (mx > mn * 1.15 && c0 > mn * 1.06 && c0 < mx * 0.94) {
+    useBg = true;
+    float tb = marchLayer(e, d, 1);
+    return tb < 0.0 ? d : normalize(e + tb * d);
+  }
+  return x;
 }
 
 vec3 dirFromLonLat(float lon, float lat) {
@@ -160,10 +200,11 @@ void main() {
     float r2 = dot(t, t);
     t *= 1.0 + uDistort.x * r2 + uDistort.y * r2 * r2;
     dir = normalize(uCam * vec3(t, 1.0));
-    if (uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir);
   }
+  bool useBg = false;
+  if (uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir, useBg);
   float pixAng = length(fwidth(dir));
-  vec3 col = sampleSource(dir, pixAng).rgb;
+  vec3 col = useBg && uRelief.y > 0.5 ? textureLod(uBgTex, eqUv(dir), 0.0).rgb : sampleSource(dir, pixAng).rgb;
 
   if (uDepthView > 0.0 && uRelief.x > 0.5) {
     // Proche : rouge, 2 hauteurs : jaune, 5 : vert, au loin : bleu ; lignes tous les ~25 %.

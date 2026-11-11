@@ -186,7 +186,7 @@ export function reliefKey(params) {
   return [p.yaw || 0, p.pitch || 0, p.roll || 0].map((v) => (+v).toFixed(2)).join(',');
 }
 
-// Carte enregistrée en PNG (URL d'objet ou data:) → Float32Array.
+// Carte enregistrée en PNG (URL d'objet ou data:) → { depth, bg } (Float32Array, voir decodeDepth).
 export async function loadDepthImage(src) {
   const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
@@ -198,19 +198,27 @@ export async function loadDepthImage(src) {
   const px = g.getImageData(0, 0, c.width, c.height).data;
   if (bmp.close) bmp.close();
   c.width = c.height = 1;
-  return decodeDepth(px);
+  return { depth: decodeDepth(px), bg: decodeBackground(px) };
 }
 
-// Codage sur 16 bits (logarithme de la distance) dans les canaux rouge et vert d'une image RGBA.
+// Image (Blob, URL ou data:) → ImageBitmap (couleurs du fond extrapolées).
+export async function loadImageBitmap(src) {
+  const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
+  return createImageBitmap(blob);
+}
+
+// Codage : distance sur 16 bits (logarithme) dans les canaux rouge et vert, distance du fond sur 8 bits
+// (même échelle logarithmique) dans le bleu. Une carte sans fond distinct a bleu = rouge.
 const LN_NEAR = Math.log(DEPTH_NEAR), LN_SPAN = Math.log(DEPTH_FAR / DEPTH_NEAR);
-export function encodeDepth(depth) {
+const q16 = (d) => Math.max(0, Math.min(65535, Math.round(((Math.log(d) - LN_NEAR) / LN_SPAN) * 65535)));
+export function encodeDepth(depth, bg = null) {
   const px = new Uint8ClampedArray(depth.length * 4);
   for (let i = 0; i < depth.length; i++) {
-    const q = Math.round(((Math.log(depth[i]) - LN_NEAR) / LN_SPAN) * 65535);
-    const v = Math.max(0, Math.min(65535, q));
+    const v = q16(depth[i]);
     px[i * 4] = v >> 8;
     px[i * 4 + 1] = v & 255;
-    px[i * 4 + 2] = v >> 8;
+    // Fond : arrondi vers le loin (jamais plus proche que l'objet qu'il prolonge).
+    px[i * 4 + 2] = bg ? Math.max(v >> 8, Math.min(255, Math.ceil(q16(bg[i]) / 256))) : v >> 8;
     px[i * 4 + 3] = 255;
   }
   return px;
@@ -219,6 +227,156 @@ export function decodeDepth(px) {
   const out = new Float32Array(px.length / 4);
   for (let i = 0; i < out.length; i++) out[i] = Math.exp(LN_NEAR + (((px[i * 4] << 8) | px[i * 4 + 1]) / 65535) * LN_SPAN);
   return out;
+}
+export function decodeBackground(px) {
+  const out = new Float32Array(px.length / 4);
+  for (let i = 0; i < out.length; i++) out[i] = Math.exp(LN_NEAR + ((px[i * 4 + 2] * 256 + 128) / 65535) * LN_SPAN);
+  return out;
+}
+
+// Couche de fond : ce qui est caché derrière les objets proches (personnes, meubles), extrapolé à
+// partir du fond qui les entoure. Dans le casque, chaque œil voit un peu derrière le bord des objets
+// proches : on y montre ce fond plutôt que d'étirer l'objet.
+// depth : carte (w × h, ligne 0 en haut). radius : portée en pixels de la carte (~ 7°).
+// Renvoie { bg: distances du fond, mask: Uint8Array (1 = objet devant le fond) }.
+export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 20, jump = 1.12 } = {}) {
+  const N = w * h;
+  const L = new Float32Array(N);
+  for (let i = 0; i < N; i++) L[i] = Math.log(depth[i]);
+  // Maximum glissant (le plus lointain) : horizontal (le tour se referme), puis vertical.
+  const tmp = new Float32Array(N), far = new Float32Array(N);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let m = -Infinity;
+      for (let k = -radius; k <= radius; k++) m = Math.max(m, L[row + ((x + k + w) % w)]);
+      tmp[row + x] = m;
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let m = -Infinity;
+      for (let k = Math.max(0, y - radius); k <= Math.min(h - 1, y + radius); k++) m = Math.max(m, tmp[k * w + x]);
+      far[y * w + x] = m;
+    }
+  }
+  const thr = Math.log(jump);
+  const mask = new Uint8Array(N);
+  for (let i = 0; i < N; i++) mask[i] = L[i] < far[i] - thr ? 1 : 0;
+  const bg = new Float32Array(N);
+  for (let i = 0; i < N; i++) bg[i] = mask[i] ? Math.exp(far[i]) : depth[i];
+  return { bg, mask };
+}
+
+// Remplit les zones masquées d'une image RGBA (w × h) en prolongeant les couleurs voisines
+// (pyramide « push-pull ») ; le masque est d'abord élargi de `grow` pixels pour ne pas reprendre
+// le liseré de l'objet. Modifie et renvoie rgba.
+export function fillMasked(rgba, mask, w, h, grow = 3) {
+  let m = mask;
+  for (let g = 0; g < grow; g++) {
+    const n = new Uint8Array(m);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (m[y * w + x]) continue;
+        if (m[y * w + ((x + 1) % w)] || m[y * w + ((x - 1 + w) % w)] || (y > 0 && m[(y - 1) * w + x]) || (y < h - 1 && m[(y + 1) * w + x])) n[y * w + x] = 1;
+      }
+    }
+    m = n;
+  }
+  // Niveau 0 : couleurs connues (poids 1) et trous (poids 0).
+  const levels = [];
+  let cw = w, ch = h;
+  let col = new Float32Array(w * h * 3), wt = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (m[i]) continue;
+    wt[i] = 1;
+    col[i * 3] = rgba[i * 4];
+    col[i * 3 + 1] = rgba[i * 4 + 1];
+    col[i * 3 + 2] = rgba[i * 4 + 2];
+  }
+  levels.push({ col, wt, w: cw, h: ch });
+  while (cw > 8 && ch > 4) {
+    const nw = cw >> 1, nh = ch >> 1;
+    const ncol = new Float32Array(nw * nh * 3), nwt = new Float32Array(nw * nh);
+    for (let y = 0; y < nh; y++) {
+      for (let x = 0; x < nw; x++) {
+        let sw = 0, r = 0, g = 0, b = 0;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            const j = (2 * y + dy) * cw + 2 * x + dx;
+            const q = wt[j];
+            sw += q;
+            r += col[j * 3] * q;
+            g += col[j * 3 + 1] * q;
+            b += col[j * 3 + 2] * q;
+          }
+        }
+        const i = y * nw + x;
+        if (sw > 0) {
+          ncol[i * 3] = r / sw;
+          ncol[i * 3 + 1] = g / sw;
+          ncol[i * 3 + 2] = b / sw;
+        }
+        nwt[i] = Math.min(1, sw);
+      }
+    }
+    cw = nw;
+    ch = nh;
+    col = ncol;
+    wt = nwt;
+    levels.push({ col, wt, w: cw, h: ch });
+  }
+  // Remontée : chaque trou prend la couleur (bilinéaire) du niveau plus grossier.
+  for (let l = levels.length - 2; l >= 0; l--) {
+    const f = levels[l], c = levels[l + 1];
+    for (let y = 0; y < f.h; y++) {
+      for (let x = 0; x < f.w; x++) {
+        const i = y * f.w + x;
+        if (f.wt[i] >= 1) continue;
+        const fx = Math.min(c.w - 1, Math.max(0, (x + 0.5) / 2 - 0.5)), fy = Math.min(c.h - 1, Math.max(0, (y + 0.5) / 2 - 0.5));
+        const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(c.w - 1, x0 + 1), y1 = Math.min(c.h - 1, y0 + 1);
+        const ax = fx - x0, ay = fy - y0;
+        for (let k = 0; k < 3; k++) {
+          const v =
+            (c.col[(y0 * c.w + x0) * 3 + k] * (1 - ax) + c.col[(y0 * c.w + x1) * 3 + k] * ax) * (1 - ay) +
+            (c.col[(y1 * c.w + x0) * 3 + k] * (1 - ax) + c.col[(y1 * c.w + x1) * 3 + k] * ax) * ay;
+          f.col[i * 3 + k] = f.wt[i] * f.col[i * 3 + k] + (1 - f.wt[i]) * v;
+        }
+        f.wt[i] = 1;
+      }
+    }
+  }
+  const out = levels[0];
+  for (let i = 0; i < w * h; i++) {
+    if (!m[i]) continue;
+    rgba[i * 4] = out.col[i * 3];
+    rgba[i * 4 + 1] = out.col[i * 3 + 1];
+    rgba[i * 4 + 2] = out.col[i * 3 + 2];
+  }
+  return rgba;
+}
+
+// Confort dans le casque : distance de convergence (point regardé, sans décalage entre les deux yeux)
+// et demi-écart des yeux tel que l'écart entre les deux images, sur ce qui est visible autour du
+// regard, ne dépasse pas `budgetDeg`. eyeHalf : demi-écart réel des yeux (en hauteurs d'objectif).
+export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 70, w = DEPTH_W, h = DEPTH_H } = {}) {
+  const t = Math.tan((fovDeg / 2) * DEG);
+  const at = (nx, ny) => {
+    const d = mat3Apply(cam, [nx * t, ny * t, 1]);
+    const n = Math.hypot(d[0], d[1], d[2]);
+    return depthAt(depth, [d[0] / n, d[1] / n, d[2] / n], w, h);
+  };
+  const center = [];
+  for (const [x, y] of [[0, 0], [0.03, 0], [-0.03, 0], [0, 0.03], [0, -0.03]]) center.push(at(x, y));
+  center.sort((a, b) => a - b);
+  const dg = center[2];
+  const inv = [];
+  for (let j = -4; j <= 4; j++) for (let i = -5; i <= 5; i++) inv.push(1 / at(i / 5, j / 4));
+  inv.sort((a, b) => a - b);
+  const lo = inv[Math.floor(inv.length * 0.03)], hi = inv[Math.floor(inv.length * 0.97)];
+  const range = Math.max(hi - 1 / dg, 1 / dg - lo, 1e-6);
+  const half = Math.min(eyeHalf, (budgetDeg * DEG) / 2 / range);
+  return { dg, half };
 }
 
 // Distance (en hauteurs d'objectif) lue dans la carte pour une direction d (unitaire, y en haut).

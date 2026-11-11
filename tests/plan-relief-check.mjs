@@ -144,7 +144,7 @@ try {
       const p = await db.getPhoto(id);
       const blob = await db.getBlob(id + ':depth');
       if (!blob) return null;
-      const d = await loadDepthImage(blob);
+      const d = (await loadDepthImage(blob)).depth;
       const out = [];
       for (let b = 0; b < 360; b++) {
         const az = ((b + 0.5) / 360 - 0.5) * 2 * Math.PI;
@@ -167,7 +167,7 @@ try {
       const realId = await db(async (db) => (await db.listPhotos()).find((p) => !/salon|cuisine/.test(p.fileName)).id);
       const rr = await computeIn(realId, '04-photo-reelle-relief-ia.png');
       console.log(`  (photo réelle : ${rr.secs.toFixed(0)} s — ${rr.msg.slice(0, 100)})`);
-      await db(async (db, id) => db.deletePhoto(id), realId);
+      ids.real = realId;
     }
 
     // ---------- relief : deux yeux différents dans le casque ----------
@@ -191,6 +191,12 @@ try {
     const flat = await stereo(ids['salon.jpg'], 0);
     const deep = await stereo(ids['salon.jpg'], 1, '02-casque-relief-ia.png');
     check(deep.diff > flat.diff * 2 && deep.diff > 1, `casque : avec le relief IA, les deux yeux voient la pièce de points différents (écart ${deep.diff.toFixed(2)} contre ${flat.diff.toFixed(2)} sans relief)`);
+    if (ids.real) {
+      const real = await stereo(ids.real, 1, '05-casque-photo-reelle.png');
+      const ds = await page.$eval('.ps-player', (el) => ({ conv: el.dataset.convergence, gap: el.dataset.eyeGap }));
+      console.log(`  (photo réelle dans le casque : convergence à ${ds.conv} m, écart des yeux utilisé ${ds.gap} cm, écart moyen entre les images ${real.diff.toFixed(2)})`);
+      await db(async (db, id) => db.deletePhoto(id), ids.real);
+    }
     const none = await stereo(ids['cuisine.jpg'], 1);
     check(/Pas de relief/.test(none.toastText) && none.diff < 0.5, 'casque : photo sans relief calculé signalée, deux yeux identiques');
   }

@@ -1,8 +1,8 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
-import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
-import { reliefKey, loadDepthImage } from './depth.js';
+import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
+import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort } from './depth.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
@@ -138,6 +138,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     try {
       await renderer.load(photo.src, photo.srcType || 'equirect', photo.params || {});
       renderer.setDepth(null);
+      renderer.setBackgroundColor(null);
+      comfort.dg = null;
       reliefFor = null;
       loadRelief(photo);
     } catch (e) {
@@ -358,9 +360,11 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     reliefFor = photo.id;
     if (!hasRelief(photo)) return;
     try {
-      if (!photo.depth) photo.depth = await loadDepthImage(photo.depthSrc);
-      if (current === photo || reliefFor === photo.id) {
-        renderer.setDepth(photo.depth);
+      if (!photo.depthMaps) photo.depthMaps = await loadDepthImage(photo.depthSrc);
+      if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await loadImageBitmap(photo.depthBgSrc).catch(() => null);
+      if (reliefFor === photo.id) {
+        renderer.setDepth(photo.depthMaps.depth, photo.depthMaps.bg);
+        renderer.setBackgroundColor(photo.depthBgImage || null);
         dirty = true;
       }
     } catch (e) {
@@ -373,13 +377,39 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     reliefHintFor = current.id;
     if ((controller.headset.relief ?? 1) > 0) toast('Pas de relief pour cette photo : calculez-le dans l’éditeur (onglet « Relief »).');
   }
-  // Position d'un œil par rapport au centre de prise de vue, en hauteurs d'objectif.
-  function eyeOffset(vec) {
+  // Confort : la distance regardée est sans décalage entre les deux yeux (comme quand les yeux
+  // convergent), et l'écart des yeux est réduit si besoin pour que le décalage entre les deux images
+  // reste supportable sur tout ce qui est visible. Lissé dans le temps.
+  const comfort = { dg: null, half: 0 };
+  function updateComfort(cam) {
     const r = current && current.relief;
     const k = controller.headset.relief ?? 1;
-    if (!r || !k || !renderer.depth) return null;
-    const s = k / (r.h || DEFAULT_CAMERA_HEIGHT);
-    return vec.map((v) => v * s);
+    if (!r || !k || !renderer.depth) return false;
+    const h = r.h || DEFAULT_CAMERA_HEIGHT;
+    const c = stereoComfort(renderer.depth, cam, EYE_HALF_GAP / h, { budgetDeg: 1.2 * k });
+    if (comfort.dg === null) Object.assign(comfort, c);
+    else {
+      const ndg = Math.exp(Math.log(comfort.dg) + 0.15 * (Math.log(c.dg) - Math.log(comfort.dg)));
+      const nh = comfort.half + 0.15 * (c.half - comfort.half);
+      if (Math.abs(ndg / comfort.dg - 1) > 1e-3 || Math.abs(nh - comfort.half) > 1e-5) dirty = true;
+      comfort.dg = ndg;
+      comfort.half = nh;
+    }
+    root.dataset.convergence = (comfort.dg * h).toFixed(2);
+    root.dataset.eyeGap = (2 * comfort.half * h * 100).toFixed(2);
+    return true;
+  }
+  // Deux yeux (Cardboard) : décalés de ±demi-écart et tournés vers le point regardé.
+  function comfortEyes(cam) {
+    if (!updateComfort(cam)) return null;
+    const right = [cam[0], cam[3], cam[6]], up = [cam[1], cam[4], cam[7]], fwd = [cam[2], cam[5], cam[8]];
+    return [-1, 1].map((sg) => {
+      const e = right.map((v) => v * sg * comfort.half);
+      const f = vecNormalize(fwd.map((v, i) => v * comfort.dg - e[i]));
+      const rr = vecNormalize(vecCross(up, f));
+      const uu = vecCross(f, rr);
+      return { offset: e, cam: [rr[0], uu[0], f[0], rr[1], uu[1], f[1], rr[2], uu[2], f[2]] };
+    });
   }
 
   function loop(now) {
@@ -392,7 +422,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     const frame = controller.frame();
     if (frame.stereo) {
       reliefHint();
-      frame.eyes.forEach((e, k) => (e.offset = eyeOffset(mat3Apply(e.cam, [(k ? 1 : -1) * EYE_HALF_GAP, 0, 0]))));
+      const eyes = comfortEyes(frame.eyes[0].cam);
+      if (eyes) frame.eyes.forEach((e, k) => Object.assign(e, eyes[k]));
     }
     renderer.draw({
       ...frame,
@@ -495,6 +526,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
         xrGaze = mat3Apply(mat3Mul(rot, head), [0, 0, 1]);
         updateGaze(now);
         const hp = pose.transform.position;
+        // WebXR : écart réel des yeux donné par le casque, réduit si besoin pour le confort.
+        const xrScale = updateComfort(mat3Mul(rot, head)) ? comfort.half / EYE_HALF_GAP : 0;
         const eyes = pose.views.map((view) => {
           const vp = layer.getViewport(view);
           const P = view.projectionMatrix;
@@ -503,7 +536,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
             cam: mat3Mul(rot, toOurs(view.transform.matrix)),
             proj: [1 / P[0], P[8] / P[0], 1 / P[5], P[9] / P[5]],
             // Écart réel des yeux donné par le casque (repère WebXR : z vers l'arrière).
-            offset: eyeOffset(mat3Apply(rot, [view.transform.position.x - hp.x, view.transform.position.y - hp.y, -(view.transform.position.z - hp.z)])),
+            offset: xrScale ? mat3Apply(rot, [view.transform.position.x - hp.x, view.transform.position.y - hp.y, -(view.transform.position.z - hp.z)]).map((v) => v * xrScale) : null,
           };
         });
         renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotAlpha: updateHotAlpha(now, null), hotSel: sel, dwell, hotSize: 0.09, reticle: 0 });

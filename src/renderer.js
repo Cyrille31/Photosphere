@@ -117,9 +117,9 @@ export class PanoRenderer {
     gl.disable(gl.SCISSOR_TEST);
   }
 
-  // Carte de profondeur (voir depth.js) : Float32Array w × h (ligne 0 = latitude +90°, distances en
-  // hauteurs d'objectif), ou null pour un affichage sans relief.
-  setDepth(depth, w = 1024, h = 512) {
+  // Carte de profondeur (voir depth.js) : depth et bg, Float32Array w × h (ligne 0 = latitude +90°,
+  // distances en hauteurs d'objectif, bg : fond caché derrière les objets proches), ou null.
+  setDepth(depth, bg = null, w = 1024, h = 512) {
     const gl = this.gl;
     if (!this.depthTex) {
       this.depthTex = gl.createTexture();
@@ -128,21 +128,69 @@ export class PanoRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    } else if (depth === this.depth) return;
+    } else if (depth === this.depth && bg === this.depthBg) return;
     this.depth = depth || null;
+    this.depthBg = bg || null;
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-    if (depth) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, w, h, 0, gl.RED, gl.FLOAT, depth);
-    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1]));
+    if (depth) {
+      const rg = new Float32Array(w * h * 2);
+      for (let i = 0; i < w * h; i++) {
+        rg[2 * i] = depth[i];
+        rg[2 * i + 1] = bg ? bg[i] : depth[i];
+      }
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, w, h, 0, gl.RG, gl.FLOAT, rg);
+    } else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array([1, 1]));
+  }
+
+  // Couleurs du fond extrapolées derrière les objets proches (image équirectangulaire) ou null.
+  setBackgroundColor(image) {
+    const gl = this.gl;
+    if (!this.bgTex) {
+      this.bgTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.bgTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    } else if (image === this.bgImage) return;
+    this.bgImage = image || null;
+    gl.bindTexture(gl.TEXTURE_2D, this.bgTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    if (image) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
   }
 
   bindRelief() {
     const gl = this.gl, u = this.u;
     if (!this.depthTex) this.setDepth(null);
+    if (!this.bgTex) this.setBackgroundColor(null);
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
     gl.uniform1i(u.uDepthTex, 3);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.bgTex);
+    gl.uniform1i(u.uBgTex, 4);
     gl.activeTexture(gl.TEXTURE0);
-    gl.uniform2f(u.uRelief, this.depth ? 1 : 0, 0);
+    gl.uniform2f(u.uRelief, this.depth ? 1 : 0, this.bgImage ? 1 : 0);
+  }
+
+  // Image équirectangulaire redressée w × h, lignes de bas en haut (latitude -90° en ligne 0).
+  readFlat(w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    this.draw({ mode: 'flat', flat: [0, 0, w, h], eyes: [{ vp: [0, 0, w, h] }], framebuffer: fbo, hotAlpha: this.hotspots.map(() => 0), hotSel: -1 });
+    const px = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fbo);
+    gl.deleteTexture(tex);
+    return px;
   }
 
   // Direction (repère de sortie) sous un point écran en pixels canvas (origine en haut à gauche).
