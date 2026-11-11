@@ -168,6 +168,20 @@ try {
       const rr = await computeIn(realId, '04-photo-reelle-relief-ia.png');
       console.log(`  (photo réelle : ${rr.secs.toFixed(0)} s — ${rr.msg.slice(0, 100)})`);
       ids.real = realId;
+      // Carte et fond reconstitués, gardés avec les captures pour examen.
+      const files = await page.evaluate(async (id) => {
+        const db = await import('./src/db.js');
+        const b64 = async (b) => {
+          const u = new Uint8Array(await b.arrayBuffer());
+          let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000));
+          return btoa(s);
+        };
+        const d = await db.getBlob(id + ':depth'), g = await db.getBlob(id + ':depthbg');
+        return { d: d && (await b64(d)), g: g && (await b64(g)) };
+      }, realId);
+      if (files.d) fs.writeFileSync(path.join(shots, 'photo-reelle-profondeur.png'), Buffer.from(files.d, 'base64'));
+      if (files.g) fs.writeFileSync(path.join(shots, 'photo-reelle-fond.jpg'), Buffer.from(files.g, 'base64'));
     }
 
     // ---------- relief : deux yeux différents dans le casque ----------
