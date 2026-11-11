@@ -50,7 +50,14 @@ input[type=file] { display: none; }
 body.dragging .empty, body.dragging .grid { outline: 3px dashed var(--accent); outline-offset: 6px; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.card { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.card-select { position: absolute; right: 8px; top: 8px; z-index: 2; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: rgba(0,0,0,.55); cursor: pointer; }
+.card-select input { width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.selection-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.selection-actions[hidden] { display: none; }
+.batch-report { max-height: 50vh; overflow: auto; padding-left: 18px; font-size: 14px; }
+.batch-report .ko { color: #ff8a8a; }
 .card.selected { outline: 2px solid var(--accent); }
 .thumb { position: relative; aspect-ratio: 2 / 1; background: #000; cursor: pointer; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -115,6 +122,7 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16
 .lens-group legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
 .links-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .link-item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.link-item.active { border-color: #ff9f26; box-shadow: 0 0 0 1px #ff9f26; }
 .link-item .row2 { display: flex; gap: 6px; }
 .link-item select, .link-item input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; font: inherit; font-size: 13px; }
 
@@ -188,6 +196,8 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-view[data-tool=erase] .plan-drawing text:hover { fill: #e5484d; }
 .plan-view[data-tool=text] .plan-drawing text { cursor: move; }
 .plan-view[data-tool=move] .plan-drawing line.wall-hit, .plan-view[data-tool=move] .plan-drawing text, .plan-view[data-tool=move] .plan-drawing circle.wall-end { pointer-events: all; cursor: move; }
+.plan-view[data-tool=line] .plan-drawing line.wall-hit, .plan-view[data-tool=line] .plan-drawing circle.wall-end { pointer-events: all; cursor: move; }
+.plan-view[data-tool=line] .plan-drawing line.wall-hit:hover { stroke: rgba(11,152,208,.25); }
 .plan-view[data-tool=move] .plan-drawing line.wall-hit:hover { stroke: rgba(11,152,208,.3); }
 .plan-view[data-tool=move] .plan-drawing circle.wall-end:hover { fill: #0b98d0; }
 .plan-text-input { position: absolute; transform: translate(-50%, -50%); min-width: 160px; padding: 4px 8px; border: 2px solid var(--accent); border-radius: 6px; background: #fff; color: #111; font-weight: 600; text-align: center; z-index: 5; }
@@ -218,3 +228,18 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-view.linking, .plan-view.linking .plan-node { cursor: crosshair; }
 .plan-modes { display: inline-flex; gap: 4px; }
 .check.small { font-size: 12.5px; margin: 0; }
+
+/* Manuel utilisateur */
+dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
+.manual { display: flex; flex-direction: column; max-height: 90vh; }
+.manual-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 6px; }
+.manual-head h2 { margin: 0; }
+.manual-toc { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 18px 12px; border-bottom: 1px solid var(--line); }
+.manual-toc a { font-size: 13px; padding: 4px 8px; border-radius: 6px; background: var(--card); color: var(--text); text-decoration: none; }
+.manual-toc a:hover { background: var(--accent); color: #fff; }
+.manual-body { overflow: auto; padding: 4px 18px 18px; line-height: 1.5; font-size: 14.5px; }
+.manual-body h3 { margin: 18px 0 6px; color: var(--accent); }
+.manual-body ul ul { margin-top: 4px; }
+.man-keys td { padding: 3px 12px 3px 0; vertical-align: top; }
+.man-keys td:first-child { white-space: nowrap; font-weight: 600; }
+.manual-btn { padding: 2px 8px; margin-left: 4px; vertical-align: middle; }

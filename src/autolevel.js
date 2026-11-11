@@ -3,7 +3,7 @@
 // contient la vraie verticale u : sa normale n vérifie n · u = 0. On relève les bords nets et
 // presque verticaux de plusieurs vues autour de la photo, puis on cherche u qui s'accorde au mieux
 // avec eux (moindres carrés pondérés et robustes). Fonctions pures, testables hors navigateur.
-import { mat3Apply, vecCross, vecNormalize, vecDot } from './math.js';
+import { mat3Apply, vecCross, vecNormalize, vecDot, cameraMatrix, levelMatrix, applyUpCorrection, wrapDeg } from './math.js';
 
 const DEG = Math.PI / 180;
 
@@ -173,4 +173,42 @@ export function solveUp(constraints, { maxTiltDeg = 15, minSupport = 8 } = {}) {
   if (support < minSupport) return { ok: false, reason: 'trop peu de verticales concordantes', up: u, tiltDeg, support };
   if (tiltDeg > maxTiltDeg) return { ok: false, reason: `correction trouvée trop forte (${tiltDeg.toFixed(1)}°) : verticales peu fiables`, up: u, tiltDeg, support };
   return { ok: true, up: u, tiltDeg, support };
+}
+
+// Redressement automatique d'une photo affichée par `renderer` (PanoRenderer, image chargée) avec les
+// réglages `params` : 8 vues autour de l'horizon, bords verticaux, verticale estimée ; plusieurs
+// passes sur l'image déjà corrigée. Refusé au-delà de 15°.
+// Renvoie { ok, level: { yaw, pitch, roll }, total (degrés), support } ou { ok: false, reason }.
+export async function autoLevel(renderer, params, srcType) {
+  const startUp = mat3Apply(levelMatrix(params.yaw || 0, params.pitch || 0, params.roll || 0), [0, 1, 0]);
+  let lvl = { yaw: params.yaw || 0, pitch: params.pitch || 0, roll: params.roll || 0 };
+  let result = null, support = 0;
+  try {
+    for (let pass = 0; pass < 3; pass++) {
+      renderer.setParams({ ...params, ...lvl }, srcType);
+      const constraints = [];
+      for (let k = 0; k < 8; k++) {
+        const cam = cameraMatrix(k * 45 * DEG, 0);
+        constraints.push(...edgeConstraints(renderer.readView(cam, 75, 512), 512, cam, 75));
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const r = solveUp(constraints);
+      if (!r.ok) {
+        if (pass === 0) result = r;
+        break;
+      }
+      support = r.support;
+      const next = applyUpCorrection(lvl, r.up);
+      lvl = { ...next, yaw: lvl.yaw + wrapDeg(next.yaw - lvl.yaw) };
+      result = { ok: true };
+      if (r.tiltDeg < 0.1) break;
+    }
+  } finally {
+    renderer.setParams(params, srcType);
+  }
+  if (!result || !result.ok) return { ok: false, reason: result ? result.reason : 'aucune mesure' };
+  const endUp = mat3Apply(levelMatrix(lvl.yaw, lvl.pitch, lvl.roll), [0, 1, 0]);
+  const total = Math.acos(Math.max(-1, Math.min(1, vecDot(startUp, endUp)))) / DEG;
+  if (total > 15) return { ok: false, reason: `correction trouvée trop forte (${total.toFixed(1)}°) : verticales peu fiables` };
+  return { ok: true, level: lvl, total, support };
 }

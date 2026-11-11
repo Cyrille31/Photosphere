@@ -9,6 +9,8 @@ import { exportTourHtml, exportJpegZip, exportProject, importProject } from './t
 import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
 import { reliefKey } from './depth.js';
+import { batchAutoLevel, batchRelief } from './batch.js';
+import { showManual } from './manual.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
 const app = document.getElementById('app');
@@ -19,6 +21,8 @@ const state = {
   progress: 0,
   thumbs: new Map(),
   view: null,
+  selected: new Set(), // photos cochées dans la bibliothèque
+  batch: false, // traitement par lot en cours (la conversion attend)
 };
 
 // ---------- utilitaires ----------
@@ -65,7 +69,7 @@ async function thumbUrl(p) {
 // ---------- file de conversion ----------
 // Les conversions ne tournent que sur la bibliothèque : dans la visionneuse ou l'éditeur, elles
 // saccaderaient l'affichage et chargeraient la mémoire. Elles reprennent au retour.
-const queuePaused = () => state.view !== 'library';
+const queuePaused = () => state.view !== 'library' || state.batch;
 
 async function processQueue() {
   if (state.converting) return;
@@ -350,13 +354,25 @@ async function renderLibrary() {
       <input type="search" class="search-input" name="library-search" placeholder="🔍 Rechercher une photo par son nom" value="${escapeHtml(state.search || '')}" autocomplete="off">
       <span class="note search-count"></span>
     </div>
-    <p class="note">${photos.length} photo(s), ${links} lien(s). Astuce : réglez le « cap » de chaque photo dans l’éditeur pour que le nord soit commun à toutes — les transitions entre photos garderont alors la bonne direction.</p>
+    <div class="selection-bar">
+      <span class="note">${photos.length} photo(s), ${links} lien(s)</span>
+      <button class="btn small" data-act="select-all" title="Cocher toutes les photos affichées">☑ Tout sélectionner</button>
+      <span class="selection-actions" hidden>
+        <b class="selection-count"></b>
+        <button class="btn small" data-act="select-none">Aucune</button>
+        <button class="btn small primary" data-act="batch-level" title="Redresser automatiquement les photos cochées d’après leurs verticales">✨ Redresser (auto)</button>
+        <button class="btn small primary" data-act="batch-relief" title="Calculer le relief (IA) des photos cochées">🧠 Calculer le relief</button>
+        <button class="btn small danger" data-act="batch-delete">🗑 Supprimer</button>
+      </span>
+    </div>
     <div class="grid">${photos
       .map(
-        (p) => `<div class="card" data-id="${p.id}" data-search="${escapeHtml(p.name + ' ' + (p.fileName || ''))}">
+        (p) => `<div class="card${state.selected.has(p.id) ? ' selected' : ''}" data-id="${p.id}" data-search="${escapeHtml(p.name + ' ' + (p.fileName || ''))}">
+        <label class="card-select" title="Sélectionner"><input type="checkbox" data-select ${state.selected.has(p.id) ? 'checked' : ''}></label>
         <div class="thumb" data-act="view"><img alt="" loading="lazy">
           <div class="badges"><span class="badge">${p.srcType === 'fisheye' ? 'Double fisheye' : 'Équirectangulaire'}</span>${statusBadge(p)}
-          ${(p.hotspots || []).length ? `<span class="badge">🔗 ${p.hotspots.length}</span>` : ''}</div>
+          ${(p.hotspots || []).length ? `<span class="badge">🔗 ${p.hotspots.length}</span>` : ''}
+          ${p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) ? '<span class="badge" title="Relief calculé">🧊 Relief</span>' : ''}</div>
           <div class="progress" style="width:${state.converting === p.id ? Math.round(state.progress * 100) : 0}%"></div>
         </div>
         <div class="card-body">
@@ -424,7 +440,68 @@ function applyLibrarySearch() {
   if (count) count.textContent = state.search ? `${n} photo(s) trouvée(s) sur ${cards.length}` : '';
 }
 
+// Barre de sélection : nombre de photos cochées et actions groupées.
+function updateSelectionBar() {
+  const ids = new Set(state.photos.map((p) => p.id));
+  [...state.selected].forEach((id) => ids.has(id) || state.selected.delete(id));
+  const bar = app.querySelector('.selection-actions');
+  if (!bar) return;
+  bar.hidden = !state.selected.size;
+  bar.querySelector('.selection-count').textContent = `${state.selected.size} sélectionnée(s)`;
+  app.querySelectorAll('.card').forEach((c) => {
+    const on = state.selected.has(c.dataset.id);
+    c.classList.toggle('selected', on);
+    c.querySelector('[data-select]').checked = on;
+  });
+}
+
+// Traitement par lot avec progression et bouton d'arrêt, puis bilan.
+async function runBatch(title, fn) {
+  const ids = state.photos.filter((p) => state.selected.has(p.id)).map((p) => p.id);
+  if (!ids.length) return;
+  let cancelled = false;
+  const d = dialog(`<h2>${escapeHtml(title)}</h2><p class="busy-msg">…</p><progress max="1" value="0" style="width:100%"></progress>
+    <div class="row"><button class="btn" data-stop>Arrêter après cette photo</button></div>`);
+  d.addEventListener('cancel', (e) => e.preventDefault());
+  d.querySelector('[data-stop]').addEventListener('click', (e) => {
+    cancelled = true;
+    e.target.disabled = true;
+    e.target.textContent = 'Arrêt demandé…';
+  });
+  state.batch = true;
+  let results = [];
+  try {
+    results = await fn(ids, {
+      isCancelled: () => cancelled,
+      onProgress: (i, n, name, detail) => {
+        d.querySelector('progress').value = n ? i / n : 0;
+        d.querySelector('.busy-msg').textContent = `${i + 1} / ${n} — ${name}${detail ? ' : ' + detail : ''}`;
+      },
+    });
+  } catch (e) {
+    toast(e.message, true);
+  }
+  state.batch = false;
+  d.close();
+  await refresh();
+  processQueue();
+  const ok = results.filter((r) => r.ok).length;
+  dialog(`<h2>${escapeHtml(title)} : ${ok} / ${results.length} réussie(s)</h2>
+    <ul class="batch-report">${results.map((r) => `<li class="${r.ok ? 'ok' : 'ko'}">${r.ok ? '✔' : '✘'} <b>${escapeHtml(r.name)}</b> : ${escapeHtml(r.message)}</li>`).join('')}</ul>
+    ${cancelled ? '<p class="note">Arrêté avant la fin.</p>' : ''}
+    <div class="row"><button class="btn primary" data-close>Fermer</button></div>`);
+}
+
 function bindLibrary() {
+  app.querySelectorAll('[data-select]').forEach((cb) =>
+    cb.addEventListener('change', () => {
+      const id = cb.closest('.card').dataset.id;
+      if (cb.checked) state.selected.add(id);
+      else state.selected.delete(id);
+      updateSelectionBar();
+    })
+  );
+  updateSelectionBar();
   const search = app.querySelector('[name=library-search]');
   if (search) {
     search.addEventListener('input', () => {
@@ -489,7 +566,25 @@ async function onAction(act, p, el) {
     case 'delete':
       if (!confirm(`Supprimer « ${p.name} » et ses liens ?`)) return;
       await db.deletePhoto(p.id);
+      state.selected.delete(p.id);
       return refresh();
+    case 'select-all':
+      app.querySelectorAll('.card:not([hidden])').forEach((c) => state.selected.add(c.dataset.id));
+      return updateSelectionBar();
+    case 'select-none':
+      state.selected.clear();
+      return updateSelectionBar();
+    case 'batch-level':
+      return runBatch('Redressement automatique', batchAutoLevel);
+    case 'batch-relief':
+      return runBatch('Calcul du relief (IA)', batchRelief);
+    case 'batch-delete': {
+      const n = state.selected.size;
+      if (!n || !confirm(`Supprimer ${n} photo(s) et leurs liens ?`)) return;
+      for (const id of [...state.selected]) await db.deletePhoto(id);
+      state.selected.clear();
+      return refresh();
+    }
     case 'export-tour':
       return exportTourDialog();
     case 'export-zip': {
@@ -568,20 +663,6 @@ function showWirelessHelp() {
     <div class="row"><button class="btn primary" data-close>Compris</button></div>`);
 }
 
-function showHelp() {
-  dialog(`<h2>Mode d’emploi</h2>
-    <ol>
-      <li><b>Importer</b> les photos (carte SD ou galerie). Les doubles fisheye de la Gear 360 sont détectés et assemblés automatiquement en 7776 × 3888, avec les métadonnées « photosphère » (Google Photos, Facebook, VR…).</li>
-      <li><b>Éditer</b> une photo pour la <b>redresser</b> si la caméra n’était pas verticale : curseurs, ou cliquez deux points de l’horizon, ou deux lignes verticales (angles de murs, poteaux). La grille aide à vérifier.</li>
-      <li>Dans l’onglet <b>Liens</b>, touchez l’endroit (porte, chemin…) qui mène à une autre photo. Le lien retour peut être créé automatiquement.</li>
-      <li><b>Visiter</b> : mode <i>Tactile</i> (doigt/souris), <i>Bout de bras</i> (bougez le téléphone), <i>Casque VR</i> (écran partagé pour casque type Cardboard : fixez un lien pendant 1,5 s pour y aller, ou appuyez sur le bouton du casque).</li>
-      <li><b>Exporter</b> une visite autonome (.html), les JPEG, ou une sauvegarde pour passer sur le téléphone.</li>
-      <li><b>Conserver vos réglages</b> : « Exporter les réglages » crée un petit fichier <code>photosphere.json</code> (redressement, nord, calibrage, liens, noms). Rangez-le avec vos photos d’origine, qui ne sont jamais modifiées ; en réimportant le dossier (ou les photos avec ce fichier), tout est retrouvé.</li>
-    </ol>
-    <p class="note">Sur smartphone, ajoutez PhotoSphère à l’écran d’accueil pour l’utiliser en plein écran et hors connexion. Les photos restent stockées sur l’appareil.</p>
-    <div class="row"><button class="btn primary" data-close>Fermer</button></div>`);
-}
-
 async function showSettings() {
   const est = await db.storageEstimate();
   const mb = (n) => (n / 1048576).toFixed(0) + ' Mo';
@@ -613,7 +694,7 @@ async function showSettings() {
   );
 }
 
-document.getElementById('btn-help').addEventListener('click', showHelp);
+document.getElementById('btn-help').addEventListener('click', () => showManual());
 document.getElementById('btn-settings').addEventListener('click', showSettings);
 
 // ---------- visionneuse et éditeur ----------
