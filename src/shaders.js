@@ -114,30 +114,27 @@ uniform float uHotSize;
 uniform float uDwell;
 uniform float uReticle;
 uniform float uGrid;
-// Relief : distance des murs par azimut (en hauteurs d'objectif), plafond, position de l'œil.
-uniform sampler2D uWallTex;
-uniform vec2 uRelief;       // x : relief disponible (0 / 1), y : hauteur du plafond au-dessus de l'objectif (0 = aucun)
+// Relief : carte de profondeur équirectangulaire (distances en hauteurs d'objectif), position de l'œil.
+uniform sampler2D uDepthTex;
+uniform vec2 uRelief;       // x : relief disponible (0 / 1)
 uniform vec3 uEye;          // position de l'œil par rapport au centre de la photo (en hauteurs d'objectif)
 uniform float uDepthView;   // > 0 : colore l'image selon la distance estimée (vérification)
 out vec4 outColor;
 
 float sceneDist(vec3 d) {
-  float hz = length(d.xz);
   float u = atan(d.x, d.z) / (2.0 * PI) + 0.5;
-  float t = texture(uWallTex, vec2(u, 0.5)).r / max(hz, 1e-4);
-  if (d.y < -1e-4) t = min(t, 1.0 / -d.y);
-  if (uRelief.y > 0.0 && d.y > 1e-4) t = min(t, uRelief.y / d.y);
-  return min(t, 1000.0);
+  float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
+  return textureLod(uDepthTex, vec2(u, v), 0.0).r;
 }
 
 // Rayon issu de l'œil (décalé du centre de prise de vue) : on cherche le point de la pièce qu'il
 // atteint, puis la direction de ce point vue du centre, celle où la photo l'a enregistré.
 vec3 reliefDir(vec3 e, vec3 d) {
   float t = sceneDist(d);
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     vec3 x = e + t * d;
     float r = length(x);
-    t = max(0.05, t + sceneDist(x / r) - r);
+    t = max(0.05, t + 0.85 * (sceneDist(x / r) - r));
   }
   return normalize(e + t * d);
 }

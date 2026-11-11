@@ -1,6 +1,10 @@
 // Vérification dans Chromium : éditeur de plan (traits, textes, gomme, défaire, enregistrement) et
-// relief pour le casque (estimation sur une pièce synthétique connue, deux yeux différents).
+// relief pour le casque par IA (pièce synthétique connue, deux yeux différents).
 // Usage : node tests/plan-relief-check.mjs [dossier-captures]
+// Le relief par IA n'est testé que si PS_DEPTH_ASSETS désigne un dossier contenant
+// node_modules/onnxruntime-web/dist (version 1.20.1) et model/model_quantized.onnx (Depth Anything V2
+// Small) : les requêtes vers le CDN et Hugging Face y sont servies sans réseau. PS_DEPTH_PHOTO :
+// photo réelle (équirectangulaire) à analyser en plus, pour une capture.
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,40 +103,97 @@ try {
     return Object.fromEntries(ps.map((p) => [p.fileName, p.id]));
   });
 
-  // ---------- relief : estimation dans l'éditeur ----------
-  await page.goto(base + '#/edit/' + ids['salon.jpg']);
-  await page.waitForSelector('[data-tab=relief]');
-  await page.waitForTimeout(800);
-  await page.click('[data-tab=relief]');
-  await page.waitForFunction(() => /Murs trouvés/.test(document.querySelector('.relief-info').textContent), null, { timeout: 30000 });
-  const info = await page.textContent('.relief-info');
-  await page.screenshot({ path: path.join(shots, '01-editeur-relief.png') });
-  await page.click('[data-save]');
-  await page.waitForSelector('.grid');
-  const relief = await db(async (db, id) => (await db.getPhoto(id)).relief, ids['salon.jpg']);
-  const err = relief.walls.map((v, b) => Math.abs(Math.log(v / A.room.walls[b]))).sort((x, y) => x - y);
-  const med = err[180], p90 = err[324];
-  check(med < 0.1 && p90 < 0.25, `relief : murs de la pièce retrouvés (écart médian ${(med * 100).toFixed(1)} %, 90e centile ${(p90 * 100).toFixed(1)} %) — « ${info.trim().slice(0, 90)} »`);
-  check(Math.abs(relief.ceil - A.room.ceil) <= 0.15, `relief : plafond retrouvé (${relief.ceil} hauteur d’objectif au-dessus, vrai ${A.room.ceil})`);
+  // ---------- relief par IA ----------
+  const assets = process.env.PS_DEPTH_ASSETS;
+  let aiTested = false;
+  if (!assets) {
+    console.log('  … relief IA non testé (PS_DEPTH_ASSETS non défini)');
+  } else {
+    const types = { mjs: 'text/javascript', js: 'text/javascript', wasm: 'application/wasm', onnx: 'application/octet-stream' };
+    const serveLocal = (dir) => async (route) => {
+      const name = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop());
+      const file = path.join(dir, name);
+      if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: 'absent' });
+      await route.fulfill({ status: 200, body: fs.readFileSync(file), headers: { 'content-type': types[name.split('.').pop()] || 'application/octet-stream', 'access-control-allow-origin': '*' } });
+    };
+    await page.route(/cdn\.jsdelivr\.net\/npm\/onnxruntime-web/, serveLocal(path.join(assets, 'node_modules/onnxruntime-web/dist')));
+    await page.route(/huggingface\.co\//, serveLocal(path.join(assets, 'model')));
+    const computeIn = async (id, shot) => {
+      await page.goto(base + '#/');
+      await page.goto(base + '#/edit/' + id);
+      await page.waitForSelector('[data-tab=relief]');
+      await page.waitForTimeout(800);
+      await page.click('[data-tab=relief]');
+      await page.evaluate(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+      const t0 = Date.now();
+      await page.click('[data-depth-compute]');
+      await page.waitForFunction(() => !document.querySelector('[data-depth-compute]').disabled, null, { timeout: 600000 });
+      const secs = (Date.now() - t0) / 1000;
+      await page.waitForTimeout(500);
+      const msg = (await page.locator('.toast').allTextContents()).join(' | ');
+      if (shot) await page.screenshot({ path: path.join(shots, shot) });
+      await page.click('[data-save]');
+      await page.waitForSelector('.grid');
+      return { secs, msg };
+    };
+    const r = await computeIn(ids['salon.jpg'], '01-editeur-relief-ia.png');
+    // Distances lues dans la carte enregistrée, à l'horizon, comparées à la pièce synthétique.
+    const horizon = await page.evaluate(async (id) => {
+      const db = await import('./src/db.js');
+      const { loadDepthImage, depthAt } = await import('./src/depth.js');
+      const p = await db.getPhoto(id);
+      const blob = await db.getBlob(id + ':depth');
+      if (!blob) return null;
+      const d = await loadDepthImage(blob);
+      const out = [];
+      for (let b = 0; b < 360; b++) {
+        const az = ((b + 0.5) / 360 - 0.5) * 2 * Math.PI;
+        out.push(depthAt(d, [Math.sin(az), 0, Math.cos(az)]));
+      }
+      return { out, relief: p.relief };
+    }, ids['salon.jpg']);
+    check(horizon && horizon.relief && horizon.relief.kind === 'ai', `relief IA calculé en ${r.secs.toFixed(0)} s et enregistré (${r.msg.slice(0, 90)})`);
+    if (horizon) {
+      const err = horizon.out.map((v, b) => Math.abs(Math.log(v / A.room.walls[b]))).sort((x, y) => x - y);
+      const med = err[180];
+      // La pièce synthétique n'a rien d'une vraie photo : on vérifie l'ordre de grandeur des murs.
+      check(med < 0.45, `relief IA : distance des murs de la pièce synthétique retrouvée à ${(med * 100).toFixed(0)} % près (médiane)`);
+    }
+    aiTested = true;
+    if (process.env.PS_DEPTH_PHOTO) {
+      await page.goto(base + '#/');
+      await page.locator('input[type=file][accept^="image"]').setInputFiles(process.env.PS_DEPTH_PHOTO);
+      await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 3, null, { timeout: 300000 });
+      const realId = await db(async (db) => (await db.listPhotos()).find((p) => !/salon|cuisine/.test(p.fileName)).id);
+      const rr = await computeIn(realId, '04-photo-reelle-relief-ia.png');
+      console.log(`  (photo réelle : ${rr.secs.toFixed(0)} s — ${rr.msg.slice(0, 100)})`);
+      await db(async (db, id) => db.deletePhoto(id), realId);
+    }
 
-  // ---------- relief : deux yeux différents dans le casque ----------
-  const stereoDiff = async (k, label) => {
-    await page.evaluate((k) => localStorage.setItem('ps-headset', JSON.stringify({ relief: k })), k);
-    await page.goto(base + '#/');
-    await page.goto(base + '#/view/' + ids['cuisine.jpg']);
-    await page.waitForSelector('.ps-player canvas');
-    await page.waitForTimeout(1200);
-    await page.click('[data-mode=cardboard]');
-    await page.waitForTimeout(1500);
-    await page.evaluate(() => document.querySelectorAll('.ps-toast').forEach((t) => (t.hidden = true)));
-    if (label) await page.screenshot({ path: path.join(shots, label) });
-    return eyeDifference();
-  };
-  const flat = await stereoDiff(0);
-  const deep = await stereoDiff(1, '02-casque-relief.png');
-  check(deep > flat * 2 && deep > 1, `casque : avec le relief, les deux yeux voient la pièce de points différents (écart ${deep.toFixed(2)} contre ${flat.toFixed(2)} sans relief)`);
-  const saved = await db(async (db, id) => (await db.getPhoto(id)).relief, ids['cuisine.jpg']);
-  check(saved && saved.walls && saved.walls.length === 360, 'casque : relief estimé à la volée et mémorisé pour la photo');
+    // ---------- relief : deux yeux différents dans le casque ----------
+    const stereo = async (id, k, label) => {
+      await page.evaluate((k) => localStorage.setItem('ps-headset', JSON.stringify({ relief: k })), k);
+      await page.goto(base + '#/');
+      await page.goto(base + '#/view/' + id);
+      await page.waitForSelector('.ps-player canvas');
+      await page.waitForTimeout(1200);
+      await page.click('[data-mode=cardboard]');
+      await page.waitForTimeout(1500);
+      const toastText = await page.evaluate(() => {
+        const t = document.querySelector('.ps-toast');
+        const txt = t && !t.hidden ? t.textContent : '';
+        document.querySelectorAll('.ps-toast').forEach((x) => (x.hidden = true));
+        return txt;
+      });
+      if (label) await page.screenshot({ path: path.join(shots, label) });
+      return { diff: await eyeDifference(), toastText };
+    };
+    const flat = await stereo(ids['salon.jpg'], 0);
+    const deep = await stereo(ids['salon.jpg'], 1, '02-casque-relief-ia.png');
+    check(deep.diff > flat.diff * 2 && deep.diff > 1, `casque : avec le relief IA, les deux yeux voient la pièce de points différents (écart ${deep.diff.toFixed(2)} contre ${flat.diff.toFixed(2)} sans relief)`);
+    const none = await stereo(ids['cuisine.jpg'], 1);
+    check(/Pas de relief/.test(none.toastText) && none.diff < 0.5, 'casque : photo sans relief calculé signalée, deux yeux identiques');
+  }
   await page.evaluate(() => localStorage.removeItem('ps-headset'));
 
   // ---------- plan : dessin ----------
@@ -199,6 +260,32 @@ try {
   await page.waitForTimeout(300);
   d = await db((db) => db.getPlanDrawing());
   check(d.lines.length === 5, 'plan : Défaire rétablit le trait effacé');
+  // Outil Déplacer : un trait (la cloison), puis un angle (les deux murs qui s'y rejoignent suivent).
+  await page.click('[data-tool=move]');
+  const before2 = JSON.parse(JSON.stringify(d.lines));
+  await page.mouse.move(...P(371, 220));
+  await page.mouse.down();
+  await page.mouse.move(...P(411, 230), { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  d = await db((db) => db.getPlanDrawing());
+  const part = d.lines[4], part0 = before2[4];
+  check(part.x1 - part0.x1 > 5 && Math.abs(part.x1 - part.x2 - (part0.x1 - part0.x2)) < 0.6 && d.lines.slice(0, 4).every((l, i) => JSON.stringify(l) === JSON.stringify(before2[i])), 'plan, Déplacer : trait déplacé d’un bloc, les autres inchangés');
+  const corner = await page.locator('.plan-drawing circle.wall-end').evaluateAll((cs) => cs.map((c) => ({ end: c.dataset.end, ...c.getBoundingClientRect().toJSON() })));
+  const c0 = before2[0];
+  const tr = corner.find((c) => c.end === `${c0.x2},${c0.y2}`);
+  await page.mouse.move(tr.x + tr.width / 2, tr.y + tr.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(tr.x + tr.width / 2 + 60, tr.y + tr.height / 2 + 3, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  d = await db((db) => db.getPlanDrawing());
+  check(d.lines[0].x2 > c0.x2 + 5 && d.lines[0].x2 === d.lines[1].x1 && d.lines[0].y2 === d.lines[1].y1 && d.lines[0].y2 === c0.y2, `plan, Déplacer : angle déplacé, les deux murs restent raccordés et le mur du haut horizontal`);
+  await page.click('[data-draw-undo]');
+  await page.waitForTimeout(300);
+  d = await db((db) => db.getPlanDrawing());
+  check(d.lines[0].x2 === c0.x2, 'plan, Déplacer : Défaire remet l’angle en place');
+  await page.click('[data-tool=photos]');
   await page.reload();
   await page.waitForSelector('.plan-node');
   await page.waitForTimeout(500);
@@ -208,7 +295,7 @@ try {
     const db = await import('./src/db.js');
     return buildSettings(await db.listPhotos(), await db.getPlanDrawing());
   });
-  check(settings.plan && settings.plan.lines.length === 5 && settings.photos.every((p) => p.relief), 'fichier de réglages : dessin du plan et relief inclus');
+  check(settings.plan && settings.plan.lines.length === 5 && (!aiTested || settings.photos.some((p) => p.relief && p.relief.kind === 'ai')), 'fichier de réglages : dessin du plan' + (aiTested ? ' et relief inclus' : ' inclus'));
 } catch (e) {
   failures++;
   console.error(e);

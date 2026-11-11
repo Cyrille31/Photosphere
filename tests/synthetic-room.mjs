@@ -1,4 +1,4 @@
-import { RELIEF_BINS } from '../src/relief.js';
+const RELIEF_BINS = 360; // distances des murs, degré par degré
 
 // Pièce rectangulaire (tournée de `rot`°) autour de la caméra : murs à x = x0 / x1, z = z0 / z1 (repère
 // de la pièce), sol à y = -1 (hauteur d'objectif = 1), plafond à y = ceil. Renvoie l'image et la vérité.

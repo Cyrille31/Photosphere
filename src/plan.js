@@ -183,6 +183,7 @@ export async function openPlan(container, { photos, onOpen }) {
         <select class="plan-text-size" data-text-size title="Taille du texte" hidden>
           <option value="14">Petit</option><option value="20" selected>Moyen</option><option value="32">Grand</option><option value="48">Très grand</option>
         </select>
+        <button class="btn small" data-tool="move" title="Glissez un trait pour le déplacer, ou une extrémité pour l’allonger ou le réorienter (les murs raccordés suivent)">✥ Déplacer</button>
         <button class="btn small" data-tool="erase" title="Cliquez un trait ou un texte pour l’effacer">⌫ Effacer</button>
         <button class="btn small" data-draw-undo disabled title="Défaire la dernière modification du dessin (Ctrl+Z)">↶ Défaire</button>
       </span>
@@ -254,13 +255,13 @@ export async function openPlan(container, { photos, onOpen }) {
     drawing.texts.forEach((t, i) => {
       html += `<text class="plan-label" data-text="${i}" x="${t.x * k}" y="${t.y * k}" font-size="${(t.size || 20) * k}">${escapeHtml(t.text)}</text>`;
     });
-    if (tool === 'line') {
-      // Extrémités existantes (points d'accroche) et aperçu du trait en cours.
+    if (tool === 'line' || tool === 'move') {
+      // Extrémités existantes (points d'accroche, poignées en mode Déplacer) et aperçu du trait en cours.
       const ends = new Set();
-      drawing.lines.forEach((l) => [[l.x1, l.y1], [l.x2, l.y2]].forEach(([x, y]) => ends.add(x * k + ',' + y * k)));
+      drawing.lines.forEach((l) => [[l.x1, l.y1], [l.x2, l.y2]].forEach(([x, y]) => ends.add(x + ',' + y)));
       ends.forEach((s) => {
-        const [x, y] = s.split(',');
-        html += `<circle class="wall-end" cx="${x}" cy="${y}" r="3.5"/>`;
+        const [x, y] = s.split(',').map(Number);
+        html += `<circle class="wall-end" data-end="${s}" cx="${x * k}" cy="${y * k}" r="${tool === 'move' ? 6 : 3.5}"/>`;
       });
       if (poly && hover) html += `<line class="wall preview" x1="${poly.last.x * k}" y1="${poly.last.y * k}" x2="${hover.x * k}" y2="${hover.y * k}"/>`;
       if (hover) html += `<circle class="wall-cursor" cx="${hover.x * k}" cy="${hover.y * k}" r="5"/>`;
@@ -286,12 +287,19 @@ export async function openPlan(container, { photos, onOpen }) {
 
   // Accroche : extrémité existante, sinon trait horizontal / vertical, sinon alignement sur une
   // extrémité (Alt : sans accroche).
-  function snap(pt, from, free) {
+  // exclude : extrémités (« i:1 » / « i:2 ») qui ne servent pas d'accroche (celles que l'on déplace).
+  const endsOf = (exclude) =>
+    drawing.lines.flatMap((l, i) => [
+      ...(exclude && exclude.has(i + ':1') ? [] : [{ x: l.x1, y: l.y1 }]),
+      ...(exclude && exclude.has(i + ':2') ? [] : [{ x: l.x2, y: l.y2 }]),
+    ]);
+  function snap(pt, from, free, exclude = null) {
     if (free) return { x: Math.round(pt.x), y: Math.round(pt.y) };
     const tol = 12 / zoom / scale();
     let best = null, bd = tol;
-    for (const l of drawing.lines) {
-      for (const q of [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]) {
+    const ends = endsOf(exclude);
+    {
+      for (const q of ends) {
         const d = Math.hypot(q.x - pt.x, q.y - pt.y);
         if (d < bd) (bd = d), (best = q);
       }
@@ -303,12 +311,14 @@ export async function openPlan(container, { photos, onOpen }) {
       if (a < 7 || a > 173) y = from.y;
       else if (Math.abs(a - 90) < 7) x = from.x;
     }
-    for (const l of drawing.lines) {
-      for (const q of [{ x: l.x1, y: l.y1 }, { x: l.x2, y: l.y2 }]) {
-        if (x !== (from && from.x) && Math.abs(q.x - x) < tol) x = q.x;
-        if (y !== (from && from.y) && Math.abs(q.y - y) < tol) y = q.y;
-      }
+    // Alignement sur l'extrémité la plus proche en x et en y (sauf axe déjà fixé par l'accroche).
+    let bx = tol, by = tol, ax = x, ay = y;
+    for (const q of ends) {
+      if (x !== (from && from.x) && Math.abs(q.x - x) < bx) (bx = Math.abs(q.x - x)), (ax = q.x);
+      if (y !== (from && from.y) && Math.abs(q.y - y) < by) (by = Math.abs(q.y - y)), (ay = q.y);
     }
+    x = ax;
+    y = ay;
     return { x: Math.round(x * 2) / 2, y: Math.round(y * 2) / 2 };
   }
 
@@ -388,6 +398,7 @@ export async function openPlan(container, { photos, onOpen }) {
   const TOOL_HELP = {
     line: '✏ <b>Traits</b> : cliquez chaque angle des murs ; <b>double-clic</b> ou <b>Échap</b> pour finir le trait. Les traits s’accrochent aux extrémités et à l’horizontale / verticale (<b>Alt</b> : sans accroche). Glisser : déplacer le plan.',
     text: 'T <b>Texte</b> : cliquez pour écrire (nom de pièce…), cliquez un texte pour le modifier (vide = supprimé), glissez-le pour le déplacer.',
+    move: '✥ <b>Déplacer</b> : glissez un trait pour le déplacer, une extrémité (rond) pour l’allonger ou le réorienter, un texte pour le déplacer. Les murs raccordés suivent ; <b>Alt</b> : sans accroche.',
     erase: '⌫ <b>Effacer</b> : cliquez un trait ou un texte.',
   };
   function setTool(t) {
@@ -525,7 +536,31 @@ export async function openPlan(container, { photos, onOpen }) {
     if (e.target.closest('button, input, select')) return;
     if (tool !== 'photos') {
       view.setPointerCapture(e.pointerId);
-      const tEl = tool === 'text' && e.target.closest('[data-text]');
+      const tEl = (tool === 'text' || tool === 'move') && e.target.closest('[data-text]');
+      const endEl = tool === 'move' && e.target.closest('[data-end]');
+      const segEl = tool === 'move' && e.target.closest('[data-line]');
+      if (endEl || segEl) {
+        // Extrémités concernées : celles qui coïncident avec le point saisi (ou avec les deux bouts du
+        // trait saisi), pour que les murs raccordés suivent.
+        const at = (x, y) => {
+          const refs = [];
+          drawing.lines.forEach((l, i) => {
+            if (l.x1 === x && l.y1 === y) refs.push([i, 1]);
+            if (l.x2 === x && l.y2 === y) refs.push([i, 2]);
+          });
+          return refs;
+        };
+        let groups;
+        if (endEl) {
+          const [x, y] = endEl.dataset.end.split(',').map(Number);
+          groups = [{ x, y, refs: at(x, y) }];
+        } else {
+          const l = drawing.lines[+segEl.dataset.line];
+          groups = [{ x: l.x1, y: l.y1, refs: at(l.x1, l.y1) }, { x: l.x2, y: l.y2, refs: at(l.x2, l.y2) }];
+        }
+        drag = { kind: endEl ? 'dend' : 'dseg', groups, before: JSON.stringify(drawing), sx: e.clientX, sy: e.clientY, moved: false };
+        return;
+      }
       if (tEl) {
         const i = +tEl.dataset.text;
         drag = { kind: 'dtext', i, sx: e.clientX, sy: e.clientY, start: { ...drawing.texts[i] }, moved: false, target: e.target };
@@ -560,7 +595,27 @@ export async function openPlan(container, { photos, onOpen }) {
     const dx = e.clientX - (drag.sx || 0), dy = e.clientY - (drag.sy || 0);
     if (Math.hypot(dx, dy) > 3) drag.moved = true;
     if (!drag.moved) return;
-    if (drag.kind === 'dtext') {
+    if (drag.kind === 'dend' || drag.kind === 'dseg') {
+      const set = (g, x, y) => g.refs.forEach(([i, w]) => Object.assign(drawing.lines[i], w === 1 ? { x1: x, y1: y } : { x2: x, y2: y }));
+      const ddx = dx / zoom / scale(), ddy = dy / zoom / scale();
+      if (drag.kind === 'dend') {
+        const g = drag.groups[0];
+        const exclude = new Set(g.refs.map(([i, w]) => i + ':' + w));
+        // Un seul trait : accroche horizontale / verticale par rapport à son autre bout.
+        let from = null;
+        if (g.refs.length === 1) {
+          const [i, w] = g.refs[0];
+          const l = drawing.lines[i];
+          from = w === 1 ? { x: l.x2, y: l.y2 } : { x: l.x1, y: l.y1 };
+        }
+        const q = snap({ x: g.x + ddx, y: g.y + ddy }, from, e.altKey, exclude);
+        set(g, q.x, q.y);
+      } else {
+        const r = (v) => Math.round(v * 2) / 2;
+        drag.groups.forEach((g) => set(g, r(g.x + ddx), r(g.y + ddy)));
+      }
+      drawDrawing();
+    } else if (drag.kind === 'dtext') {
       const t = drawing.texts[drag.i];
       t.x = Math.round(drag.start.x + dx / zoom / scale());
       t.y = Math.round(drag.start.y + dy / zoom / scale());
@@ -594,8 +649,16 @@ export async function openPlan(container, { photos, onOpen }) {
     const d = drag;
     drag = null;
     if (!d) return;
+    if (d.kind === 'dend' || d.kind === 'dseg') {
+      if (!d.moved) return;
+      // Traits devenus nuls (extrémité ramenée sur l'autre) : supprimés.
+      drawing.lines = drawing.lines.filter((l) => l.x1 !== l.x2 || l.y1 !== l.y2);
+      undoStack.push(d.before);
+      drawDrawing();
+      return saveDrawing();
+    }
     if (d.kind === 'dtext') {
-      if (!d.moved) return editText(d.i);
+      if (!d.moved) return tool === 'text' ? editText(d.i) : undefined;
       const moved = drawing.texts[d.i];
       drawing.texts[d.i] = d.start;
       pushUndo();

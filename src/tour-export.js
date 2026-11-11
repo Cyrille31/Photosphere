@@ -2,9 +2,10 @@
 import * as db from './db.js';
 import { createZip, readZip } from './zip.js';
 import { decodeImage } from './gl-source.js';
+import { reliefKey } from './depth.js';
 
 // Modules de la visionneuse, concaténés dans la page exportée (pas d'import possible en file://).
-const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'relief.js', 'player.js'];
+const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'depth.js', 'player.js'];
 
 export async function bundlePlayer() {
   const sources = await Promise.all(PLAYER_MODULES.map((m) => fetch(new URL(m, import.meta.url)).then((r) => r.text())));
@@ -43,6 +44,13 @@ function escapeHtml(s) {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 }
 
+// Relief (carte de profondeur calculée par l'IA) : joint à la visite s'il correspond au redressement.
+async function depthItem(p) {
+  if (!p.relief || p.relief.kind !== 'ai' || p.relief.key !== reliefKey(p.params)) return {};
+  const b = await db.getBlob(p.id + ':depth');
+  return b ? { relief: { h: p.relief.h, key: p.relief.key }, reliefKey: p.relief.key, depthSrc: await blobToDataUrl(b) } : {};
+}
+
 // Visite autonome : un seul fichier .html qui s'ouvre sur n'importe quel smartphone ou ordinateur.
 export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, onProgress }) {
   const { code, css } = await bundlePlayer();
@@ -58,7 +66,7 @@ export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, 
       name: p.name,
       src: await blobToDataUrl(small),
       hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label, arrive }) => ({ target, yaw, pitch, label, arrive })),
-      ...(p.relief && p.relief.walls ? { relief: p.relief, reliefKey: p.relief.key } : {}),
+      ...(await depthItem(p)),
     });
   }
   const ids = new Set(items.map((p) => p.id));
@@ -120,6 +128,8 @@ export async function exportProject(photos, onProgress) {
       const b = await db.getBlob(`${p.id}:${kind}`);
       if (b) files.push({ name: `${p.id}/${kind}.jpg`, data: b });
     }
+    const depth = await db.getBlob(`${p.id}:depth`);
+    if (depth) files.push({ name: `${p.id}/depth.png`, data: depth });
   }
   return createZip(files);
 }
@@ -139,6 +149,8 @@ export async function importProject(file, onProgress) {
       const b = byName.get(`${p.id}/${kind}.jpg`);
       if (b) await db.putBlob(`${p.id}:${kind}`, new Blob([b], { type: 'image/jpeg' }));
     }
+    const depth = byName.get(`${p.id}/depth.png`);
+    if (depth) await db.putBlob(`${p.id}:depth`, new Blob([depth], { type: 'image/png' }));
     const hasOut = byName.has(`${p.id}/out.jpg`);
     await db.putPhoto({ ...p, status: hasOut ? p.status : 'pending' });
     if (!existing.has(p.id)) added++;
