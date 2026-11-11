@@ -133,7 +133,7 @@ float sceneDist(vec3 d) { return depth2(d).r; }
 // pas croissants (+25 %), puis dichotomie. -1 : rien touché (au loin).
 float marchLayer(vec3 e, vec3 d, int layer) {
   float lo = 0.1, t = 0.1;
-  for (int i = 0; i < 26; i++) {
+  for (int i = 0; i < 29; i++) {
     vec3 x = e + t * d;
     float r = length(x);
     vec2 dd = depth2(x / r);
@@ -174,6 +174,18 @@ vec3 reliefDir(vec3 e, vec3 d, out bool useBg) {
   // (seulement là où un fond distinct a été reconstitué : pas sur le bruit de la carte)
   float g0 = textureLod(uDepthTex, uv, 0.0).g;
   if (mx > mn * 1.15 && c0 > mn * 1.06 && c0 < mx * 0.94 && g0 > c0 * 1.08) {
+    // Fond prolongé : le premier pixel du côté lointain du contour, en suivant la pente de distance
+    // (couleurs réelles de la photo, à pleine résolution).
+    vec2 grad = vec2(log(a) - log(b), log(c) - log(f));
+    vec2 step = normalize(grad + vec2(1e-6, 0.0)) * tx;
+    for (int k = 1; k <= 8; k++) {
+      vec2 q = uv + step * float(k);
+      if (textureLod(uDepthTex, q, 0.0).r > mx * 0.9) {
+        float lon = (q.x - 0.5) * 2.0 * PI, lat = (0.5 - q.y) * PI;
+        return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+      }
+    }
+    // Sinon : fond reconstitué (distances et couleurs extrapolées).
     useBg = true;
     float tb = marchLayer(e, d, 1);
     return tb < 0.0 ? d : normalize(e + tb * d);

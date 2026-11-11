@@ -234,13 +234,36 @@ export function decodeBackground(px) {
   return out;
 }
 
+// Nettoyage de la carte : deux passes de médiane 3 × 3 (sur le logarithme des distances) ; supprime
+// les grains isolés (zones surexposées, reflets) sans arrondir les contours francs.
+export function cleanDepth(depth, w = DEPTH_W, h = DEPTH_H, passes = 2) {
+  let cur = Float32Array.from(depth, Math.log);
+  const v = new Float32Array(9);
+  for (let p = 0; p < passes; p++) {
+    const next = new Float32Array(cur.length);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let k = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = Math.min(h - 1, Math.max(0, y + dy));
+          for (let dx = -1; dx <= 1; dx++) v[k++] = cur[yy * w + ((x + dx + w) % w)];
+        }
+        v.sort();
+        next[y * w + x] = v[4];
+      }
+    }
+    cur = next;
+  }
+  return cur.map(Math.exp);
+}
+
 // Couche de fond : ce qui est caché derrière les objets proches (personnes, meubles), extrapolé à
 // partir du fond qui les entoure. Dans le casque, chaque œil voit un peu derrière le bord des objets
 // proches : on y montre ce fond plutôt que d'étirer l'objet.
 // depth : carte (w × h, ligne 0 en haut). radius : portée en pixels de la carte (~ 7°).
 // Renvoie { bg: distances du fond, mask: Uint8Array (1 = objet devant le fond, près d'un contour),
 // src: Uint8Array (1 = pixel du fond, utilisable pour reconstituer les couleurs) }.
-export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 14, jump = 1.12, edgeJump = 1.3 } = {}) {
+export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 14, jump = 1.12, edgeJump = 1.3, minEdge = 60 } = {}) {
   const N = w * h;
   const L = new Float32Array(N);
   for (let i = 0; i < N; i++) L[i] = Math.log(depth[i]);
@@ -278,6 +301,32 @@ export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 14, 
         }
       }
     }
+  }
+  // Les bords trop courts (amas de bruit) ne sont pas des contours d'objets : on les ignore.
+  const seen = new Uint8Array(N);
+  const stack = [];
+  for (let i0 = 0; i0 < N; i0++) {
+    if (!edge[i0] || seen[i0]) continue;
+    const comp = [];
+    stack.push(i0);
+    seen[i0] = 1;
+    while (stack.length) {
+      const i = stack.pop();
+      comp.push(i);
+      const x = i % w, y = (i - x) / w;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const j = yy * w + ((x + dx + w) % w);
+          if (edge[j] && !seen[j]) {
+            seen[j] = 1;
+            stack.push(j);
+          }
+        }
+      }
+    }
+    if (comp.length < minEdge) for (const i of comp) edge[i] = 0;
   }
   // Zone proche d'un bord franc (dilatation de `radius` pixels).
   const zt = new Uint8Array(N), zone = new Uint8Array(N);

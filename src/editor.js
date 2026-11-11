@@ -128,7 +128,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
             <input type="range" name="reliefH" min="0.3" max="2.5" step="0.05">
             <input type="number" name="reliefH" min="0.3" max="2.5" step="0.05"></label>
           <p class="note relief-info"></p>
-          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).</p>
+          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).<br>Dans le casque, ce que vous regardez est placé sans décalage entre les deux yeux (comme quand les yeux convergent) et l’écart entre les deux images est limité pour rester confortable. Autour des personnes et des objets proches, le fond est prolongé plutôt que d’étirer l’objet.</p>
         </section>
         <section data-panel="links" hidden>
           <p class="note">Un lien est une pastille sur laquelle on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo.</p>

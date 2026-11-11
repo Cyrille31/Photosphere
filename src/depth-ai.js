@@ -3,7 +3,7 @@
 // graphique (WebGPU) quand c'est possible, sinon sur le processeur (WebAssembly).
 // Le moteur (≈ 10 Mo) et le modèle (27 à 50 Mo) sont téléchargés à la première utilisation, puis
 // gardés dans le cache du navigateur.
-import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, backgroundDepth, fillMasked, DEPTH_W, DEPTH_H } from './depth.js';
+import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, backgroundDepth, fillMasked, cleanDepth, DEPTH_W, DEPTH_H } from './depth.js';
 
 const ORT_VERSION = '1.20.1';
 export const ORT_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
@@ -108,7 +108,7 @@ export async function computeDepth(renderer, onStatus = () => {}) {
   onStatus('Assemblage de la carte de profondeur…');
   await new Promise((r) => setTimeout(r, 0));
   const align = alignViews(views);
-  const depth = composeDepth(views, align);
+  const depth = cleanDepth(composeDepth(views, align));
   // Fond caché derrière les objets proches : distances prolongées et couleurs extrapolées.
   onStatus('Reconstitution du fond derrière les personnes et les objets…');
   await new Promise((r) => setTimeout(r, 0));
