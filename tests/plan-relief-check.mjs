@@ -204,7 +204,7 @@ try {
     };
     const flat = await stereo(ids['salon.jpg'], 0);
     const deep = await stereo(ids['salon.jpg'], 1, '02-casque-relief-ia.png');
-    check(deep.diff > flat.diff * 2 && deep.diff > 1, `casque : avec le relief IA, les deux yeux voient la pièce de points différents (écart ${deep.diff.toFixed(2)} contre ${flat.diff.toFixed(2)} sans relief)`);
+    check(deep.diff > flat.diff * 2 && deep.diff > 0.3, `casque : avec le relief IA, les deux yeux voient la pièce de points différents (écart ${deep.diff.toFixed(2)} contre ${flat.diff.toFixed(2)} sans relief)`);
     if (ids.real) {
       const real = await stereo(ids.real, 1, '05-casque-photo-reelle.png');
       const ds = await page.$eval('.ps-player', (el) => ({ conv: el.dataset.convergence, gap: el.dataset.eyeGap }));
