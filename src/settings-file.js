@@ -26,6 +26,7 @@ export function buildSettings(photos, plan = null) {
       params: p.params,
       ...(p.mapPos ? { mapPos: p.mapPos } : {}),
       ...(p.mapRot ? { mapRot: p.mapRot } : {}),
+      ...(p.mapPlaced ? { mapPlaced: true } : {}),
       ...(p.relief ? { relief: p.relief } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
@@ -75,6 +76,7 @@ export async function applySettings(data) {
       name: e.name || cur.name,
       ...(e.mapPos ? { mapPos: e.mapPos } : {}),
       ...(e.mapRot != null ? { mapRot: e.mapRot } : {}),
+      ...(e.mapPlaced ? { mapPlaced: true } : {}),
       ...(e.relief ? { relief: e.relief } : {}),
       srcType,
       params,

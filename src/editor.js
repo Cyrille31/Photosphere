@@ -5,10 +5,11 @@ import { ViewController } from './controls.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
-import { edgeConstraints, solveUp } from './autolevel.js';
+import { autoLevel } from './autolevel.js';
 import { reliefKey, depthAt, loadDepthImage, loadImageBitmap } from './depth.js';
 import { computeDepth } from './depth-ai.js';
 import { toast, escapeHtml, dialog } from './ui.js';
+import { manualButton, bindManualButtons } from './manual.js';
 import { pickPhoto } from './photo-picker.js';
 import { chooseArrivalView } from './arrival-view.js';
 import { newId } from './importer.js';
@@ -78,7 +79,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       </div>
       <div class="ed-body">
         <section data-panel="level">
-          <p class="note">Corrigez une photo prise caméra penchée : la ligne orange (horizon) doit être plate et les verticales droites. Utilisez la vue à plat et la grille pour vérifier.</p>
+          <p class="note">La ligne orange (horizon) doit être plate et les verticales droites. ${manualButton('redresser')}</p>
           ${slider('tiltForward', 'Bascule avant / arrière, dans l’axe de la vue (°)', -45, 45, 0.1)}
           ${slider('tiltSide', 'Bascule gauche / droite, dans l’axe de la vue (°)', -45, 45, 0.1)}
           ${slider('cap', 'Cap : rotation horizontale (°)', -180, 180, 0.5)}
@@ -91,11 +92,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <div class="tools">
             <button class="btn small" data-north>🧭 Indiquer le nord</button>
           </div>
-          <p class="note"><b>Horizon</b> : cliquez deux points de l’horizon réel (mer, plaine), si possible éloignés d’environ 90°.<br>
-          <b>Verticales</b> : cliquez le haut puis le bas d’un élément vertical (angle de mur, poteau, encadrement de porte), puis d’un second, de préférence dans une autre direction. Avec une seule ligne, appuyez sur « Appliquer ».<br>
-          <b>Bascules</b> : elles s’appliquent par rapport au centre de la vue affichée. Tournez la vue vers un mur ou une porte, puis basculez jusqu’à ce que ses verticales soient droites ; les valeurs se mettent à jour quand vous tournez la vue.<br>
-          <b>Nord / cap</b> : la caméra n’a pas de boussole, c’est à vous d’indiquer le nord (repéré sur un plan, une carte ou avec la boussole du téléphone). Cliquez « Indiquer le nord » puis touchez sa direction dans l’image ; le « N » rouge s’y place et le curseur de cap permet d’affiner. Avec le même nord sur toutes vos photos, on garde la bonne direction en passant de l’une à l’autre.<br>
-          <b>Défaire</b> (Ctrl+Z) annule la dernière action : bascule, outil horizon ou verticales, lien…</p>
+          
         </section>
         <section data-panel="lens" hidden>
           <label class="field">Type d’image source
@@ -114,11 +111,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
               <button class="btn small" data-lens-default>⭐ Calibrage par défaut</button>
               <button class="btn small" data-lens-reset>↺ Valeurs d’usine</button>
             </div>
-            <p class="note">Le calibrage automatique est fait à l’import : il aligne les deux objectifs sur la couture et égalise leur exposition. Relancez-le après une modification, ou si la couture reste visible ajustez à la main le rayon et la rotation (les objets très proches de la caméra, comme la main, restent légèrement dédoublés : c’est la parallaxe entre les deux objectifs). « Calibrage par défaut » mémorise ces valeurs pour les prochains imports de cet appareil${p.model ? ' (' + escapeHtml(p.model) + ')' : ''}.</p>
+            <p class="note">Calibrage automatique fait à l’import ; relancez-le après une modification. ${manualButton('objectifs')}</p>
           </div>
         </section>
         <section data-panel="relief" hidden>
-          <p class="note">Dans le casque, chaque œil voit la photo d’un point légèrement différent pour donner du relief. Une intelligence artificielle (Depth Anything V2, exécutée dans votre navigateur, sans envoi de la photo) estime la distance de chaque point : murs, sol, plafond, meubles, personnes. Les couleurs montrent les distances : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>.</p>
+          <p class="note">Distances estimées par IA pour l’effet 3D dans le casque : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>. ${manualButton('relief')}</p>
           <div class="tools">
             <button class="btn small primary" data-depth-compute>🧠 Calculer le relief (IA)</button>
             <label class="check"><input type="checkbox" data-depth-view checked> Colorer selon la distance</label>
@@ -128,10 +125,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
             <input type="range" name="reliefH" min="0.3" max="2.5" step="0.05">
             <input type="number" name="reliefH" min="0.3" max="2.5" step="0.05"></label>
           <p class="note relief-info"></p>
-          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).<br>Dans le casque, ce que vous regardez est placé sans décalage entre les deux yeux (comme quand les yeux convergent) et l’écart entre les deux images est limité pour rester confortable. Autour des personnes et des objets proches, le fond est prolongé plutôt que d’étirer l’objet.</p>
+          
         </section>
         <section data-panel="links" hidden>
-          <p class="note">Un lien est une pastille sur laquelle on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo.</p>
+          <p class="note">Cliquez un lien sur l’image pour le retrouver ici ; <b>Ctrl + glisser</b> pour le déplacer. ${manualButton('liens')}</p>
           <div class="tools"><button class="btn primary small" data-add-link ${others.length ? '' : 'disabled'}>➕ Ajouter un lien</button></div>
           ${others.length ? '' : '<p class="note">Importez d’autres photos pour pouvoir créer des liens.</p>'}
           <div class="links-list"></div>
@@ -146,6 +143,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
 
   const $ = (s) => container.querySelector(s);
   const $$ = (s) => [...container.querySelectorAll(s)];
+  bindManualButtons(container);
   const stage = $('.ed-stage');
   const canvas = stage.querySelector('canvas');
   const renderer = new PanoRenderer(canvas, {
@@ -157,6 +155,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   });
   let tool = null; // { kind, points: [] }
   let placing = null; // { kind: 'add' | 'move', index }
+  let selLink = -1; // lien sélectionné (touché sur l'image ou dans la liste)
   let grid = true;
   let raf = 0;
   let depthView = true;
@@ -193,7 +192,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const rel = currentRelief();
       renderer.setDepth(rel ? depthMaps.depth : null, rel ? depthMaps.bg : null);
       renderer.setBackgroundColor(rel ? depthBgImage : null);
-      renderer.draw({ ...frame, grid, hotSel: -1, hotSize: controller.mode === 'flat' ? 0.05 : 0.06, depthView: depthView && reliefTabOpen() });
+      renderer.draw({ ...frame, grid, hotSel: selLink, hotSize: controller.mode === 'flat' ? 0.05 : 0.06, depthView: depthView && reliefTabOpen() });
       drawMarkers(frame);
       if (reliefTabOpen()) updateReliefInfo();
     });
@@ -360,8 +359,82 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         renderLinks();
         redraw();
       } else chooseTarget(pos);
+      return;
     }
+    // Lien touché sur l'image : sélectionné, et la liste des liens défile pour le montrer en haut.
+    const k = hotspotAt(d);
+    if (k >= 0) selectLink(k, true);
   }
+
+  // Indice du lien le plus proche d'une direction (à moins de ~6°), sinon -1.
+  function hotspotAt(d) {
+    let best = -1, bestAng = 0.11;
+    p.hotspots.forEach((h, i) => {
+      const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)))));
+      if (ang < bestAng) {
+        bestAng = ang;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  function selectLink(i, scroll) {
+    selLink = i;
+    if ($('[data-panel=links]').hidden) $('[data-tab=links]').click();
+    $$('.link-item').forEach((el) => el.classList.toggle('active', +el.dataset.i === i));
+    const item = $(`.link-item[data-i="${i}"]`);
+    if (item && scroll) {
+      // La liste (zone qui défile du panneau) amène ce lien tout en haut.
+      const body = $('.ed-body');
+      const want = body.scrollTop + item.getBoundingClientRect().top - body.getBoundingClientRect().top - 8;
+      // Lien vers la fin de la liste : un espace sous la liste permet de l'amener quand même en haut.
+      const list = $('.links-list');
+      const lack = want - (body.scrollHeight - body.clientHeight);
+      if (lack > 0) list.style.paddingBottom = (parseFloat(list.style.paddingBottom) || 0) + lack + 'px';
+      body.scrollTo({ top: want, behavior: 'smooth' });
+    }
+    redraw();
+  }
+
+  // Ctrl + clic gauche sur un lien de l'image : on le fait glisser à sa nouvelle place.
+  stage.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || tool || placing || e.target !== canvas) return;
+      const r = canvas.getBoundingClientRect();
+      const sx = canvas.width / r.width;
+      const at = (ev) => renderer.pick((ev.clientX - r.left) * sx, (ev.clientY - r.top) * sx, controller.frame());
+      const d = at(e);
+      const k = d ? hotspotAt(d) : -1;
+      if (k < 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      snapshot();
+      selectLink(k, true);
+      canvas.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        const nd = at(ev);
+        if (!nd) return;
+        const { lon, lat } = lonLatFromDir(nd);
+        // Placé à la main : le lien ne suit plus le plan.
+        Object.assign(p.hotspots[k], { yaw: lon / DEG, pitch: lat / DEG, auto: false });
+        dirty = true;
+        redraw();
+      };
+      const up = () => {
+        canvas.removeEventListener('pointermove', move, true);
+        canvas.removeEventListener('pointerup', up, true);
+        canvas.removeEventListener('pointercancel', up, true);
+        renderLinks();
+        selectLink(k, false);
+      };
+      canvas.addEventListener('pointermove', move, true);
+      canvas.addEventListener('pointerup', up, true);
+      canvas.addEventListener('pointercancel', up, true);
+    },
+    true
+  );
 
   async function chooseTarget(pos) {
     const target = await pickPhoto(others, { title: 'Lien vers quelle photo ?' });
@@ -409,7 +482,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         const arrive = h.arrive
           ? `réglée (cap ${Math.round(h.arrive.yaw)}°)`
           : 'automatique (dos au lien retour, sinon même direction)';
-        return `<div class="link-item" data-i="${i}">
+        return `<div class="link-item${i === selLink ? ' active' : ''}" data-i="${i}">
         <button class="link-target" data-target title="Changer la photo de destination"><img alt=""><span>→ ${escapeHtml(t ? t.name : '?')}</span><small>changer</small></button>
         <div class="row2"><input type="text" name="label" value="${escapeHtml(h.label || '')}" placeholder="Texte affiché"></div>
         <div class="note">Vue à l’arrivée : ${arrive}</div>
@@ -482,8 +555,14 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         hint('Touchez le nouvel emplacement du lien. <button class="btn small" data-place-cancel>Annuler</button>');
         bindPlaceCancel();
       });
+      item.addEventListener('click', (ev) => {
+        if (ev.target.closest('button, input, label')) return;
+        selectLink(i, false);
+      });
       item.querySelector('[data-del]').addEventListener('click', () => {
         snapshot();
+        if (selLink === i) selLink = -1;
+        else if (selLink > i) selLink--;
         p.hotspots.splice(i, 1);
         dirty = true;
         renderLinks();
@@ -679,42 +758,15 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     hint('Recherche des verticales…');
     await new Promise((r) => setTimeout(r, 30));
     try {
-      // Plusieurs passes : chaque mesure est refaite sur l'image déjà corrigée, jusqu'à convergence.
-      const startUp = mat3Apply(levelMatrix(p.params.yaw, p.params.pitch, p.params.roll), [0, 1, 0]);
-      let lvl = { yaw: p.params.yaw, pitch: p.params.pitch, roll: p.params.roll };
-      let result = null, support = 0;
-      for (let pass = 0; pass < 3; pass++) {
-        renderer.setParams({ ...p.params, ...lvl }, p.srcType);
-        const constraints = [];
-        for (let k = 0; k < 8; k++) {
-          const cam = cameraMatrix(k * 45 * DEG, 0);
-          constraints.push(...edgeConstraints(renderer.readView(cam, 75, 512), 512, cam, 75));
-          await new Promise((r) => setTimeout(r, 0));
-        }
-        const r = solveUp(constraints);
-        if (!r.ok) {
-          if (pass === 0) result = r;
-          break;
-        }
-        support = r.support;
-        const next = applyUpCorrection(lvl, r.up);
-        lvl = { ...next, yaw: lvl.yaw + wrapDeg(next.yaw - lvl.yaw) };
-        result = { ok: true };
-        if (r.tiltDeg < 0.1) break;
-      }
-      renderer.setParams(p.params, p.srcType);
-      const endUp = mat3Apply(levelMatrix(lvl.yaw, lvl.pitch, lvl.roll), [0, 1, 0]);
-      const total = Math.acos(Math.max(-1, Math.min(1, vecDot(startUp, endUp)))) / DEG;
-      if (!result || !result.ok) {
-        toast('Redressement automatique impossible : ' + (result ? result.reason : 'aucune mesure') + '. Utilisez les outils manuels.', true, 7000);
-      } else if (total > 15) {
-        toast(`Redressement automatique impossible : correction trouvée trop forte (${total.toFixed(1)}°), verticales peu fiables. Utilisez les outils manuels.`, true, 7000);
-      } else if (total < 0.05) {
+      const r = await autoLevel(renderer, p.params, p.srcType);
+      if (!r.ok) {
+        toast('Redressement automatique impossible : ' + r.reason + '. Utilisez les outils manuels.', true, 7000);
+      } else if (r.total < 0.05) {
         toast('La photo est déjà droite.');
       } else {
         snapshot();
-        setLevel(lvl);
-        toast(`Photo redressée de ${total.toFixed(1)}° d’après ${support} points de verticales. Vérifiez avec la grille (Défaire pour annuler).`, false, 6000);
+        setLevel(r.level);
+        toast(`Photo redressée de ${r.total.toFixed(1)}° d’après ${r.support} points de verticales. Vérifiez avec la grille (Défaire pour annuler).`, false, 6000);
       }
     } catch (err) {
       toast('Redressement automatique impossible : ' + err.message, true);

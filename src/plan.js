@@ -3,6 +3,7 @@
 // créés automatiquement), qui pointent alors vers la position des photos voisines sur le plan.
 import * as db from './db.js';
 import { escapeHtml, toast } from './ui.js';
+import { manualButton, bindManualButtons } from './manual.js';
 
 const SPACING = 170; // distance entre deux photos liées lors de la disposition automatique
 
@@ -154,12 +155,14 @@ export async function openPlan(container, { photos, onOpen }) {
   const disp = (q) => ({ x: q.x * scale(), y: q.y * scale() });
 
   const isLinked = (id) => byId.get(id).hotspots.some((h) => byId.has(h.target)) || list.some((p) => p.hotspots.some((h) => h.target === id));
+  // Sur le plan : photo reliée à une autre, ou placée à la main (même sans lien, en attendant).
+  const onPlan = (id) => isLinked(id) || !!(byId.get(id).mapPlaced && byId.get(id).mapPos);
   list.forEach((p) => (p.hotspots = p.hotspots || []));
 
   // Positions : photos reliées d'après le plan (ou les liens), photos isolées dans la zone.
   async function layout() {
-    const linked = list.filter((p) => isLinked(p.id));
-    pool = new Set(list.filter((p) => !isLinked(p.id)).map((p) => p.id));
+    const linked = list.filter((p) => onPlan(p.id));
+    pool = new Set(list.filter((p) => !onPlan(p.id)).map((p) => p.id));
     pos = autoLayout(linked);
     for (const p of linked) {
       if (!p.mapPos) {
@@ -191,12 +194,14 @@ export async function openPlan(container, { photos, onOpen }) {
         <button class="btn small" data-mode="sphere" title="Photos en sphères">◯ Sphères</button>
         <button class="btn small" data-mode="rect" title="Photos à plat : chaque lien aboutit à sa position dans l’image">▭ Rectangles</button>
       </span>
-      <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> sur une photo : la faire tourner · glisser un <b>point de contact</b> : placer le lien · <b>🔗 Relier</b> ou déposer une photo sur une autre : les relier · double-clic : voir. Liens <span class="plan-key auto">automatiques</span> (suivent le plan) et <span class="plan-key manual">placés à la main</span>.</span>
+      <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> une photo : la tourner · déposer une photo sur une autre : les relier. Liens <span class="plan-key auto">automatiques</span> et <span class="plan-key manual">placés à la main</span>.</span>
+      ${manualButton('plan')}.</span>
     </div>
     <div class="plan-view">
       <div class="plan-world"></div>
     </div>
   </div>`;
+  bindManualButtons(container);
   const view = container.querySelector('.plan-view');
   const world = container.querySelector('.plan-world');
   const help = container.querySelector('.plan-help');
@@ -216,7 +221,7 @@ export async function openPlan(container, { photos, onOpen }) {
   function render() {
     const { w, h } = picSize(mode);
     world.innerHTML = `<svg class="plan-drawing" width="1" height="1"></svg>
-      ${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non reliées (${pool.size}) — déposez-en une sur une photo du plan pour les relier</span></div>` : ''}
+      ${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non placées (${pool.size}) — glissez-en une sur le plan pour la placer, ou sur une photo pour les relier</span></div>` : ''}
       <svg class="plan-links" width="1" height="1"></svg>
       ${list
         .map(
@@ -396,7 +401,7 @@ export async function openPlan(container, { photos, onOpen }) {
   }
 
   const TOOL_HELP = {
-    line: '✏ <b>Traits</b> : cliquez chaque angle des murs ; <b>double-clic</b> ou <b>Échap</b> pour finir le trait. Les traits s’accrochent aux extrémités et à l’horizontale / verticale (<b>Alt</b> : sans accroche). Glisser : déplacer le plan.',
+    line: '✏ <b>Traits</b> : cliquez chaque angle des murs ; <b>double-clic</b> ou <b>Échap</b> pour finir. <b>Glissez un trait ou une extrémité</b> pour le déplacer. Accroches automatiques (<b>Alt</b> : sans).',
     text: 'T <b>Texte</b> : cliquez pour écrire (nom de pièce…), cliquez un texte pour le modifier (vide = supprimé), glissez-le pour le déplacer.',
     move: '✥ <b>Déplacer</b> : glissez un trait pour le déplacer, une extrémité (rond) pour l’allonger ou le réorienter, un texte pour le déplacer. Les murs raccordés suivent ; <b>Alt</b> : sans accroche.',
     erase: '⌫ <b>Effacer</b> : cliquez un trait ou un texte.',
@@ -537,8 +542,10 @@ export async function openPlan(container, { photos, onOpen }) {
     if (tool !== 'photos') {
       view.setPointerCapture(e.pointerId);
       const tEl = (tool === 'text' || tool === 'move') && e.target.closest('[data-text]');
-      const endEl = tool === 'move' && e.target.closest('[data-end]');
-      const segEl = tool === 'move' && e.target.closest('[data-line]');
+      // Déplacer un trait : outil Déplacer, ou outil Traits quand aucun trait n'est en cours.
+      const canMove = tool === 'move' || (tool === 'line' && !poly);
+      const endEl = canMove && e.target.closest('[data-end]');
+      const segEl = canMove && e.target.closest('[data-line]');
       if (endEl || segEl) {
         // Extrémités concernées : celles qui coïncident avec le point saisi (ou avec les deux bouts du
         // trait saisi), pour que les murs raccordés suivent.
@@ -650,7 +657,8 @@ export async function openPlan(container, { photos, onOpen }) {
     drag = null;
     if (!d) return;
     if (d.kind === 'dend' || d.kind === 'dseg') {
-      if (!d.moved) return;
+      // Outil Traits : un simple clic sur un trait commence un nouveau mur à cet endroit.
+      if (!d.moved) return tool === 'line' ? drawClick(e, e.target) : undefined;
       // Traits devenus nuls (extrémité ramenée sur l'autre) : supprimés.
       drawing.lines = drawing.lines.filter((l) => l.x1 !== l.x2 || l.y1 !== l.y2);
       undoStack.push(d.before);
@@ -700,12 +708,34 @@ export async function openPlan(container, { photos, onOpen }) {
         await createLink(d.id, target.id);
         return;
       }
+      const q = disp(p);
+      const inPool = zone && q.x > zone.x && q.x < zone.x + zone.w && q.y > zone.y && q.y < zone.y + zone.h;
       if (pool.has(d.id)) {
-        // Une photo isolée reste dans sa zone tant qu'elle n'est reliée à aucune autre.
-        pos.set(d.id, d.start);
-        placeNodes();
-        drawLinks();
-        toast('Déposez la photo sur une photo du plan pour les relier.');
+        // Photo non placée : déposée hors de sa zone, elle prend place sur le plan (sans lien).
+        if (inPool) {
+          pos.set(d.id, d.start);
+          placeNodes();
+          drawLinks();
+          return;
+        }
+        const mp = { x: Math.round(p.x), y: Math.round(p.y) };
+        Object.assign(byId.get(d.id), { mapPos: mp, mapPlaced: true });
+        await db.updatePhoto(d.id, (cur) => ({ ...cur, mapPos: mp, mapPlaced: true }));
+        await layout();
+        render();
+        return;
+      }
+      if (inPool && !isLinked(d.id)) {
+        // Photo placée sans lien ramenée dans la zone : elle n'est plus sur le plan.
+        const ph = byId.get(d.id);
+        delete ph.mapPos;
+        ph.mapPlaced = false;
+        await db.updatePhoto(d.id, (cur) => {
+          const { mapPos, ...rest } = cur;
+          return { ...rest, mapPlaced: false };
+        });
+        await layout();
+        render();
         return;
       }
       byId.get(d.id).mapPos = { x: Math.round(p.x), y: Math.round(p.y) };
