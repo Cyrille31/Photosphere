@@ -112,11 +112,11 @@ export async function computeDepth(renderer, onStatus = () => {}) {
   // Fond caché derrière les objets proches : distances prolongées et couleurs extrapolées.
   onStatus('Reconstitution du fond derrière les personnes et les objets…');
   await new Promise((r) => setTimeout(r, 0));
-  const { bg, mask } = backgroundDepth(depth);
+  const { bg, mask, src } = backgroundDepth(depth);
   const flat = renderer.readFlat(DEPTH_W, DEPTH_H); // lignes de bas en haut
   const rgba = new Uint8ClampedArray(DEPTH_W * DEPTH_H * 4);
   for (let y = 0; y < DEPTH_H; y++) rgba.set(flat.subarray((DEPTH_H - 1 - y) * DEPTH_W * 4, (DEPTH_H - y) * DEPTH_W * 4), y * DEPTH_W * 4);
-  fillMasked(rgba, mask, DEPTH_W, DEPTH_H);
+  fillMasked(rgba, mask, DEPTH_W, DEPTH_H, 3, src);
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = DEPTH_W;
   bgCanvas.height = DEPTH_H;

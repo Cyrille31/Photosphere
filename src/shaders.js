@@ -171,7 +171,9 @@ vec3 reliefDir(vec3 e, vec3 d, out bool useBg) {
   float c = textureLod(uDepthTex, uv + vec2(0.0, tx.y), 0.0).r;
   float f = textureLod(uDepthTex, uv - vec2(0.0, tx.y), 0.0).r;
   float mn = min(min(a, b), min(c, f)), mx = max(max(a, b), max(c, f));
-  if (mx > mn * 1.15 && c0 > mn * 1.06 && c0 < mx * 0.94) {
+  // (seulement là où un fond distinct a été reconstitué : pas sur le bruit de la carte)
+  float g0 = textureLod(uDepthTex, uv, 0.0).g;
+  if (mx > mn * 1.15 && c0 > mn * 1.06 && c0 < mx * 0.94 && g0 > c0 * 1.08) {
     useBg = true;
     float tb = marchLayer(e, d, 1);
     return tb < 0.0 ? d : normalize(e + tb * d);

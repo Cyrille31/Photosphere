@@ -238,8 +238,9 @@ export function decodeBackground(px) {
 // partir du fond qui les entoure. Dans le casque, chaque œil voit un peu derrière le bord des objets
 // proches : on y montre ce fond plutôt que d'étirer l'objet.
 // depth : carte (w × h, ligne 0 en haut). radius : portée en pixels de la carte (~ 7°).
-// Renvoie { bg: distances du fond, mask: Uint8Array (1 = objet devant le fond) }.
-export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 20, jump = 1.12 } = {}) {
+// Renvoie { bg: distances du fond, mask: Uint8Array (1 = objet devant le fond, près d'un contour),
+// src: Uint8Array (1 = pixel du fond, utilisable pour reconstituer les couleurs) }.
+export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 14, jump = 1.12, edgeJump = 1.3 } = {}) {
   const N = w * h;
   const L = new Float32Array(N);
   for (let i = 0; i < N; i++) L[i] = Math.log(depth[i]);
@@ -260,18 +261,64 @@ export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 20, 
       far[y * w + x] = m;
     }
   }
+  // Bords francs : saut de distance d'au moins `edgeJump` en 2 pixels, côté proche. Le fond n'est
+  // reconstitué que dans une bande de `radius` pixels autour d'eux (ce que les yeux peuvent voir
+  // derrière le contour), pas sur les pentes douces (murs vus de biais, sol).
+  const edgeThr = Math.log(edgeJump);
+  const edge = new Uint8Array(N);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        if (L[yy * w + ((x + dx + w) % w)] - L[i] > edgeThr) {
+          edge[i] = 1;
+          break;
+        }
+      }
+    }
+  }
+  // Zone proche d'un bord franc (dilatation de `radius` pixels).
+  const zt = new Uint8Array(N), zone = new Uint8Array(N);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    // Fenêtre glissante circulaire (le tour se referme) : nombre de bords à ±radius.
+    let count = 0;
+    for (let k = -radius; k <= radius; k++) count += edge[row + ((k + w) % w)];
+    for (let x = 0; x < w; x++) {
+      if (count > 0) zt[row + x] = 1;
+      count += edge[row + ((x + radius + 1) % w)] - edge[row + ((x - radius + w) % w)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let last = -1e9;
+    for (let y = 0; y < h; y++) {
+      if (zt[y * w + x]) last = y;
+      if (y - last <= radius) zone[y * w + x] = 1;
+    }
+    last = 1e9;
+    for (let y = h - 1; y >= 0; y--) {
+      if (zt[y * w + x]) last = y;
+      if (last - y <= radius) zone[y * w + x] = 1;
+    }
+  }
   const thr = Math.log(jump);
   const mask = new Uint8Array(N);
-  for (let i = 0; i < N; i++) mask[i] = L[i] < far[i] - thr ? 1 : 0;
+  for (let i = 0; i < N; i++) mask[i] = zone[i] && L[i] < far[i] - thr ? 1 : 0;
   const bg = new Float32Array(N);
   for (let i = 0; i < N; i++) bg[i] = mask[i] ? Math.exp(far[i]) : depth[i];
-  return { bg, mask };
+  // Sources de couleur pour le fond : les pixels localement les plus lointains (pas les objets).
+  const src = new Uint8Array(N);
+  for (let i = 0; i < N; i++) src[i] = L[i] >= far[i] - thr ? 1 : 0;
+  return { bg, mask, src };
 }
 
 // Remplit les zones masquées d'une image RGBA (w × h) en prolongeant les couleurs voisines
 // (pyramide « push-pull ») ; le masque est d'abord élargi de `grow` pixels pour ne pas reprendre
-// le liseré de l'objet. Modifie et renvoie rgba.
-export function fillMasked(rgba, mask, w, h, grow = 3) {
+// le liseré de l'objet. src (facultatif) : pixels autorisés comme sources de couleur. Modifie et
+// renvoie rgba (seuls les pixels masqués changent).
+export function fillMasked(rgba, mask, w, h, grow = 3, src = null) {
   let m = mask;
   for (let g = 0; g < grow; g++) {
     const n = new Uint8Array(m);
@@ -288,7 +335,7 @@ export function fillMasked(rgba, mask, w, h, grow = 3) {
   let cw = w, ch = h;
   let col = new Float32Array(w * h * 3), wt = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
-    if (m[i]) continue;
+    if (m[i] || (src && !src[i])) continue;
     wt[i] = 1;
     col[i * 3] = rgba[i * 4];
     col[i * 3 + 1] = rgba[i * 4 + 1];
