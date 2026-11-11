@@ -67,3 +67,44 @@ test('profondeur IA : codage 16 bits sur PNG fidèle à 0,1 % près', () => {
   d.forEach((v, i) => assert.ok(Math.abs(back[i] / v - 1) < 1e-3, v + ' → ' + back[i]));
   assert.equal(DEPTH_W / DEPTH_H, 2);
 });
+
+test('relief : fond reconstitué derrière un objet proche (distance et couleurs)', async () => {
+  const { backgroundDepth, fillMasked } = await import('../src/depth.js');
+  const w = 128, h = 64;
+  const depth = new Float32Array(w * h).fill(3);
+  const rgba = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const inObj = Math.hypot(x - 64, y - 32) < 8;
+      if (inObj) depth[i] = 0.5;
+      rgba.set(inObj ? [250, 220, 200, 255] : [20, 60, 200, 255], i * 4);
+    }
+  }
+  const { bg, mask } = backgroundDepth(depth, { w, h, radius: 12 });
+  const c = 32 * w + 64;
+  assert.equal(mask[c], 1);
+  assert.ok(Math.abs(bg[c] - 3) < 1e-6, 'fond derrière l’objet : ' + bg[c]);
+  assert.equal(mask[5 * w + 5], 0);
+  assert.equal(bg[5 * w + 5], 3);
+  fillMasked(rgba, mask, w, h);
+  // L'objet (clair) est remplacé par la couleur du fond (bleue), sans liseré clair.
+  assert.ok(rgba[c * 4 + 2] > 150 && rgba[c * 4] < 80, 'couleur reconstituée ' + Array.from(rgba.subarray(c * 4, c * 4 + 3)));
+});
+
+test('relief : confort, convergence sur le point regardé et écart des images plafonné', async () => {
+  const { stereoComfort } = await import('../src/depth.js');
+  const { cameraMatrix } = await import('../src/math.js');
+  const w = 256, h = 128;
+  const far = new Float32Array(w * h).fill(3);
+  const cam = cameraMatrix(0, 0);
+  const a = stereoComfort(far, cam, 0.02, { w, h });
+  assert.ok(Math.abs(a.dg - 3) < 1e-6 && Math.abs(a.half - 0.02) < 1e-9, 'pièce lointaine : écart réel conservé');
+  // Objet très proche au centre de la vue (0,2), fond à 3 : l'écart est réduit pour rester confortable.
+  const near = new Float32Array(far);
+  for (let y = 50; y < 78; y++) for (let x = 110; x < 146; x++) near[y * w + x] = 0.2;
+  const b = stereoComfort(near, cam, 0.02, { w, h, budgetDeg: 1.2 });
+  assert.ok(Math.abs(b.dg - 0.2) < 1e-6, 'convergence sur l’objet regardé');
+  const disp = 2 * b.half * (1 / b.dg - 1 / 3);
+  assert.ok(b.half < 0.02 && disp <= 1.2 * (Math.PI / 180) + 1e-9, `écart plafonné (${(disp * 180 / Math.PI).toFixed(2)}°)`);
+});

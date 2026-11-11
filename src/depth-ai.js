@@ -3,7 +3,7 @@
 // graphique (WebGPU) quand c'est possible, sinon sur le processeur (WebAssembly).
 // Le moteur (≈ 10 Mo) et le modèle (27 à 50 Mo) sont téléchargés à la première utilisation, puis
 // gardés dans le cache du navigateur.
-import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, DEPTH_W, DEPTH_H } from './depth.js';
+import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, backgroundDepth, fillMasked, cleanDepth, DEPTH_W, DEPTH_H } from './depth.js';
 
 const ORT_VERSION = '1.20.1';
 export const ORT_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
@@ -78,7 +78,9 @@ export function loadDepthEngine(onStatus = () => {}) {
 }
 
 // Carte de profondeur 360° de l'image affichée par `renderer` (redressée selon ses réglages).
-// Renvoie { depth: Float32Array (DEPTH_W × DEPTH_H, ligne 0 en haut), png: Blob, floorOk, ep }.
+// Renvoie { depth, bg: Float32Array (DEPTH_W × DEPTH_H, ligne 0 en haut ; distances de la scène et du
+// fond caché derrière les objets proches), png: Blob (carte), bgImage: Blob (couleurs du fond, JPEG),
+// bgCanvas, floorOk, ep }.
 export async function computeDepth(renderer, onStatus = () => {}) {
   const { ort, session, ep } = await loadDepthEngine(onStatus);
   const views = [];
@@ -106,16 +108,29 @@ export async function computeDepth(renderer, onStatus = () => {}) {
   onStatus('Assemblage de la carte de profondeur…');
   await new Promise((r) => setTimeout(r, 0));
   const align = alignViews(views);
-  const depth = composeDepth(views, align);
-  const png = await depthToPng(depth);
-  return { depth, png, floorOk: align.floorOk, ep };
+  const depth = cleanDepth(composeDepth(views, align));
+  // Fond caché derrière les objets proches : distances prolongées et couleurs extrapolées.
+  onStatus('Reconstitution du fond derrière les personnes et les objets…');
+  await new Promise((r) => setTimeout(r, 0));
+  const { bg, mask, src } = backgroundDepth(depth);
+  const flat = renderer.readFlat(DEPTH_W, DEPTH_H); // lignes de bas en haut
+  const rgba = new Uint8ClampedArray(DEPTH_W * DEPTH_H * 4);
+  for (let y = 0; y < DEPTH_H; y++) rgba.set(flat.subarray((DEPTH_H - 1 - y) * DEPTH_W * 4, (DEPTH_H - y) * DEPTH_W * 4), y * DEPTH_W * 4);
+  fillMasked(rgba, mask, DEPTH_W, DEPTH_H, 3, src);
+  const bgCanvas = document.createElement('canvas');
+  bgCanvas.width = DEPTH_W;
+  bgCanvas.height = DEPTH_H;
+  bgCanvas.getContext('2d').putImageData(new ImageData(rgba, DEPTH_W, DEPTH_H), 0, 0);
+  const bgImage = await new Promise((r) => bgCanvas.toBlob(r, 'image/jpeg', 0.9));
+  const png = await depthToPng(depth, bg);
+  return { depth, bg, png, bgImage, bgCanvas, floorOk: align.floorOk, ep };
 }
 
-export async function depthToPng(depth) {
+export async function depthToPng(depth, bg = null) {
   const c = document.createElement('canvas');
   c.width = DEPTH_W;
   c.height = DEPTH_H;
-  c.getContext('2d').putImageData(new ImageData(encodeDepth(depth), DEPTH_W, DEPTH_H), 0, 0);
+  c.getContext('2d').putImageData(new ImageData(encodeDepth(depth, bg), DEPTH_W, DEPTH_H), 0, 0);
   const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
   c.width = c.height = 1;
   return blob;

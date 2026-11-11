@@ -6,7 +6,7 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
 import { edgeConstraints, solveUp } from './autolevel.js';
-import { reliefKey, depthAt, loadDepthImage } from './depth.js';
+import { reliefKey, depthAt, loadDepthImage, loadImageBitmap } from './depth.js';
 import { computeDepth } from './depth-ai.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { pickPhoto } from './photo-picker.js';
@@ -128,7 +128,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
             <input type="range" name="reliefH" min="0.3" max="2.5" step="0.05">
             <input type="number" name="reliefH" min="0.3" max="2.5" step="0.05"></label>
           <p class="note relief-info"></p>
-          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).</p>
+          <p class="note">La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Le calcul prend quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. L’échelle est déduite du sol, à la hauteur de l’objectif indiquée : plus elle est faible, plus le relief est marqué. L’intensité se règle aussi dans le casque (⚙, « Relief »).<br>Dans le casque, ce que vous regardez est placé sans décalage entre les deux yeux (comme quand les yeux convergent) et l’écart entre les deux images est limité pour rester confortable. Autour des personnes et des objets proches, le fond est prolongé plutôt que d’étirer l’objet.</p>
         </section>
         <section data-panel="links" hidden>
           <p class="note">Un lien est une pastille sur laquelle on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo.</p>
@@ -162,10 +162,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   let depthView = true;
   const DEFAULT_CAMERA_HEIGHT = 1.6;
   // Carte de profondeur (IA) : valable pour le redressement actuel, sinon à refaire.
-  let depthMap = null; // Float32Array
-  let depthPng = null; // nouvelle carte à enregistrer
+  let depthMaps = null; // { depth, bg } (Float32Array)
+  let depthBgImage = null; // couleurs du fond reconstitué
+  let depthPng = null, depthBgBlob = null; // nouvelle carte à enregistrer
   let depthBusy = false;
-  const currentRelief = () => (p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) && depthMap ? p.relief : null);
+  const currentRelief = () => (p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) && depthMaps ? p.relief : null);
   const reliefTabOpen = () => !$('[data-panel=relief]').hidden;
 
   const controller = new ViewController(canvas, renderer, {
@@ -189,7 +190,9 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const frame = controller.frame();
       renderer.setParams(p.params, p.srcType);
       renderer.setHotspots(p.hotspots);
-      renderer.setDepth(currentRelief() ? depthMap : null);
+      const rel = currentRelief();
+      renderer.setDepth(rel ? depthMaps.depth : null, rel ? depthMaps.bg : null);
+      renderer.setBackgroundColor(rel ? depthBgImage : null);
       renderer.draw({ ...frame, grid, hotSel: -1, hotSize: controller.mode === 'flat' ? 0.05 : 0.06, depthView: depthView && reliefTabOpen() });
       drawMarkers(frame);
       if (reliefTabOpen()) updateReliefInfo();
@@ -580,8 +583,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       renderer.setParams(p.params, p.srcType);
       const t0 = performance.now();
       const r = await computeDepth(renderer, depthStatus);
-      depthMap = r.depth;
+      depthMaps = { depth: r.depth, bg: r.bg };
+      depthBgImage = r.bgCanvas;
       depthPng = r.png;
+      depthBgBlob = r.bgImage;
       p.relief = { kind: 'ai', h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(p.params), floor: r.floorOk };
       dirty = true;
       depthStatus('');
@@ -607,11 +612,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     const info = $('.relief-info');
     if (!r) {
       info.textContent =
-        p.relief && p.relief.kind === 'ai' && depthMap ? 'Le redressement a changé : recalculez le relief.' : 'Pas encore de relief pour cette photo : appuyez sur « Calculer le relief ».';
+        p.relief && p.relief.kind === 'ai' && depthMaps ? 'Le redressement a changé : recalculez le relief.' : 'Pas encore de relief pour cette photo : appuyez sur « Calculer le relief ».';
       return;
     }
     let txt = r.floor === false ? 'Sol peu visible : l’échelle des distances est approximative.' : 'Échelle déduite du sol.';
-    if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(depthAt(depthMap, controller.gazeDir()) * r.h).toFixed(2)} m.`;
+    if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(depthAt(depthMaps.depth, controller.gazeDir()) * r.h).toFixed(2)} m.`;
     info.textContent = txt;
   }
   $('[data-depth-compute]').addEventListener('click', computeNow);
@@ -621,11 +626,18 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   });
   // Carte déjà enregistrée pour cette photo.
   if (p.relief && p.relief.kind === 'ai') {
+    db.getBlob(p.id + ':depthbg')
+      .then((b) => (b ? loadImageBitmap(b) : null))
+      .then((img) => {
+        depthBgImage = img;
+        redraw();
+      })
+      .catch(() => {});
     db.getBlob(p.id + ':depth')
       .then((b) => (b ? loadDepthImage(b) : null))
       .then((d) => {
         if (d) {
-          depthMap = d;
+          depthMaps = d;
           syncRelief();
           redraw();
         }
@@ -807,7 +819,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     };
     if (depthPng) {
       await db.putBlob(p.id + ':depth', depthPng);
-      depthPng = null;
+      if (depthBgBlob) await db.putBlob(p.id + ':depthbg', depthBgBlob);
+      depthPng = depthBgBlob = null;
     }
     await db.putPhoto(updated);
     for (const r of reverseLinks) {

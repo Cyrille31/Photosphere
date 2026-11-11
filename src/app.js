@@ -631,6 +631,9 @@ async function photoSources(photos) {
     const depth = p.relief && p.relief.kind === 'ai' ? await db.getBlob(p.id + ':depth') : null;
     const depthSrc = depth ? URL.createObjectURL(depth) : null;
     if (depthSrc) urls.push(depthSrc);
+    const depthBg = depth ? await db.getBlob(p.id + ':depthbg') : null;
+    const depthBgSrc = depthBg ? URL.createObjectURL(depthBg) : null;
+    if (depthBgSrc) urls.push(depthBgSrc);
     list.push({
       id: p.id,
       name: p.name,
@@ -642,6 +645,7 @@ async function photoSources(photos) {
       relief: p.relief || null,
       reliefKey: reliefKey(p.params),
       depthSrc,
+      depthBgSrc,
     });
   }
   return { list, revoke: () => urls.forEach((u) => URL.revokeObjectURL(u)) };

@@ -48,7 +48,9 @@ function escapeHtml(s) {
 async function depthItem(p) {
   if (!p.relief || p.relief.kind !== 'ai' || p.relief.key !== reliefKey(p.params)) return {};
   const b = await db.getBlob(p.id + ':depth');
-  return b ? { relief: { h: p.relief.h, key: p.relief.key }, reliefKey: p.relief.key, depthSrc: await blobToDataUrl(b) } : {};
+  if (!b) return {};
+  const bg = await db.getBlob(p.id + ':depthbg');
+  return { relief: { h: p.relief.h, key: p.relief.key }, reliefKey: p.relief.key, depthSrc: await blobToDataUrl(b), ...(bg ? { depthBgSrc: await blobToDataUrl(bg) } : {}) };
 }
 
 // Visite autonome : un seul fichier .html qui s'ouvre sur n'importe quel smartphone ou ordinateur.
@@ -130,6 +132,8 @@ export async function exportProject(photos, onProgress) {
     }
     const depth = await db.getBlob(`${p.id}:depth`);
     if (depth) files.push({ name: `${p.id}/depth.png`, data: depth });
+    const depthBg = await db.getBlob(`${p.id}:depthbg`);
+    if (depthBg) files.push({ name: `${p.id}/depthbg.jpg`, data: depthBg });
   }
   return createZip(files);
 }
@@ -151,6 +155,8 @@ export async function importProject(file, onProgress) {
     }
     const depth = byName.get(`${p.id}/depth.png`);
     if (depth) await db.putBlob(`${p.id}:depth`, new Blob([depth], { type: 'image/png' }));
+    const depthBg = byName.get(`${p.id}/depthbg.jpg`);
+    if (depthBg) await db.putBlob(`${p.id}:depthbg`, new Blob([depthBg], { type: 'image/jpeg' }));
     const hasOut = byName.has(`${p.id}/out.jpg`);
     await db.putPhoto({ ...p, status: hasOut ? p.status : 'pending' });
     if (!existing.has(p.id)) added++;
