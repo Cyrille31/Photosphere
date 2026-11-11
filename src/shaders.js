@@ -203,9 +203,11 @@ void main() {
     t *= 1.0 + uDistort.x * r2 + uDistort.y * r2 * r2;
     dir = normalize(uCam * vec3(t, 1.0));
   }
+  // Finesse de l'échantillonnage : celle du rayon de l'œil (avant le décalage du relief, qui fait
+  // sauter la direction d'un pixel à l'autre au contour des objets).
+  float pixAng = length(fwidth(dir));
   bool useBg = false;
   if (uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir, useBg);
-  float pixAng = length(fwidth(dir));
   vec3 col = useBg && uRelief.y > 0.5 ? textureLod(uBgTex, eqUv(dir), 0.0).rgb : sampleSource(dir, pixAng).rgb;
 
   if (uDepthView > 0.0 && uRelief.x > 0.5) {
