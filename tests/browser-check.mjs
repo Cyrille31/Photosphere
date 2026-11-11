@@ -424,7 +424,9 @@ try {
   check(cur1, 'curseur : au-dessus d’une cible, la flèche devient un rond « entrer »');
   check(hiddenAtStart && found && opacity > 0.5, `cible d’un lien invisible au loin, apparaît à l’approche de la souris (opacité ${opacity.toFixed(2)})`);
   await tour.click('.ps-label');
-  await tour.waitForTimeout(1200);
+  // La photo suivante se charge (fondu, décodage) : on attend le changement de titre, puis la vue.
+  await tour.waitForFunction((b) => document.querySelector('.ps-title').textContent !== b, before, { timeout: 10000 }).catch(() => {});
+  await tour.waitForTimeout(600);
   const after = await tour.textContent('.ps-title');
   check(tourErrors.length === 0, 'visite autonome ouverte en file:// sans erreur ' + tourErrors.join(' | '));
   check(before !== after, `navigation par lien : « ${before} » → « ${after} »`);

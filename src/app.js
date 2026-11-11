@@ -618,6 +618,10 @@ document.getElementById('btn-settings').addEventListener('click', showSettings);
 
 // ---------- visionneuse et éditeur ----------
 let active = null; // { dispose }
+// Numéro de la navigation en cours : une vue qui finit de se charger après une navigation plus
+// récente (clic rapide sur « Annuler », flèches…) est refermée aussitôt au lieu de rester active.
+let routeGen = 0;
+const stale = (gen) => gen !== routeGen;
 
 async function photoSources(photos) {
   const urls = [];
@@ -651,10 +655,11 @@ async function photoSources(photos) {
   return { list, revoke: () => urls.forEach((u) => URL.revokeObjectURL(u)) };
 }
 
-async function openViewer(id) {
+async function openViewer(id, gen = routeGen) {
   state.view = 'viewer';
   app.innerHTML = '';
   const { list, revoke } = await photoSources(state.photos);
+  if (stale(gen)) return revoke();
   if (!list.length) {
     location.hash = '#/';
     return;
@@ -685,8 +690,9 @@ async function openViewer(id) {
   }
 }
 
-async function openEditorView(id) {
+async function openEditorView(id, gen = routeGen) {
   const photo = await db.getPhoto(id);
+  if (stale(gen)) return;
   if (!photo) {
     location.hash = '#/';
     return;
@@ -700,7 +706,7 @@ async function openEditorView(id) {
     state.returnToViewer = false;
     state.editorNav = false;
     state.editorFocus = null;
-    active = await openEditor(app, photo, {
+    const editor = await openEditor(app, photo, {
       photos: state.photos,
       onRenamed: syncFileName,
       initialView: fromViewer || navigated ? state.lastView : null,
@@ -729,6 +735,8 @@ async function openEditorView(id) {
         } else location.hash = state.origin === 'plan' ? '#/plan' : '#/';
       },
     });
+    if (stale(gen)) await editor.dispose();
+    else active = editor;
   } catch (e) {
     toast(e.message, true);
     location.hash = '#/';
@@ -736,7 +744,7 @@ async function openEditorView(id) {
 }
 
 // Plan des photos : on peut y ouvrir une photo, et l'on y revient en quittant la visionneuse / l'éditeur.
-async function openPlanView() {
+async function openPlanView(gen = routeGen) {
   state.view = 'plan';
   state.origin = 'plan';
   app.innerHTML = '';
@@ -744,13 +752,16 @@ async function openPlanView() {
     location.hash = '#/';
     return;
   }
-  active = await openPlan(app, {
+  const plan = await openPlan(app, {
     photos: state.photos,
     onOpen: (id, mode) => (location.hash = (mode === 'edit' ? '#/edit/' : '#/view/') + id),
   });
+  if (stale(gen)) plan.dispose();
+  else active = plan;
 }
 
 async function route() {
+  const gen = ++routeGen;
   const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
   const isPlan = location.hash === '#/plan';
   // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo ou le plan.
@@ -761,9 +772,10 @@ async function route() {
     await a.dispose();
   }
   await refresh();
-  if (m && m[1] === 'view') return openViewer(m[2]);
-  if (m && m[1] === 'edit') return openEditorView(m[2]);
-  if (isPlan) return openPlanView();
+  if (stale(gen)) return;
+  if (m && m[1] === 'view') return openViewer(m[2], gen);
+  if (m && m[1] === 'edit') return openEditorView(m[2], gen);
+  if (isPlan) return openPlanView(gen);
   state.origin = 'library';
   renderLibrary();
   processQueue();

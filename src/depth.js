@@ -9,7 +9,10 @@ import { cameraMatrix, mat3Apply, mat3Transpose, DEG } from './math.js';
 export const DEPTH_FOV = 100; // champ de chaque vue (degrés)
 // 8 vues autour de l'horizon, une vers le haut, une vers le bas.
 export const DEPTH_VIEWS = [0, 45, 90, 135, 180, 225, 270, 315].map((y) => ({ yaw: y, pitch: 0 })).concat([{ yaw: 0, pitch: 89.9 }, { yaw: 0, pitch: -89.9 }]);
-export const DEPTH_W = 1024, DEPTH_H = 512; // carte équirectangulaire
+// Carte équirectangulaire finale (0,18° par pixel) ; l'assemblage des vues se fait à moitié de cette
+// résolution (celle du modèle), puis les contours sont affinés d'après les couleurs de la photo.
+export const DEPTH_W = 2048, DEPTH_H = 1024;
+export const DEPTH_LO_W = 1024, DEPTH_LO_H = 512;
 export const DEPTH_NEAR = 0.12, DEPTH_FAR = 60;
 
 export function viewCamera(v) {
@@ -151,7 +154,7 @@ export function alignViews(views, { fovDeg = DEPTH_FOV, samples = 5000 } = {}) {
 }
 
 // Carte de profondeur équirectangulaire (w × h, ligne 0 = latitude +90°), en hauteurs d'objectif.
-export function composeDepth(views, align, { w = DEPTH_W, h = DEPTH_H, fovDeg = DEPTH_FOV } = {}) {
+export function composeDepth(views, align, { w = DEPTH_LO_W, h = DEPTH_LO_H, fovDeg = DEPTH_FOV } = {}) {
   const t = Math.tan((fovDeg / 2) * DEG);
   const camT = views.map((v) => mat3Transpose(v.cam));
   const out = new Float32Array(w * h);
@@ -234,9 +237,68 @@ export function decodeBackground(px) {
   return out;
 }
 
+// Largeur d'une carte équirectangulaire (2 : 1) d'après son nombre de pixels.
+export const mapWidth = (map) => Math.round(Math.sqrt(map.length * 2));
+
+// Contours affinés : passage de la carte basse résolution (lw × lh) à la résolution de rgba (w × h,
+// RGBA, ligne 0 en haut). Chaque pixel prend la distance des cellules voisines dont la couleur est
+// la plus proche de la sienne : au bord d'un objet, le contour suit celui de la photo (pas de marches
+// d'escalier). Ailleurs, interpolation pondérée.
+export function refineDepth(lo, lw, lh, rgba, w, h, { sigma = 14, edge = 1.15 } = {}) {
+  const sx = w / lw, sy = h / lh;
+  // Couleur moyenne de chaque cellule basse résolution.
+  const cl = new Float32Array(lw * lh * 3);
+  for (let y = 0; y < h; y++) {
+    const cy = Math.min(lh - 1, Math.floor(y / sy));
+    for (let x = 0; x < w; x++) {
+      const c = cy * lw + Math.min(lw - 1, Math.floor(x / sx)), i = (y * w + x) * 4;
+      cl[c * 3] += rgba[i];
+      cl[c * 3 + 1] += rgba[i + 1];
+      cl[c * 3 + 2] += rgba[i + 2];
+    }
+  }
+  const n = sx * sy;
+  for (let k = 0; k < cl.length; k++) cl[k] /= n;
+  const L = Float32Array.from(lo, Math.log);
+  const lnEdge = Math.log(edge), inv2s2 = 1 / (2 * sigma * sigma);
+  const out = new Float32Array(w * h);
+  const idx = [0, 0, 0, 0], wt = [0, 0, 0, 0];
+  for (let y = 0; y < h; y++) {
+    const fy = (y + 0.5) / sy - 0.5;
+    const y0 = Math.max(0, Math.min(lh - 1, Math.floor(fy))), y1 = Math.min(lh - 1, y0 + 1);
+    const ay = Math.max(0, Math.min(1, fy - y0));
+    for (let x = 0; x < w; x++) {
+      const fx = (x + 0.5) / sx - 0.5;
+      const xf = Math.floor(fx);
+      const x0 = (xf + lw) % lw, x1 = (xf + 1 + lw) % lw;
+      const ax = fx - xf;
+      idx[0] = y0 * lw + x0;
+      idx[1] = y0 * lw + x1;
+      idx[2] = y1 * lw + x0;
+      idx[3] = y1 * lw + x1;
+      const b = [(1 - ax) * (1 - ay), ax * (1 - ay), (1 - ax) * ay, ax * ay];
+      const i = (y * w + x) * 4;
+      let lmin = Infinity, lmax = -Infinity, best = 0, sw = 0, sv = 0;
+      for (let k = 0; k < 4; k++) {
+        const c = idx[k] * 3;
+        const dr = rgba[i] - cl[c], dg = rgba[i + 1] - cl[c + 1], db = rgba[i + 2] - cl[c + 2];
+        wt[k] = (b[k] + 0.05) * Math.exp(-(dr * dr + dg * dg + db * db) * inv2s2) + 1e-9;
+        const l = L[idx[k]];
+        if (l < lmin) lmin = l;
+        if (l > lmax) lmax = l;
+        if (wt[k] > wt[best]) best = k;
+        sw += wt[k];
+        sv += wt[k] * l;
+      }
+      out[y * w + x] = Math.exp(lmax - lmin > lnEdge ? L[idx[best]] : sv / sw);
+    }
+  }
+  return out;
+}
+
 // Nettoyage de la carte : deux passes de médiane 3 × 3 (sur le logarithme des distances) ; supprime
 // les grains isolés (zones surexposées, reflets) sans arrondir les contours francs.
-export function cleanDepth(depth, w = DEPTH_W, h = DEPTH_H, passes = 2) {
+export function cleanDepth(depth, w = DEPTH_LO_W, h = DEPTH_LO_H, passes = 2) {
   let cur = Float32Array.from(depth, Math.log);
   const v = new Float32Array(9);
   for (let p = 0; p < passes; p++) {
@@ -263,7 +325,7 @@ export function cleanDepth(depth, w = DEPTH_W, h = DEPTH_H, passes = 2) {
 // depth : carte (w × h, ligne 0 en haut). radius : portée en pixels de la carte (~ 7°).
 // Renvoie { bg: distances du fond, mask: Uint8Array (1 = objet devant le fond, près d'un contour),
 // src: Uint8Array (1 = pixel du fond, utilisable pour reconstituer les couleurs) }.
-export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 14, jump = 1.12, edgeJump = 1.3, minEdge = 60 } = {}) {
+export function backgroundDepth(depth, { w = DEPTH_W, h = DEPTH_H, radius = 28, jump = 1.12, edgeJump = 1.3, minEdge = 120 } = {}) {
   const N = w * h;
   const L = new Float32Array(N);
   for (let i = 0; i < N; i++) L[i] = Math.log(depth[i]);
@@ -455,7 +517,7 @@ export function fillMasked(rgba, mask, w, h, grow = 3, src = null) {
 // Confort dans le casque : distance de convergence (point regardé, sans décalage entre les deux yeux)
 // et demi-écart des yeux tel que l'écart entre les deux images, sur ce qui est visible autour du
 // regard, ne dépasse pas `budgetDeg`. eyeHalf : demi-écart réel des yeux (en hauteurs d'objectif).
-export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 70, w = DEPTH_W, h = DEPTH_H } = {}) {
+export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 70, w = mapWidth(depth), h = mapWidth(depth) / 2 } = {}) {
   const t = Math.tan((fovDeg / 2) * DEG);
   const at = (nx, ny) => {
     const d = mat3Apply(cam, [nx * t, ny * t, 1]);
@@ -476,7 +538,7 @@ export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 7
 }
 
 // Distance (en hauteurs d'objectif) lue dans la carte pour une direction d (unitaire, y en haut).
-export function depthAt(depth, d, w = DEPTH_W, h = DEPTH_H) {
+export function depthAt(depth, d, w = mapWidth(depth), h = mapWidth(depth) / 2) {
   const u = Math.atan2(d[0], d[2]) / (2 * Math.PI) + 0.5;
   const v = 0.5 - Math.asin(Math.max(-1, Math.min(1, d[1]))) / Math.PI;
   const x = Math.min(w - 1, Math.max(0, Math.floor(u * w))), y = Math.min(h - 1, Math.max(0, Math.floor(v * h)));

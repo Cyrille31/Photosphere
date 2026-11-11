@@ -3,7 +3,7 @@
 // graphique (WebGPU) quand c'est possible, sinon sur le processeur (WebAssembly).
 // Le moteur (≈ 10 Mo) et le modèle (27 à 50 Mo) sont téléchargés à la première utilisation, puis
 // gardés dans le cache du navigateur.
-import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, backgroundDepth, fillMasked, cleanDepth, DEPTH_W, DEPTH_H } from './depth.js';
+import { DEPTH_VIEWS, DEPTH_FOV, viewCamera, alignViews, composeDepth, encodeDepth, backgroundDepth, fillMasked, cleanDepth, refineDepth, DEPTH_W, DEPTH_H, DEPTH_LO_W, DEPTH_LO_H } from './depth.js';
 
 const ORT_VERSION = '1.20.1';
 export const ORT_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
@@ -108,14 +108,17 @@ export async function computeDepth(renderer, onStatus = () => {}) {
   onStatus('Assemblage de la carte de profondeur…');
   await new Promise((r) => setTimeout(r, 0));
   const align = alignViews(views);
-  const depth = cleanDepth(composeDepth(views, align));
+  const flat = renderer.readFlat(DEPTH_W, DEPTH_H); // lignes de bas en haut
+  const rgba = new Uint8ClampedArray(DEPTH_W * DEPTH_H * 4);
+  for (let y = 0; y < DEPTH_H; y++) rgba.set(flat.subarray((DEPTH_H - 1 - y) * DEPTH_W * 4, (DEPTH_H - y) * DEPTH_W * 4), y * DEPTH_W * 4);
+  // Contours affinés d'après les couleurs de la photo (pas de marches d'escalier).
+  onStatus('Affinage des contours…');
+  await new Promise((r) => setTimeout(r, 0));
+  const depth = refineDepth(cleanDepth(composeDepth(views, align)), DEPTH_LO_W, DEPTH_LO_H, rgba, DEPTH_W, DEPTH_H);
   // Fond caché derrière les objets proches : distances prolongées et couleurs extrapolées.
   onStatus('Reconstitution du fond derrière les personnes et les objets…');
   await new Promise((r) => setTimeout(r, 0));
   const { bg, mask, src } = backgroundDepth(depth);
-  const flat = renderer.readFlat(DEPTH_W, DEPTH_H); // lignes de bas en haut
-  const rgba = new Uint8ClampedArray(DEPTH_W * DEPTH_H * 4);
-  for (let y = 0; y < DEPTH_H; y++) rgba.set(flat.subarray((DEPTH_H - 1 - y) * DEPTH_W * 4, (DEPTH_H - y) * DEPTH_W * 4), y * DEPTH_W * 4);
   fillMasked(rgba, mask, DEPTH_W, DEPTH_H, 3, src);
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = DEPTH_W;

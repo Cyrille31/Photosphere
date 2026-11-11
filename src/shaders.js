@@ -158,38 +158,46 @@ float marchLayer(vec3 e, vec3 d, int layer) {
 // direction de ce point vue du centre (celle où la photo l'a enregistré). Si ce point tombe sur la
 // « pente » entre un objet proche et le fond (ce que la caméra n'a pas vu), on prend le fond caché,
 // reconstitué : l'objet n'est pas étiré.
-vec3 reliefDir(vec3 e, vec3 d, out bool useBg) {
+// dir2 / w2 : direction de remplacement (fond) et son poids, progressif sur le bord du contour
+// (anticrénelage) ; useBg : dir2 est dans le fond reconstitué (couleurs extrapolées).
+vec3 reliefDir(vec3 e, vec3 d, out vec3 dir2, out float w2, out bool useBg) {
   useBg = false;
+  w2 = 0.0;
+  dir2 = d;
   float t = marchLayer(e, d, 0);
   if (t < 0.0) return d;
   vec3 x = normalize(e + t * d);
   vec2 uv = eqUv(x);
   vec2 tx = 1.5 / vec2(textureSize(uDepthTex, 0));
-  float c0 = textureLod(uDepthTex, uv, 0.0).r;
+  vec2 cg = textureLod(uDepthTex, uv, 0.0).rg;
+  float c0 = cg.r, g0 = cg.g;
   float a = textureLod(uDepthTex, uv + vec2(tx.x, 0.0), 0.0).r;
   float b = textureLod(uDepthTex, uv - vec2(tx.x, 0.0), 0.0).r;
   float c = textureLod(uDepthTex, uv + vec2(0.0, tx.y), 0.0).r;
   float f = textureLod(uDepthTex, uv - vec2(0.0, tx.y), 0.0).r;
   float mn = min(min(a, b), min(c, f)), mx = max(max(a, b), max(c, f));
-  // (seulement là où un fond distinct a été reconstitué : pas sur le bruit de la carte)
-  float g0 = textureLod(uDepthTex, uv, 0.0).g;
-  if (mx > mn * 1.15 && c0 > mn * 1.06 && c0 < mx * 0.94 && g0 > c0 * 1.08) {
-    // Fond prolongé : le premier pixel du côté lointain du contour, en suivant la pente de distance
-    // (couleurs réelles de la photo, à pleine résolution).
-    vec2 grad = vec2(log(a) - log(b), log(c) - log(f));
-    vec2 step = normalize(grad + vec2(1e-6, 0.0)) * tx;
-    for (int k = 1; k <= 8; k++) {
-      vec2 q = uv + step * float(k);
-      if (textureLod(uDepthTex, q, 0.0).r > mx * 0.9) {
-        float lon = (q.x - 0.5) * 2.0 * PI, lat = (0.5 - q.y) * PI;
-        return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
-      }
+  // Seulement sur un contour franc, là où un fond distinct a été reconstitué (pas sur le bruit).
+  if (mx < mn * 1.15 || g0 < c0 * 1.08) return x;
+  // Position dans la pente : 0 côté objet (le point est bien sur l'objet), 1 côté fond.
+  float fr = clamp(log(c0 / mn) / log(mx / mn), 0.0, 1.0);
+  w2 = smoothstep(0.04, 0.3, fr);
+  if (w2 <= 0.0) return x;
+  // Fond prolongé : le premier pixel du côté lointain du contour, en suivant la pente de distance
+  // (couleurs réelles de la photo, à pleine résolution).
+  vec2 grad = vec2(log(a) - log(b), log(c) - log(f));
+  vec2 step = normalize(grad + vec2(1e-6, 0.0)) * tx;
+  for (int k = 1; k <= 8; k++) {
+    vec2 q = uv + step * float(k);
+    if (textureLod(uDepthTex, q, 0.0).r > mx * 0.9) {
+      float lon = (q.x - 0.5) * 2.0 * PI, lat = (0.5 - q.y) * PI;
+      dir2 = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+      return x;
     }
-    // Sinon : fond reconstitué (distances et couleurs extrapolées).
-    useBg = true;
-    float tb = marchLayer(e, d, 1);
-    return tb < 0.0 ? d : normalize(e + tb * d);
   }
+  // Sinon : fond reconstitué (distances et couleurs extrapolées).
+  float tb = marchLayer(e, d, 1);
+  dir2 = tb < 0.0 ? d : normalize(e + tb * d);
+  useBg = uRelief.y > 0.5;
   return x;
 }
 
@@ -219,8 +227,11 @@ void main() {
   // sauter la direction d'un pixel à l'autre au contour des objets).
   float pixAng = length(fwidth(dir));
   bool useBg = false;
-  if (uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir, useBg);
-  vec3 col = useBg && uRelief.y > 0.5 ? textureLod(uBgTex, eqUv(dir), 0.0).rgb : sampleSource(dir, pixAng).rgb;
+  vec3 dir2 = dir;
+  float w2 = 0.0;
+  if (uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir, dir2, w2, useBg);
+  vec3 col = sampleSource(dir, pixAng).rgb;
+  if (w2 > 0.0) col = mix(col, useBg ? textureLod(uBgTex, eqUv(dir2), 0.0).rgb : sampleSource(dir2, pixAng).rgb, w2);
 
   if (uDepthView > 0.0 && uRelief.x > 0.5) {
     // Proche : rouge, 2 hauteurs : jaune, 5 : vert, au loin : bleu ; lignes tous les ~25 %.
