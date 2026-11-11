@@ -119,7 +119,7 @@ export class PanoRenderer {
 
   // Carte de profondeur (voir depth.js) : depth et bg, Float32Array w × h (ligne 0 = latitude +90°,
   // distances en hauteurs d'objectif, bg : fond caché derrière les objets proches), ou null.
-  setDepth(depth, bg = null, w = 1024, h = 512) {
+  setDepth(depth, bg = null) {
     const gl = this.gl;
     if (!this.depthTex) {
       this.depthTex = gl.createTexture();
@@ -133,6 +133,7 @@ export class PanoRenderer {
     this.depthBg = bg || null;
     gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
     if (depth) {
+      const w = Math.round(Math.sqrt(depth.length * 2)), h = w / 2;
       const rg = new Float32Array(w * h * 2);
       for (let i = 0; i < w * h; i++) {
         rg[2 * i] = depth[i];

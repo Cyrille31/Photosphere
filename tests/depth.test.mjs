@@ -81,7 +81,7 @@ test('relief : fond reconstitué derrière un objet proche (distance et couleurs
       rgba.set(inObj ? [250, 220, 200, 255] : [20, 60, 200, 255], i * 4);
     }
   }
-  const { bg, mask } = backgroundDepth(depth, { w, h, radius: 12 });
+  const { bg, mask } = backgroundDepth(depth, { w, h, radius: 12, minEdge: 20 });
   const c = 32 * w + 64;
   assert.equal(mask[c], 1);
   assert.ok(Math.abs(bg[c] - 3) < 1e-6, 'fond derrière l’objet : ' + bg[c]);
@@ -107,4 +107,25 @@ test('relief : confort, convergence sur le point regardé et écart des images p
   assert.ok(Math.abs(b.dg - 0.2) < 1e-6, 'convergence sur l’objet regardé');
   const disp = 2 * b.half * (1 / b.dg - 1 / 3);
   assert.ok(b.half < 0.02 && disp <= 1.2 * (Math.PI / 180) + 1e-9, `écart plafonné (${(disp * 180 / Math.PI).toFixed(2)}°)`);
+});
+
+test('relief : contours de la carte alignés sur ceux de la photo (pas de marches)', async () => {
+  const { refineDepth } = await import('../src/depth.js');
+  // Objet proche (0,5) devant un mur (3), séparés par une diagonale ; carte grossière (cases de 4 px).
+  const W = 128, H = 64, lw = 32, lh = 16;
+  const inObj = (x, y) => x + 0.6 * y < 70;
+  const rgba = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) rgba.set(inObj(x, y) ? [40, 30, 30, 255] : [230, 220, 200, 255], (y * W + x) * 4);
+  const lo = new Float32Array(lw * lh);
+  for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) lo[y * lw + x] = inObj(x * 4 + 2, y * 4 + 2) ? 0.5 : 3;
+  const hi = refineDepth(lo, lw, lh, rgba, W, H);
+  let wrong = 0, edgePx = 0;
+  for (let y = 2; y < H - 2; y++) {
+    for (let x = 2; x < W - 2; x++) {
+      if (Math.abs(x + 0.6 * y - 70) > 6) continue; // près du contour seulement
+      edgePx++;
+      if ((hi[y * W + x] < 1.2) !== inObj(x, y)) wrong++;
+    }
+  }
+  assert.ok(wrong / edgePx < 0.03, `pixels du mauvais côté du contour : ${wrong} / ${edgePx}`);
 });
