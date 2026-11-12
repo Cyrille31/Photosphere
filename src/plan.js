@@ -534,6 +534,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
 
   // ---------- création de liens ----------
   function startLink(id) {
+    // La photo agrandie reprend sa taille : les autres photos doivent rester accessibles au clic.
+    if (selected) {
+      selected = null;
+      render();
+    }
     linkFrom = id;
     view.classList.add('linking');
     help.innerHTML = `🔗 Cliquez la photo à relier à « ${escapeHtml(byId.get(id).name)} » — <button class="btn small" data-cancel-link>Annuler</button>`;
