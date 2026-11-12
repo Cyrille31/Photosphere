@@ -27,7 +27,7 @@ const MANUAL = `
 <section id="man-bibliotheque"><h3>Bibliothèque et traitements par lot</h3>
 <ul>
   <li>Cliquez le nom d’une photo pour la <b>renommer</b> ; la recherche ignore majuscules et accents.</li>
-  <li><b>Sélection</b> : cochez la case en haut à droite des vignettes, ou « ☑ Tout sélectionner » (les photos affichées par la recherche). Avec une sélection :
+  <li><b>Sélection</b> : cochez la case en haut à droite des vignettes ; <b>Maj + clic</b> sur une autre case (ou vignette) sélectionne toutes les photos entre les deux ; <b>Ctrl + clic</b> sur une vignette la coche ou la décoche sans l’ouvrir ; « ☑ Tout sélectionner » prend les photos affichées par la recherche. Avec une sélection :
     <ul>
       <li><b>✨ Redresser (auto)</b> : redressement automatique d’après les verticales (murs, portes, meubles) de chaque photo ; refusé au-delà de 15° (verticales peu fiables). Les photos sont ensuite reconverties.</li>
       <li><b>🧠 Calculer le relief</b> : carte de profondeur par IA pour le casque (voir <a href="#man-relief">Relief</a>). Faites-le après le redressement.</li>
@@ -81,6 +81,7 @@ const MANUAL = `
 <section id="man-plan"><h3>Plan</h3>
 <ul>
   <li>Nord en haut. Photos en sphères (Ctrl + glisser : les faire tourner) ou en rectangles ; chaque lien part de son point de contact dans la photo, que l’on peut faire glisser.</li>
+  <li><b>Un clic sur une photo</b> l’affiche 5 fois plus grande, avec son nom modifiable (Entrée pour valider, Échap pour annuler) ; un clic dans le vide ou Échap la ramène à sa taille.</li>
   <li><b>Relier</b> : « 🔗 Relier » ou déposer une photo sur une autre crée deux liens automatiques réciproques ; déplacer une photo réoriente ces liens. Double-clic : voir la photo.</li>
   <li><b>Photos non placées</b> : elles attendent dans une zone à part. Glissez-en une n’importe où sur le plan pour la placer (sans lien, à relier plus tard), ou sur une photo pour les relier. Ramenée dans la zone, une photo placée sans lien en ressort du plan.</li>
   <li><b>Dessin</b> (fond blanc) :
@@ -106,7 +107,8 @@ const MANUAL = `
   <tr><td>Ctrl + Z</td><td>Défaire (éditeur, dessin du plan)</td></tr>
   <tr><td>Ctrl + glisser</td><td>Éditeur : déplacer un lien. Plan : faire tourner une photo</td></tr>
   <tr><td>Ctrl + molette</td><td>Taille des vignettes dans le choix d’une photo</td></tr>
-  <tr><td>Échap</td><td>Finir un trait, annuler une liaison sur le plan</td></tr>
+  <tr><td>Maj + clic</td><td>Bibliothèque : sélectionner toutes les photos entre deux</td></tr>
+  <tr><td>Échap</td><td>Finir un trait, annuler une liaison, réduire la photo agrandie (plan)</td></tr>
   <tr><td>Alt</td><td>Tracer sans accroche sur le plan</td></tr>
 </table></section>`;
 
