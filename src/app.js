@@ -22,6 +22,7 @@ const state = {
   thumbs: new Map(),
   view: null,
   selected: new Set(), // photos cochées dans la bibliothèque
+  lastSelected: null, // dernière photo cochée ou décochée (Maj + clic : toute la plage jusqu'à elle)
   batch: false, // traitement par lot en cours (la conversion attend)
 };
 
@@ -455,6 +456,16 @@ function updateSelectionBar() {
   });
 }
 
+// Coche (ou décoche) une photo ; avec Maj, toutes les photos affichées entre la précédente et celle-ci.
+function selectPhoto(id, on, range) {
+  const ids = [...app.querySelectorAll('.card:not([hidden])')].map((c) => c.dataset.id);
+  const a = ids.indexOf(state.lastSelected), b = ids.indexOf(id);
+  const span = range && a >= 0 && b >= 0 ? ids.slice(Math.min(a, b), Math.max(a, b) + 1) : [id];
+  span.forEach((x) => (on ? state.selected.add(x) : state.selected.delete(x)));
+  state.lastSelected = id;
+  updateSelectionBar();
+}
+
 // Traitement par lot avec progression et bouton d'arrêt, puis bilan.
 async function runBatch(title, fn) {
   const ids = state.photos.filter((p) => state.selected.has(p.id)).map((p) => p.id);
@@ -494,12 +505,7 @@ async function runBatch(title, fn) {
 
 function bindLibrary() {
   app.querySelectorAll('[data-select]').forEach((cb) =>
-    cb.addEventListener('change', () => {
-      const id = cb.closest('.card').dataset.id;
-      if (cb.checked) state.selected.add(id);
-      else state.selected.delete(id);
-      updateSelectionBar();
-    })
+    cb.addEventListener('click', (e) => selectPhoto(cb.closest('.card').dataset.id, cb.checked, e.shiftKey))
   );
   updateSelectionBar();
   const search = app.querySelector('[name=library-search]');
@@ -514,6 +520,11 @@ function bindLibrary() {
     b.addEventListener('click', (e) => {
       const card = b.closest('.card');
       const p = card && state.photos.find((x) => x.id === card.dataset.id);
+      // Maj + clic (plage) ou Ctrl + clic sur une vignette : sélection, sans ouvrir la photo.
+      if (p && b.classList.contains('thumb') && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        return selectPhoto(p.id, e.shiftKey ? true : !state.selected.has(p.id), e.shiftKey);
+      }
       onAction(b.dataset.act, p, b, e);
     });
   });
@@ -836,6 +847,11 @@ async function openPlanView(gen = routeGen) {
   const plan = await openPlan(app, {
     photos: state.photos,
     onOpen: (id, mode) => (location.hash = (mode === 'edit' ? '#/edit/' : '#/view/') + id),
+    // Renommage depuis le plan : comme dans la bibliothèque (fichier renommé aussi si l'option est active).
+    onRename: async (id, name) => {
+      await db.updatePhoto(id, (cur) => ({ ...cur, name }));
+      await syncFileName(id, name);
+    },
   });
   if (stale(gen)) plan.dispose();
   else active = plan;

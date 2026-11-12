@@ -83,6 +83,16 @@ try {
   check((await page.textContent('.selection-count')).includes('1 sélectionnée'), 'bibliothèque : une photo cochée');
   await page.click('[data-act=select-all]');
   check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : « Tout sélectionner »');
+  // Plage : une photo, puis Maj + clic sur une autre.
+  await page.click('[data-act=select-none]');
+  await page.locator('.card [data-select]').nth(0).click();
+  await page.locator('.card [data-select]').nth(1).click({ modifiers: ['Shift'] });
+  check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : Maj + clic sélectionne la plage');
+  await page.click('[data-act=select-none]');
+  await page.locator('.card .thumb').nth(1).click({ modifiers: ['Control'] });
+  check((await page.textContent('.selection-count')).includes('1 sélectionnée') && !page.url().includes('#/view'), 'bibliothèque : Ctrl + clic sur une vignette la coche sans l’ouvrir');
+  await page.locator('.card .thumb').nth(0).click({ modifiers: ['Shift'] });
+  check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : Maj + clic sur une vignette sélectionne la plage');
   await page.screenshot({ path: path.join(shots, '01-selection.png') });
   const before = await db(async (db) => (await db.listPhotos()).map((p) => ({ id: p.id, ...p.params })));
   await page.click('[data-act=batch-level]');
@@ -202,6 +212,22 @@ try {
   await page.waitForSelector('.plan-node');
   await page.waitForTimeout(500);
   check((await page.textContent('.plan-pool')).includes('(1)'), 'plan : photo placée retrouvée après rechargement');
+  // Photo agrandie d'un clic, nom modifiable.
+  const placedId = await db(async (db) => (await db.listPhotos()).find((p) => p.mapPlaced).id);
+  const small = await page.locator(`.plan-node[data-id="${placedId}"] .plan-pic`).boundingBox();
+  await page.mouse.click(small.x + small.width / 2, small.y + small.height / 2);
+  await page.waitForTimeout(500);
+  const bigBox = await page.locator('.plan-node.selected .plan-pic').boundingBox();
+  check(bigBox && Math.abs(bigBox.width / small.width - 5) < 0.3, `plan : clic sur une photo → affichée 5 fois plus grande (${small.width.toFixed(0)} → ${bigBox && bigBox.width.toFixed(0)} px)`);
+  await page.fill('.plan-name-input', 'Salon côté jardin');
+  await page.press('.plan-name-input', 'Enter');
+  await page.waitForTimeout(400);
+  const renamed = await db(async (db) => (await db.listPhotos()).some((p) => p.name === 'Salon côté jardin'));
+  check(renamed, 'plan : nom de la photo agrandie modifié et enregistré');
+  await page.screenshot({ path: path.join(shots, '05-plan-photo-agrandie.png') });
+  await page.mouse.click(vb.x + vb.width - 60, vb.y + 60);
+  await page.waitForTimeout(400);
+  check((await page.locator('.plan-node.selected').count()) === 0 && (await page.locator('.plan-name-input').count()) === 0, 'plan : clic dans le vide → taille normale');
   // Trait tracé puis déplacé en restant dans l'outil Traits.
   await page.click('[data-tool=line]');
   await page.mouse.click(vb.x + 500, vb.y + 200);
@@ -219,7 +245,7 @@ try {
   const l1 = d1.lines[0];
   check(d1.lines.length === 1 && l1.y1 > l0.y1 + 10 && l1.y2 > l0.y2 + 10 && l1.x1 === l0.x1, `plan : trait déplacé directement avec l’outil Traits (${d1.lines.length} trait, y ${l0.y1} → ${l1.y1})`);
   await page.click('[data-tool=photos]');
-  await page.screenshot({ path: path.join(shots, '05-plan.png') });
+  await page.screenshot({ path: path.join(shots, '06-plan.png') });
 } catch (e) {
   failures++;
   console.error(e);

@@ -125,8 +125,8 @@ export function poolLayout(ids, linkedPositions, mode) {
   return { pos, zone: { x: left, y: top, w: Math.max(Math.min(cols, ids.length) * cellW, 380), h: rows * cellH + 52 } };
 }
 
-// container : élément où dessiner. onOpen(id, 'view' | 'edit').
-export async function openPlan(container, { photos, onOpen }) {
+// container : élément où dessiner. onOpen(id, 'view' | 'edit'). onRename(id, nom) : enregistre un nouveau nom.
+export async function openPlan(container, { photos, onOpen, onRename }) {
   const list = photos.map((p) => JSON.parse(JSON.stringify(p)));
   const byId = new Map(list.map((p) => [p.id, p]));
   let mode = 'sphere';
@@ -141,6 +141,9 @@ export async function openPlan(container, { photos, onOpen }) {
   let zone = null;
   let linkFrom = null;
   let selected = null;
+  // La photo sélectionnée (un clic) est affichée en grand, avec son nom modifiable.
+  const ZOOM = 5;
+  const zf = (id) => (id === selected ? ZOOM : 1);
   // Dessin du plan (murs, textes), en coordonnées du plan comme les photos.
   let drawing = await db.getPlanDrawing();
   let tool = 'photos'; // photos | line | text | erase
@@ -195,7 +198,7 @@ export async function openPlan(container, { photos, onOpen }) {
         <button class="btn small" data-mode="rect" title="Photos à plat : chaque lien aboutit à sa position dans l’image">▭ Rectangles</button>
       </span>
       <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> une photo : la tourner · déposer une photo sur une autre : les relier. Liens <span class="plan-key auto">automatiques</span> et <span class="plan-key manual">placés à la main</span>.</span>
-      ${manualButton('plan')}.</span>
+      ${manualButton('plan')}</span>
     </div>
     <div class="plan-view">
       <div class="plan-world"></div>
@@ -225,9 +228,9 @@ export async function openPlan(container, { photos, onOpen }) {
       <svg class="plan-links" width="1" height="1"></svg>
       ${list
         .map(
-          (p) => `<div class="plan-node ${mode}${p.id === selected ? ' selected' : ''}" data-id="${p.id}" style="width:${w}px;margin:${-h / 2}px 0 0 ${-w / 2}px">
-            <div class="plan-pic" style="width:${w}px;height:${h}px;${thumbs.has(p.id) ? `background-image:url('${thumbs.get(p.id)}');` : ''}"></div>
-            <span class="plan-name">${escapeHtml(p.name)}</span>
+          (p) => `<div class="plan-node ${mode}${p.id === selected ? ' selected' : ''}" data-id="${p.id}" style="width:${w * zf(p.id)}px;margin:${(-h * zf(p.id)) / 2}px 0 0 ${(-w * zf(p.id)) / 2}px">
+            <div class="plan-pic" style="width:${w * zf(p.id)}px;height:${h * zf(p.id)}px;${thumbs.has(p.id) ? `background-image:url('${thumbs.get(p.id)}');` : ''}"></div>
+            ${p.id === selected ? `<input class="plan-name-input" value="${escapeHtml(p.name)}" aria-label="Nom de la photo" title="Modifier le nom (Entrée pour valider)">` : `<span class="plan-name">${escapeHtml(p.name)}</span>`}
             <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button></div>
           </div>`
         )
@@ -245,6 +248,52 @@ export async function openPlan(container, { photos, onOpen }) {
     placeNodes();
     drawLinks();
     drawDrawing();
+    bindNameInput();
+  }
+
+  // Nom de la photo agrandie : Entrée ou clic ailleurs pour valider, Échap pour annuler.
+  function bindNameInput() {
+    const inp = world.querySelector('.plan-name-input');
+    if (!inp) return;
+    const id = inp.closest('.plan-node').dataset.id;
+    const p = byId.get(id);
+    inp.addEventListener('pointerdown', (e) => e.stopPropagation());
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') inp.blur();
+      if (e.key === 'Escape') {
+        inp.value = p.name;
+        inp.blur();
+      }
+    });
+    inp.addEventListener('blur', async () => {
+      const name = inp.value.trim();
+      if (!name || name === p.name) {
+        inp.value = p.name;
+        return;
+      }
+      p.name = name;
+      if (onRename) await onRename(id, name);
+      else await db.updatePhoto(id, (cur) => ({ ...cur, name }));
+      toast(`Photo renommée « ${name} ».`);
+    });
+  }
+
+  function select(id) {
+    if (selected === id) return;
+    selected = id;
+    render();
+    // La photo agrandie reste entièrement visible : on décale la vue si besoin.
+    const pic = world.querySelector('.plan-node.selected .plan-pic');
+    if (!pic) return;
+    const r = pic.getBoundingClientRect(), v = view.getBoundingClientRect();
+    const dx = r.left < v.left + 10 ? v.left + 10 - r.left : r.right > v.right - 10 ? Math.max(v.left + 10 - r.left, v.right - 10 - r.right) : 0;
+    const dy = r.top < v.top + 10 ? v.top + 10 - r.top : r.bottom + 90 > v.bottom ? Math.max(v.top + 10 - r.top, v.bottom - 90 - r.bottom) : 0;
+    if (dx || dy) {
+      panX += dx;
+      panY += dy;
+      applyView();
+    }
   }
 
   // ---------- dessin : murs et textes ----------
@@ -424,19 +473,21 @@ export async function openPlan(container, { photos, onOpen }) {
     world.querySelectorAll('.plan-node').forEach((n) => {
       const id = n.dataset.id;
       const q = disp(pos.get(id));
+      const f = zf(id);
       n.style.transform = `translate(${q.x}px, ${q.y}px)`;
       // Texture décalée selon la rotation : le cap `rot` est au centre de la vignette.
       const pic = n.querySelector('.plan-pic');
-      const tw = mode === 'rect' ? w : 2 * w;
-      pic.style.backgroundSize = `${tw}px ${h}px`;
-      pic.style.backgroundPositionX = `${w / 2 - (rot.get(id) / 360 + 0.5) * tw}px`;
+      const tw = (mode === 'rect' ? w : 2 * w) * f;
+      pic.style.backgroundSize = `${tw}px ${h * f}px`;
+      pic.style.backgroundPositionX = `${(w * f) / 2 - (rot.get(id) / 360 + 0.5) * tw}px`;
     });
   }
 
   function contact(p, hs) {
     const o = contactOffset(mode, rot.get(p.id), hs.yaw, hs.pitch);
     const c = disp(pos.get(p.id));
-    return { x: c.x + o.x, y: c.y + o.y, hidden: o.hidden };
+    const f = zf(p.id);
+    return { x: c.x + o.x * f, y: c.y + o.y * f, hidden: o.hidden };
   }
 
   function drawLinks() {
@@ -639,14 +690,14 @@ export async function openPlan(container, { photos, onOpen }) {
       // Faire glisser vers la droite fait tourner la vue vers la gauche, comme dans la visionneuse.
       const { w } = picSize(mode);
       const span = mode === 'rect' ? 360 : 180;
-      rot.set(drag.id, wrap180(drag.start - (dx / zoom / w) * span));
+      rot.set(drag.id, wrap180(drag.start - (dx / zoom / (w * zf(drag.id))) * span));
       placeNodes();
       drawLinks();
     } else if (drag.kind === 'contact') {
       const p = byId.get(drag.id);
       const c = disp(pos.get(p.id));
       const m = toWorld(e);
-      const d = contactFromOffset(mode, rot.get(p.id), m.x - c.x, m.y - c.y);
+      const d = contactFromOffset(mode, rot.get(p.id), (m.x - c.x) / zf(p.id), (m.y - c.y) / zf(p.id));
       Object.assign(p.hotspots[drag.k], d, { auto: false });
       drawLinks();
     }
@@ -682,11 +733,16 @@ export async function openPlan(container, { photos, onOpen }) {
         await createLink(from, d.id);
         return;
       }
-      selected = d.id;
-      world.querySelectorAll('.plan-node').forEach((n) => n.classList.toggle('selected', n.dataset.id === d.id));
       // Double-clic (ou double appui) : la photo s'ouvre dans la visionneuse.
-      if (lastTap.id === d.id && now - lastTap.t < 400) onOpen(d.id, 'view');
+      if (lastTap.id === d.id && now - lastTap.t < 400) return onOpen(d.id, 'view');
       lastTap = { id: d.id, t: now };
+      select(d.id);
+      return;
+    }
+    // Clic dans le vide : la photo agrandie reprend sa taille.
+    if (d.kind === 'pan' && !d.moved && !d.draw && selected) {
+      selected = null;
+      render();
       return;
     }
     if (!d.moved) return;
@@ -775,6 +831,10 @@ export async function openPlan(container, { photos, onOpen }) {
     if (e.target.closest && e.target.closest('input, select, textarea')) return;
     if (e.key === 'Escape' && linkFrom) stopLink();
     if (e.key === 'Escape' && poly) endPoly();
+    if (e.key === 'Escape' && selected && !linkFrom && !poly) {
+      selected = null;
+      render();
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       undoDrawing();

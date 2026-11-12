@@ -215,6 +215,8 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-node.rect .plan-pic { border-radius: 6px; }
 .plan-name { width: 170px; text-align: center; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; font-size: 12.5px; font-weight: 600; color: #111; text-shadow: 0 0 3px #fff, 0 0 6px #fff; }
 .plan-node.selected .plan-pic { outline: 3px solid var(--accent); outline-offset: 3px; }
+.plan-node.selected { z-index: 6; cursor: grab; }
+.plan-name-input { width: min(100%, 420px); font: 600 15px system-ui, sans-serif; text-align: center; padding: 5px 8px; border: 2px solid var(--accent); border-radius: 8px; background: #fff; color: #111; }
 .plan-actions { display: none; gap: 4px; flex-wrap: wrap; justify-content: center; width: 200px; }
 .plan-node.selected .plan-actions { display: flex; }
 .plan-contacts, .plan-links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
