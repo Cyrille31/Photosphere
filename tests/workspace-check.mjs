@@ -97,6 +97,29 @@ try {
   check(f.names.includes('Salon cote jardin.JPG') && !f.names.includes('SAM_0001.JPG'), `fichier renommé sur le disque : ${f.names.join(', ')}`);
   check(f.json && f.json.photos.some((p) => p.file === 'Salon cote jardin.JPG' && p.name === 'Salon cote jardin'), 'photosphere.json à jour (nom et fichier)');
 
+  // Relief calculé : sa carte est rangée dans le sous-dossier « photosphere-relief » du dossier.
+  await page.evaluate(async () => {
+    const db = await import('./src/db.js');
+    const { reliefKey } = await import('./src/depth.js');
+    const { depthToPng } = await import('./src/depth-ai.js');
+    const p = (await db.listPhotos()).find((x) => x.fileName === 'Salon cote jardin.JPG');
+    await db.putBlob(p.id + ':depth', await depthToPng(new Float32Array(2048 * 1024).fill(2)));
+    await db.updatePhoto(p.id, (cur) => ({ ...cur, relief: { kind: 'ai', h: 1.6, key: reliefKey(cur.params) } }));
+  });
+  await page.waitForTimeout(3500);
+  const reliefFiles = await page.evaluate(async () => {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('photos');
+    try {
+      const sub = await dir.getDirectoryHandle('photosphere-relief');
+      const out = [];
+      for await (const e of sub.values()) out.push(e.name);
+      return out;
+    } catch (e) {
+      return [];
+    }
+  });
+  check(reliefFiles.includes('Salon cote jardin.JPG.profondeur.png'), `carte de relief rangée dans photosphere-relief (${reliefFiles.join(', ')})`);
+
   console.log('Plan');
   // Les deux photos, encore sans lien, sont dans la zone des photos non reliées ; on les relie
   // depuis le plan avec « 🔗 Relier ».

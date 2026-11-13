@@ -38,7 +38,10 @@ function saveHeadsetSettings(h) {
 // photo.depthSrc : carte de profondeur (PNG, voir depth.js), photo.relief : { h, key }, photo.reliefKey :
 // redressement de l'image affichée (la carte n'est utilisée que si elle lui correspond).
 // onEdit(id, vue) : ouvre l'éditeur sur la photo affichée ; initialView : { yaw, pitch } en radians.
-export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView }) {
+// photo.src (et depthSrc, depthBgSrc) : URL, Blob, ou fonction asynchrone qui les fournit (chargement à
+// la demande d'un parcours partagé). onShow(photo) : appelé quand une photo est affichée (préchargement
+// des photos liées). maxHalf : résolution maximale de chaque moitié d'image (haute définition).
+export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView, onShow, maxHalf }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
@@ -92,7 +95,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
   const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   const renderer = new PanoRenderer(canvas, {
     xr: true,
-    maxHalf: coarse ? 3072 : 4096,
+    maxHalf: maxHalf || (coarse ? 3072 : 4096),
     onLost: () => {
       toast('La carte graphique a interrompu l’affichage : rechargement…');
       setTimeout(() => location.reload(), 1500);
@@ -135,16 +138,23 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       fade.classList.add('on');
       await new Promise((r) => setTimeout(r, 220));
     }
+    // Photo lente à venir (réseau) : on le signale.
+    const slow = setTimeout(() => toast('Chargement de « ' + photo.name + ' »…', 20000), 500);
     try {
-      await renderer.load(photo.src, photo.srcType || 'equirect', photo.params || {});
+      const src = typeof photo.src === 'function' ? await photo.src() : photo.src;
+      await renderer.load(src, photo.srcType || 'equirect', photo.params || {});
+      clearTimeout(slow);
+      $('.ps-toast').hidden = true;
       renderer.setDepth(null);
       renderer.setBackgroundColor(null);
       comfort.dg = null;
       reliefFor = null;
       loadRelief(photo);
     } catch (e) {
+      clearTimeout(slow);
       toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
     }
+    if (onShow) onShow(photo);
     if (arrive && current) {
       if (controller.mode === 'gyro' && controller.gyroMat) {
         // Bout de bras / casque : on tourne l'image pour que la direction d'arrivée soit devant soi.
@@ -360,8 +370,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     reliefFor = photo.id;
     if (!hasRelief(photo)) return;
     try {
-      if (!photo.depthMaps) photo.depthMaps = await loadDepthImage(photo.depthSrc);
-      if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await loadImageBitmap(photo.depthBgSrc).catch(() => null);
+      const get = async (s) => (typeof s === 'function' ? s() : s);
+      if (!photo.depthMaps) photo.depthMaps = await loadDepthImage(await get(photo.depthSrc));
+      if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await loadImageBitmap(await get(photo.depthBgSrc)).catch(() => null);
       if (reliefFor === photo.id) {
         renderer.setDepth(photo.depthMaps.depth, photo.depthMaps.bg);
         renderer.setBackgroundColor(photo.depthBgImage || null);

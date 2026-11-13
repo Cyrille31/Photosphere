@@ -18,8 +18,10 @@ export function buildSettings(photos, plan = null) {
     version: 1,
     exportedAt: new Date().toISOString(),
     ...(plan && (plan.lines.length || plan.texts.length) ? { plan } : {}),
-    photos: photos.map((p) => ({
+    // Ordre de prise de vue (puis nom) : un parcours partagé commence par la première photo prise.
+    photos: [...photos].sort((a, b) => (a.takenAt || 0) - (b.takenAt || 0) || String(a.name).localeCompare(String(b.name))).map((p) => ({
       file: p.fileName,
+      ...(p.takenAt ? { takenAt: p.takenAt } : {}),
       size: p.fileSize,
       name: p.name,
       srcType: p.srcType,

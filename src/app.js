@@ -10,7 +10,10 @@ import { toast, escapeHtml, dialog, matchesSearch } from './ui.js';
 import { CALIB_VERSION } from './calibrate.js';
 import { reliefKey } from './depth.js';
 import { batchAutoLevel, batchRelief } from './batch.js';
-import { showManual } from './manual.js';
+import { showManual, manualButton as manualLink, bindManualButtons as bindManualLinks } from './manual.js';
+import { openParcours, filesSource } from './parcours.js';
+import { RELIEF_DIR, reliefNames } from './relief-files.js';
+import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
 
 const app = document.getElementById('app');
@@ -170,7 +173,28 @@ const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) 
   await refresh();
   processQueue();
 });
-document.body.append(pickPhotos, pickFolder, pickProject, pickSettings);
+// Parcours partagé : dossier (PC) ou fichiers (smartphone) choisis sur l'appareil, rien n'est importé.
+const openParcoursFiles = async (files) => {
+  if (!files.length) return;
+  try {
+    const parcours = await openParcours(document.body, filesSource(files), {
+      onExit: () => {
+        active = null;
+        // On revient à la page du parcours (déjà à cette adresse : on la réaffiche).
+        if (location.hash === '#/parcours') openParcoursView();
+        else location.hash = '#/parcours';
+      },
+    });
+    active = parcours;
+    window.photosphereParcours = parcours; // visite en cours (consultable par les tests)
+    app.innerHTML = '';
+  } catch (e) {
+    toast(e.message, true, 8000);
+  }
+};
+const pickParcoursFolder = fileInput({ webkitdirectory: '', multiple: '' }, openParcoursFiles);
+const pickParcoursFiles = fileInput({ multiple: '' }, openParcoursFiles);
+document.body.append(pickPhotos, pickFolder, pickProject, pickSettings, pickParcoursFolder, pickParcoursFiles);
 const supportsFolder = 'webkitdirectory' in document.createElement('input') && !matchMedia('(pointer: coarse)').matches;
 
 // Glisser-déposer
@@ -327,7 +351,8 @@ async function renderLibrary() {
       Elles seront assemblées au format équirectangulaire 7776 × 3888, lisible par tous les visualiseurs 360°.</p>
       <p>Vous pouvez aussi glisser-déposer des fichiers ou un dossier ici.</p>
       <div class="toolbar">${importButtons()}
-      <button class="btn" data-act="restore">♻ Restaurer une sauvegarde</button></div>
+      <button class="btn" data-act="restore">♻ Restaurer une sauvegarde</button>
+      <button class="btn" data-act="parcours">🔗 Visualiser un parcours partagé</button></div>
     </div></div>`;
     bindLibrary();
     return;
@@ -337,6 +362,7 @@ async function renderLibrary() {
     <div class="toolbar">
       ${importButtons()}
       <span class="spacer"></span>
+      <button class="btn" data-act="parcours" title="Visualiser un parcours préparé par quelqu’un d’autre (dossier partagé)">🔗 Parcours partagé</button>
       <button class="btn" data-act="plan" title="Plan des photos et de leurs liens">🗺 Plan</button>
       <button class="btn primary" data-act="visit">🥽 Visiter</button>
       <div class="menu">
@@ -344,6 +370,7 @@ async function renderLibrary() {
         <div class="menu-list" hidden>
           <button data-act="export-tour">🌐 Visite autonome (fichier HTML)<small>Un seul fichier à partager : s’ouvre sur smartphone, PC, casque VR</small></button>
           <button data-act="export-zip">🖼 Toutes les photos JPEG (ZIP)<small>${state.settings.outWidth} × ${state.settings.outWidth / 2}, métadonnées photosphère</small></button>
+          <button data-act="export-parcours">📦 Parcours à partager (réglages + reliefs, ZIP)<small>À décompresser dans le dossier des photos d’origine (OneDrive…) : on le visualise ensuite avec « Parcours partagé »</small></button>
           <button data-act="export-settings">📝 Exporter les réglages (${SETTINGS_FILE_NAME})<small>Fichier léger à ranger avec vos photos d’origine : réimportez le dossier pour tout retrouver</small></button>
           <button data-act="load-settings">📂 Charger des réglages (${SETTINGS_FILE_NAME})<small>Applique un fichier de réglages aux photos déjà importées</small></button>
           <button data-act="export-project">💾 Sauvegarder le projet complet (ZIP)<small>Photos comprises : volumineux, pour transférer vers un autre appareil</small></button>
@@ -560,6 +587,11 @@ async function onAction(act, p, el) {
     case 'plan':
       location.hash = '#/plan';
       return;
+    case 'parcours':
+      location.hash = '#/parcours';
+      return;
+    case 'export-parcours':
+      return exportParcours();
     case 'view':
       location.hash = '#/view/' + p.id;
       return;
@@ -837,6 +869,54 @@ async function openEditorView(id, gen = routeGen) {
 }
 
 // Plan des photos : on peut y ouvrir une photo, et l'on y revient en quittant la visionneuse / l'éditeur.
+// Parcours à partager : photosphere.json et cartes de relief, dans un ZIP à décompresser à côté des
+// photos d'origine (le dossier de travail les y range déjà tout seul).
+async function exportParcours() {
+  const b = busy('Préparation du parcours');
+  try {
+    const photos = await db.listPhotos();
+    const files = [{ name: SETTINGS_FILE_NAME, data: settingsBlob(photos, await db.getPlanDrawing()) }];
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      b.update(i, photos.length, p.name);
+      if (!p.relief || p.relief.kind !== 'ai' || p.relief.key !== reliefKey(p.params) || !p.fileName) continue;
+      const names = reliefNames(p.fileName);
+      const depth = await db.getBlob(p.id + ':depth'), bg = await db.getBlob(p.id + ':depthbg');
+      if (depth) files.push({ name: `${RELIEF_DIR}/${names.depth}`, data: depth });
+      if (bg) files.push({ name: `${RELIEF_DIR}/${names.bg}`, data: bg });
+    }
+    download(await createZip(files), 'parcours-photosphere.zip');
+    toast('Décompressez ce ZIP dans le dossier des photos d’origine (à côté des photos).', false, 8000);
+  } catch (e) {
+    toast(e.message, true);
+  }
+  b.close();
+}
+
+// Page « Visualiser un parcours partagé ».
+function openParcoursView() {
+  state.view = 'parcours';
+  app.innerHTML = `<div class="wrap parcours-page">
+    <h2>🔗 Visualiser un parcours partagé</h2>
+    <p>Un parcours, c’est le dossier des <b>photos d’origine</b> avec son fichier <code>${SETTINGS_FILE_NAME}</code> (et le sous-dossier <code>${RELIEF_DIR}</code> pour le relief), préparé avec PhotoSphère sur PC. Les photos sont lues à la demande, en pleine définition, et <b>ne sont pas enregistrées</b> sur cet appareil.</p>
+    <div class="toolbar">
+      ${supportsFolder ? '<button class="btn primary" data-parcours-folder>📂 Choisir le dossier</button>' : ''}
+      <button class="btn ${supportsFolder ? '' : 'primary'}" data-parcours-files>🖼 Choisir les fichiers</button>
+      <button class="btn" data-parcours-back>← Bibliothèque</button>
+    </div>
+    <p class="note">Sur smartphone : « Choisir les fichiers », allez dans le dossier (OneDrive, Google Drive, carte SD…) et sélectionnez <b>toutes</b> les photos et <code>${SETTINGS_FILE_NAME}</code>, ainsi que le contenu de <code>${RELIEF_DIR}</code> pour le relief.</p>
+    <p class="note">Bientôt : ouvrir directement un lien de dossier OneDrive partagé (connexion avec un compte Microsoft). ${manualLink('parcours')}</p>
+  </div>`;
+  const on = (sel, fn) => {
+    const el = app.querySelector(sel);
+    if (el) el.addEventListener('click', fn);
+  };
+  on('[data-parcours-folder]', () => pickParcoursFolder.click());
+  on('[data-parcours-files]', () => pickParcoursFiles.click());
+  on('[data-parcours-back]', () => (location.hash = '#/'));
+  bindManualLinks(app);
+}
+
 async function openPlanView(gen = routeGen) {
   state.view = 'plan';
   state.origin = 'plan';
@@ -862,8 +942,9 @@ async function route() {
   const gen = ++routeGen;
   const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
   const isPlan = location.hash === '#/plan';
+  const isParcours = location.hash === '#/parcours';
   // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo ou le plan.
-  state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : isPlan ? 'plan' : 'library';
+  state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : isPlan ? 'plan' : isParcours ? 'parcours' : 'library';
   if (active) {
     const a = active;
     active = null;
@@ -874,6 +955,7 @@ async function route() {
   if (m && m[1] === 'view') return openViewer(m[2], gen);
   if (m && m[1] === 'edit') return openEditorView(m[2], gen);
   if (isPlan) return openPlanView(gen);
+  if (isParcours) return openParcoursView();
   state.origin = 'library';
   renderLibrary();
   processQueue();

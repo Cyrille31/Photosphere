@@ -11,6 +11,7 @@ const SECTIONS = [
   ['relief', 'Relief (effet 3D dans le casque)'],
   ['visionneuse', 'Visionneuse et casque VR'],
   ['plan', 'Plan'],
+  ['parcours', 'Parcours partagé'],
   ['exporter', 'Exporter, conserver, transférer'],
   ['raccourcis', 'Raccourcis'],
 ];
@@ -92,6 +93,17 @@ const MANUAL = `
       <li><b>T Texte</b> : un clic pour écrire (nom de pièce), clic sur un texte pour le modifier (vide = supprimé), glisser pour le déplacer ; quatre tailles.</li>
       <li><b>⌫ Effacer</b> un trait ou un texte ; <b>↶ Défaire</b> (Ctrl + Z).</li>
     </ul></li>
+</ul></section>
+
+<section id="man-parcours"><h3>Parcours partagé</h3>
+<p>Pour faire visiter vos photos sans exporter de gros fichier : on partage le <b>dossier des photos d’origine</b> (par exemple sur OneDrive) et la personne le visualise avec PhotoSphère, sur smartphone, PC ou casque.</p>
+<ul>
+  <li><b>Préparer (sur PC)</b> : le dossier doit contenir les photos d’origine, <code>photosphere.json</code> et, pour le relief, le sous-dossier <code>photosphere-relief</code>. Avec le <b>dossier de travail</b>, PhotoSphère les y range tout seul. Sinon : « ⬇ Exporter → 📦 Parcours à partager », puis décompressez le ZIP dans le dossier des photos.</li>
+  <li><b>Visualiser</b> : « 🔗 Parcours partagé » dans la bibliothèque, puis « Choisir le dossier » (PC) ou « Choisir les fichiers » (smartphone : sélectionnez toutes les photos, <code>photosphere.json</code> et le contenu de <code>photosphere-relief</code> ; l’application OneDrive ou Google Drive apparaît dans le sélecteur).</li>
+  <li><b>Rapide</b> : la visite s’ouvre tout de suite sur la première photo ; pendant qu’on regarde, les photos liées se chargent en arrière-plan.</li>
+  <li><b>Haute définition</b> : les photos d’origine sont assemblées en direct, à pleine résolution (utile dans un casque).</li>
+  <li><b>Rien n’est conservé</b> : les photos restent en mémoire le temps de la visite et sont oubliées en sortant ; elles ne sont pas ajoutées à la bibliothèque.</li>
+  <li>Bientôt : ouvrir directement un lien de dossier OneDrive partagé (connexion avec un compte Microsoft).</li>
 </ul></section>
 
 <section id="man-exporter"><h3>Exporter, conserver, transférer</h3>
