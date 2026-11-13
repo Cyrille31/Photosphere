@@ -142,8 +142,16 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   let linkFrom = null;
   let selected = null;
   // La photo sélectionnée (un clic) est affichée en grand, avec son nom modifiable.
-  const ZOOM = 5;
+  // Facteur d'agrandissement réglable (mémorisé), 8 par défaut.
+  let ZOOM = 8;
+  try {
+    ZOOM = +localStorage.getItem('ps-plan-zoom') || 8;
+  } catch (e) {
+    // préférence non mémorisée
+  }
   const zf = (id) => (id === selected ? ZOOM : 1);
+  // Lien sélectionné sur le plan : { from: id de la photo, hid: id du lien (ou indice) }.
+  let selLink = null;
   // Dessin du plan (murs, textes), en coordonnées du plan comme les photos.
   let drawing = await db.getPlanDrawing();
   let tool = 'photos'; // photos | line | text | erase
@@ -193,11 +201,12 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
         <button class="btn small" data-tool="erase" title="Cliquez un trait ou un texte pour l’effacer">⌫ Effacer</button>
         <button class="btn small" data-draw-undo disabled title="Défaire la dernière modification du dessin (Ctrl+Z)">↶ Défaire</button>
       </span>
+      <label class="plan-zoom" title="Agrandissement d’une photo quand on clique dessus">🔍 ×<select data-zoom>${[3, 5, 8, 10, 12, 16].map((z) => `<option value="${z}" ${z === ZOOM ? 'selected' : ''}>${z}</option>`).join('')}</select></label>
       <span class="plan-modes">
         <button class="btn small" data-mode="sphere" title="Photos en sphères">◯ Sphères</button>
         <button class="btn small" data-mode="rect" title="Photos à plat : chaque lien aboutit à sa position dans l’image">▭ Rectangles</button>
       </span>
-      <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> une photo : la tourner · déposer une photo sur une autre : les relier. Liens <span class="plan-key auto">automatiques</span> et <span class="plan-key manual">placés à la main</span>.</span>
+      <span class="note plan-help">Glisser : déplacer · <b>Ctrl + glisser</b> une photo : la tourner · déposer une photo sur une autre : les relier. Liens <span class="plan-key auto">automatiques</span> et <span class="plan-key manual">placés à la main</span></span>
       ${manualButton('plan')}</span>
     </div>
     <div class="plan-view">
@@ -491,7 +500,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   }
 
   function drawLinks() {
-    let lines = '', over = '', dots = '';
+    let lines = '', over = '', dots = '', hits = '';
+    const sel = selectedPair();
     list.forEach((p) =>
       p.hotspots.forEach((hs, k) => {
         if (!byId.has(hs.target)) return;
@@ -500,7 +510,9 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
         const back = q.hotspots.find((x) => x.target === p.id);
         const b = back ? contact(q, back) : disp(pos.get(q.id));
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        const cls = hs.auto ? 'auto' : 'manual';
+        const cls = (hs.auto ? 'auto' : 'manual') + (sel && sel.some((x) => x.hs === hs) ? ' selected' : '');
+        // Trait invisible, plus large, pour sélectionner le lien d'un clic.
+        hits += `<line class="link-hit" data-link="${p.id}" data-k="${k}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"><title>Lien « ${escapeHtml(p.name)} » → « ${escapeHtml(q.name)} » : cliquer pour le sélectionner</title></line>`;
         // Chaque sens est dessiné sur la moitié du trait qui part de son point de contact.
         const seg = `<line class="${cls}${a.hidden ? ' hidden' : ''}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
         lines += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>` + seg;
@@ -511,7 +523,71 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     );
     world.querySelector('.plan-links').innerHTML = lines;
     world.querySelector('.plan-links.over').innerHTML = over;
-    world.querySelector('.plan-contacts').innerHTML = dots;
+    world.querySelector('.plan-contacts').innerHTML = hits + dots;
+  }
+
+  // ---------- sélection et suppression d'un lien ----------
+  const hsKey = (hs, k) => hs.id || 'k' + k;
+  // Lien sélectionné et son lien retour : [{ p, hs, k }].
+  function selectedPair() {
+    if (!selLink) return null;
+    const p = byId.get(selLink.from);
+    if (!p) return null;
+    const k = p.hotspots.findIndex((h, i) => hsKey(h, i) === selLink.hid);
+    if (k < 0) return null;
+    const hs = p.hotspots[k];
+    const out = [{ p, hs, k }];
+    const q = byId.get(hs.target);
+    if (q) {
+      const kb = q.hotspots.findIndex((x) => x.target === p.id);
+      if (kb >= 0) out.push({ p: q, hs: q.hotspots[kb], k: kb });
+    }
+    return out;
+  }
+  function selectLink(pid, k) {
+    const p = byId.get(pid);
+    selLink = { from: pid, hid: hsKey(p.hotspots[k], k) };
+    const pair = selectedPair();
+    const q = byId.get(p.hotspots[k].target);
+    help.innerHTML = `Lien « ${escapeHtml(p.name)} » ${pair.length > 1 ? '↔' : '→'} « ${escapeHtml(q.name)} » sélectionné :
+      <button class="btn small danger" data-del-link="both">🗑 Supprimer le lien${pair.length > 1 ? ' (les deux sens)' : ''}</button>
+      ${pair.length > 1 ? `<button class="btn small" data-del-link="one">Supprimer seulement « ${escapeHtml(p.name)} » → « ${escapeHtml(q.name)} »</button>` : ''}
+      <button class="btn small" data-del-link="cancel">Annuler</button>`;
+    help.querySelectorAll('[data-del-link]').forEach((b) =>
+      b.addEventListener('click', () => (b.dataset.delLink === 'cancel' ? unselectLink() : deleteLink(b.dataset.delLink === 'both')))
+    );
+    drawLinks();
+  }
+  function unselectLink() {
+    if (!selLink) return;
+    selLink = null;
+    help.innerHTML = TOOL_HELP[tool] || helpDefault;
+    drawLinks();
+  }
+  async function deleteLink(both) {
+    const pair = selectedPair();
+    if (!pair) return unselectLink();
+    const gone = both ? pair : pair.slice(0, 1);
+    for (const { p, hs } of gone) {
+      p.hotspots = p.hotspots.filter((h) => h !== hs);
+      // La photo reste à sa place sur le plan, même sans lien.
+      if (pos.has(p.id)) {
+        p.mapPos = p.mapPos || { x: Math.round(pos.get(p.id).x), y: Math.round(pos.get(p.id).y) };
+        p.mapPlaced = true;
+      }
+      await db.updatePhoto(p.id, (cur) => ({
+        ...cur,
+        mapPos: p.mapPos || cur.mapPos,
+        mapPlaced: p.mapPlaced || cur.mapPlaced,
+        hotspots: (cur.hotspots || []).filter((h) => !(hs.id ? h.id === hs.id : h.target === hs.target && h.yaw === hs.yaw)),
+      }));
+    }
+    const names = `« ${pair[0].p.name} » et « ${byId.get(pair[0].hs.target).name} »`;
+    selLink = null;
+    help.innerHTML = TOOL_HELP[tool] || helpDefault;
+    await layout();
+    render();
+    toast(both ? `Lien supprimé entre ${names}.` : `Lien supprimé dans un sens (${names}).`);
   }
 
   function fit() {
@@ -634,8 +710,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     }
     const dot = e.target.closest('[data-contact]');
     const node = e.target.closest('.plan-node');
+    const hit = e.target.closest('[data-link]');
     view.setPointerCapture(e.pointerId);
-    if (dot) {
+    if (hit) {
+      drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, px: panX, py: panY, moved: false, link: { id: hit.dataset.link, k: +hit.dataset.k } };
+    } else if (dot) {
       drag = { kind: 'contact', id: dot.dataset.contact, k: +dot.dataset.k, moved: false, sx: e.clientX, sy: e.clientY };
     } else if (node && (e.ctrlKey || e.metaKey) && e.target.closest('.plan-pic')) {
       drag = { kind: 'rotate', id: node.dataset.id, sx: e.clientX, start: rot.get(node.dataset.id), moved: false };
@@ -688,6 +767,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       panY = drag.py + dy;
       applyView();
     } else if (drag.kind === 'node') {
+      // Dès qu'on déplace une photo, l'agrandissement disparaît.
+      if (selected) {
+        selected = null;
+        render();
+      }
       pos.set(drag.id, { x: drag.start.x + dx / zoom / scale(), y: drag.start.y + dy / zoom / scale() });
       placeNodes();
       drawLinks();
@@ -744,10 +828,21 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       select(d.id);
       return;
     }
-    // Clic dans le vide : la photo agrandie reprend sa taille.
-    if (d.kind === 'pan' && !d.moved && !d.draw && selected) {
-      selected = null;
-      render();
+    // Clic sur un lien (trait ou point de contact) : il est sélectionné.
+    if (!d.moved && (d.link || d.kind === 'contact')) {
+      if (selected) {
+        selected = null;
+        render();
+      }
+      return d.link ? selectLink(d.link.id, d.link.k) : selectLink(d.id, d.k);
+    }
+    // Clic dans le vide : la photo agrandie reprend sa taille, le lien sélectionné est oublié.
+    if (d.kind === 'pan' && !d.moved && !d.draw && (selected || selLink)) {
+      unselectLink();
+      if (selected) {
+        selected = null;
+        render();
+      }
       return;
     }
     if (!d.moved) return;
@@ -840,6 +935,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       selected = null;
       render();
     }
+    if (e.key === 'Escape' && selLink) unselectLink();
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selLink) {
+      e.preventDefault();
+      deleteLink(true);
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       undoDrawing();
@@ -847,6 +947,19 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   };
   window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
+  container.querySelector('[data-zoom]').addEventListener('change', (e) => {
+    ZOOM = +e.target.value;
+    try {
+      localStorage.setItem('ps-plan-zoom', String(ZOOM));
+    } catch (err) {
+      // préférence non mémorisée
+    }
+    if (selected) {
+      const id = selected;
+      selected = null;
+      select(id);
+    }
+  });
   container.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   container.querySelector('[data-text-size]').addEventListener('change', (e) => (textSize = +e.target.value));
   container.querySelector('[data-draw-undo]').addEventListener('click', undoDrawing);

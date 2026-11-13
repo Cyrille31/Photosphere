@@ -361,7 +361,7 @@ async function renderLibrary() {
       <span class="selection-actions" hidden>
         <b class="selection-count"></b>
         <button class="btn small" data-act="select-none">Aucune</button>
-        <button class="btn small primary" data-act="batch-level" title="Redresser automatiquement les photos cochées d’après leurs verticales">✨ Redresser (auto)</button>
+        <button class="btn small primary" data-act="batch-level" title="Redresser automatiquement les photos cochées d’après leurs verticales (celles déjà redressées sont ignorées)">✨ Redresser (auto)</button>
         <button class="btn small primary" data-act="batch-relief" title="Calculer le relief (IA) des photos cochées">🧠 Calculer le relief</button>
         <button class="btn small danger" data-act="batch-delete">🗑 Supprimer</button>
       </span>
@@ -496,9 +496,10 @@ async function runBatch(title, fn) {
   d.close();
   await refresh();
   processQueue();
-  const ok = results.filter((r) => r.ok).length;
-  dialog(`<h2>${escapeHtml(title)} : ${ok} / ${results.length} réussie(s)</h2>
-    <ul class="batch-report">${results.map((r) => `<li class="${r.ok ? 'ok' : 'ko'}">${r.ok ? '✔' : '✘'} <b>${escapeHtml(r.name)}</b> : ${escapeHtml(r.message)}</li>`).join('')}</ul>
+  const ok = results.filter((r) => r.ok && !r.skipped).length;
+  const skipped = results.filter((r) => r.skipped).length;
+  dialog(`<h2>${escapeHtml(title)} : ${ok} / ${results.length - skipped} réussie(s)${skipped ? `, ${skipped} ignorée(s)` : ''}</h2>
+    <ul class="batch-report">${results.map((r) => `<li class="${r.skipped ? 'skip' : r.ok ? 'ok' : 'ko'}">${r.skipped ? '–' : r.ok ? '✔' : '✘'} <b>${escapeHtml(r.name)}</b> : ${escapeHtml(r.message)}</li>`).join('')}</ul>
     ${cancelled ? '<p class="note">Arrêté avant la fin.</p>' : ''}
     <div class="row"><button class="btn primary" data-close>Fermer</button></div>`);
 }

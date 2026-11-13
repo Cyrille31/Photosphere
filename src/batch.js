@@ -41,6 +41,13 @@ export async function batchAutoLevel(ids, { onProgress = () => {}, isCancelled =
     for (let i = 0; i < ids.length && !isCancelled(); i++) {
       const p = await db.getPhoto(ids[i]);
       if (!p) continue;
+      // Photo déjà redressée (à la main ou automatiquement) : on n'y touche pas. Le cap (nord) seul
+      // ne compte pas comme un redressement.
+      const pr = p.params || {};
+      if (Math.abs(pr.pitch || 0) + Math.abs(pr.roll || 0) > 0.05) {
+        out.push({ id: p.id, name: p.name, ok: true, skipped: true, message: 'déjà redressée, ignorée' });
+        continue;
+      }
       onProgress(i, ids.length, p.name, 'recherche des verticales');
       try {
         const params = await loadPhoto(renderer, p);
