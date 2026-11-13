@@ -1,4 +1,5 @@
 // Import des photos (carte micro SD, galerie du téléphone, glisser-déposer) et file de conversion.
+import { isReliefFile } from './relief-files.js';
 import { decodeImage, DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { readExif, extractExifSegment, buildXmpSegment } from './metadata.js';
 import { renderPanorama, abortError } from './exporter.js';
@@ -101,6 +102,7 @@ export async function importFiles(files, onProgress) {
   const known = new Set(existing.map((p) => p.fileName + ':' + p.fileSize));
   const added = [], skipped = [];
   const list = [...files].filter((f) => {
+    if (isReliefFile(f)) return false; // cartes de relief rangées avec les photos
     if (isImageFile(f)) return true;
     if (!/^\./.test(f.name)) skipped.push({ name: f.name, reason: 'format non pris en charge (JPEG uniquement)' });
     return false;

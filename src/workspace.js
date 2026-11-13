@@ -4,6 +4,8 @@
 // Safari, smartphones) ne permettent pas cet accès : l'export manuel du fichier reste disponible.
 import * as db from './db.js';
 import { settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
+import { RELIEF_DIR, reliefNames } from './relief-files.js';
+import { reliefKey } from './depth.js';
 
 const HANDLE_KEY = 'workspace-handle';
 const SAVE_DELAY = 1500;
@@ -88,7 +90,7 @@ export async function listFiles(maxDepth = 3) {
     for await (const entry of dir.values()) {
       if (entry.kind === 'file' && (isPhoto(entry.name) || (depth === 0 && entry.name === SETTINGS_FILE_NAME))) {
         files.push(await entry.getFile());
-      } else if (entry.kind === 'directory' && depth < maxDepth && !entry.name.startsWith('.')) {
+      } else if (entry.kind === 'directory' && depth < maxDepth && !entry.name.startsWith('.') && entry.name !== RELIEF_DIR) {
         await walk(entry, depth + 1);
       }
     }
@@ -110,11 +112,13 @@ export async function saveNow() {
   if (saving) await saving;
   saving = (async () => {
     try {
-      const blob = settingsBlob(await db.listPhotos(), await db.getPlanDrawing());
+      const photos = await db.listPhotos();
+      const blob = settingsBlob(photos, await db.getPlanDrawing());
       const fh = await handle.getFileHandle(SETTINGS_FILE_NAME, { create: true });
       const w = await fh.createWritable();
       await w.write(blob);
       await w.close();
+      await saveReliefs(photos);
       lastSaved = new Date();
       lastError = null;
     } catch (e) {
@@ -126,6 +130,30 @@ export async function saveNow() {
   await saving;
   saving = null;
   return !lastError;
+}
+
+// Cartes de relief à jour, rangées dans le sous-dossier « photosphere-relief » (une seule écriture
+// par carte et par session : on retient ce qui a déjà été écrit).
+const reliefWritten = new Set();
+async function saveReliefs(photos) {
+  let dir = null;
+  for (const p of photos) {
+    if (!p.relief || p.relief.kind !== 'ai' || p.relief.key !== reliefKey(p.params) || !p.fileName) continue;
+    const depth = await db.getBlob(p.id + ':depth');
+    if (!depth) continue;
+    const tag = `${p.id}|${p.fileName}|${p.relief.key}|${depth.size}`;
+    if (reliefWritten.has(tag)) continue;
+    if (!dir) dir = await handle.getDirectoryHandle(RELIEF_DIR, { create: true });
+    const names = reliefNames(p.fileName);
+    const files = [[names.depth, depth], [names.bg, await db.getBlob(p.id + ':depthbg')]];
+    for (const [name, b] of files) {
+      if (!b) continue;
+      const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+      await w.write(b);
+      await w.close();
+    }
+    reliefWritten.add(tag);
+  }
 }
 
 async function findFile(dir, name, depth = 0) {
