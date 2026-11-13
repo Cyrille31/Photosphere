@@ -12,6 +12,7 @@ import { reliefKey } from './depth.js';
 import { batchAutoLevel, batchRelief } from './batch.js';
 import { showManual, manualButton as manualLink, bindManualButtons as bindManualLinks } from './manual.js';
 import { openParcours, filesSource } from './parcours.js';
+import { driveSource, driveFolderId, parcoursLink } from './drive.js';
 import { RELIEF_DIR, reliefNames } from './relief-files.js';
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
@@ -173,11 +174,15 @@ const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) 
   await refresh();
   processQueue();
 });
-// Parcours partagé : dossier (PC) ou fichiers (smartphone) choisis sur l'appareil, rien n'est importé.
-const openParcoursFiles = async (files) => {
-  if (!files.length) return;
+// Parcours partagé : dossier (PC) ou fichiers (smartphone) choisis sur l'appareil, ou dossier Google
+// Drive partagé ; rien n'est importé.
+const openParcoursFiles = (files) => files.length && startParcours(async () => filesSource(files));
+async function startParcours(makeSource) {
+  let wait = null;
   try {
-    const parcours = await openParcours(document.body, filesSource(files), {
+    wait = setTimeout(() => toast('Ouverture du parcours…', false, 15000), 400);
+    const source = await makeSource();
+    const parcours = await openParcours(document.body, source, {
       onExit: () => {
         active = null;
         // On revient à la page du parcours (déjà à cette adresse : on la réaffiche).
@@ -189,9 +194,11 @@ const openParcoursFiles = async (files) => {
     window.photosphereParcours = parcours; // visite en cours (consultable par les tests)
     app.innerHTML = '';
   } catch (e) {
-    toast(e.message, true, 8000);
+    toast('Parcours impossible à ouvrir : ' + e.message, true, 9000);
   }
-};
+  clearTimeout(wait);
+  document.querySelectorAll('#toasts .toast').forEach((t) => /Ouverture du parcours/.test(t.textContent) && t.remove());
+}
 const pickParcoursFolder = fileInput({ webkitdirectory: '', multiple: '' }, openParcoursFiles);
 const pickParcoursFiles = fileInput({ multiple: '' }, openParcoursFiles);
 document.body.append(pickPhotos, pickFolder, pickProject, pickSettings, pickParcoursFolder, pickParcoursFiles);
@@ -905,8 +912,41 @@ function openParcoursView() {
       <button class="btn" data-parcours-back>← Bibliothèque</button>
     </div>
     <p class="note">Sur smartphone : « Choisir les fichiers », allez dans le dossier (OneDrive, Google Drive, carte SD…) et sélectionnez <b>toutes</b> les photos et <code>${SETTINGS_FILE_NAME}</code>, ainsi que le contenu de <code>${RELIEF_DIR}</code> pour le relief.</p>
-    <p class="note">Bientôt : ouvrir directement un lien de dossier OneDrive partagé (connexion avec un compte Microsoft). ${manualLink('parcours')}</p>
+    <h3>Dossier Google Drive partagé</h3>
+    <p class="note">Collez le lien du dossier (partagé en « Tous les utilisateurs qui ont le lien »). « Ouvrir » le visualise ici ; le <b>lien de visite</b> s’envoie tel quel : il ouvre PhotoSphère directement sur le parcours, sans compte ni connexion. ${manualLink('parcours')}</p>
+    <div class="parcours-drive">
+      <input type="url" name="drive-link" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
+      <button class="btn primary" data-parcours-drive>▶ Ouvrir</button>
+    </div>
+    <div class="parcours-share" hidden>
+      <label class="field">Lien de visite à envoyer<input type="text" name="share-link" readonly></label>
+      <button class="btn small" data-copy-link>📋 Copier le lien</button>
+    </div>
   </div>`;
+  const linkInput = app.querySelector('[name=drive-link]');
+  const share = app.querySelector('.parcours-share');
+  const updateShare = () => {
+    const id = driveFolderId(linkInput.value);
+    share.hidden = !id;
+    if (id) app.querySelector('[name=share-link]').value = parcoursLink(id);
+  };
+  linkInput.addEventListener('input', updateShare);
+  linkInput.addEventListener('keydown', (e) => e.key === 'Enter' && app.querySelector('[data-parcours-drive]').click());
+  app.querySelector('[data-parcours-drive]').addEventListener('click', () => {
+    const v = linkInput.value;
+    if (!driveFolderId(v)) return toast('Collez le lien d’un dossier Google Drive.', true);
+    startParcours(() => driveSource(v));
+  });
+  app.querySelector('[data-copy-link]').addEventListener('click', async () => {
+    const t = app.querySelector('[name=share-link]');
+    try {
+      await navigator.clipboard.writeText(t.value);
+      toast('Lien copié : envoyez-le par SMS, e-mail, WhatsApp…');
+    } catch (e) {
+      t.select();
+      toast('Sélectionnez et copiez le lien.', true);
+    }
+  });
   const on = (sel, fn) => {
     const el = app.querySelector(sel);
     if (el) el.addEventListener('click', fn);
@@ -942,7 +982,7 @@ async function route() {
   const gen = ++routeGen;
   const m = location.hash.match(/^#\/(view|edit)\/(.+)$/);
   const isPlan = location.hash === '#/plan';
-  const isParcours = location.hash === '#/parcours';
+  const isParcours = location.hash.startsWith('#/parcours');
   // Fixé tout de suite : une conversion en cours s'interrompt dès qu'on ouvre une photo ou le plan.
   state.view = m ? (m[1] === 'view' ? 'viewer' : 'editor') : isPlan ? 'plan' : isParcours ? 'parcours' : 'library';
   if (active) {
@@ -955,7 +995,13 @@ async function route() {
   if (m && m[1] === 'view') return openViewer(m[2], gen);
   if (m && m[1] === 'edit') return openEditorView(m[2], gen);
   if (isPlan) return openPlanView(gen);
-  if (isParcours) return openParcoursView();
+  if (isParcours) {
+    openParcoursView();
+    // Lien de visite : #/parcours?drive=<dossier> ouvre directement le parcours.
+    const drive = new URLSearchParams(location.hash.split('?')[1] || '').get('drive');
+    if (drive) startParcours(() => driveSource(drive));
+    return;
+  }
   state.origin = 'library';
   renderLibrary();
   processQueue();

@@ -155,6 +155,50 @@ try {
   const after = await page.evaluate(() => window.photosphereParcours.cache.size);
   check(after === 0, 'en sortant, les photos du parcours sont oubliées (mémoire vidée)');
   check((await db(async (db) => (await db.listPhotos()).length)) === countBefore, 'aucune photo du parcours ajoutée à la bibliothèque');
+  // ---------- dossier Google Drive partagé (interface Drive simulée) ----------
+  const FOLDER = 'dossierPartageTest1234567890', RELIEF = 'sousDossierRelief123456789';
+  const entries = folderFiles.map((f, i) => ({ id: 'fichier' + i, name: path.basename(f), mimeType: f.endsWith('.json') ? 'application/json' : 'image/jpeg', full: f }));
+  const top = entries.filter((e) => !e.full.includes('photosphere-relief'));
+  const sub = entries.filter((e) => e.full.includes('photosphere-relief'));
+  let mediaCalls = 0;
+  await page.route(/www\.googleapis\.com\/drive\/v3\/files/, async (route) => {
+    const u = new URL(route.request().url());
+    const cors = { 'access-control-allow-origin': '*' };
+    if (u.searchParams.get('key') !== 'cle-de-test') return route.fulfill({ status: 403, headers: cors, body: JSON.stringify({ error: { message: 'clé invalide' } }) });
+    const m = u.pathname.match(/files\/([^/]+)$/);
+    if (m && u.searchParams.get('alt') === 'media') {
+      const e = entries.find((x) => x.id === m[1]);
+      mediaCalls++;
+      return route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(e.full) });
+    }
+    const q = u.searchParams.get('q') || '';
+    const list = q.includes(FOLDER) ? [...top, { id: RELIEF, name: 'photosphere-relief', mimeType: 'application/vnd.google-apps.folder' }] : q.includes(RELIEF) ? sub : null;
+    if (!list) return route.fulfill({ status: 404, headers: cors, body: '{}' });
+    return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ files: list.map(({ id, name, mimeType }) => ({ id, name, mimeType })) }) });
+  });
+  await page.evaluate(() => localStorage.setItem('ps-google-key', 'cle-de-test'));
+  // Lien de visite fabriqué à partir du lien de partage du dossier.
+  await page.fill('[name=drive-link]', `https://drive.google.com/drive/folders/${FOLDER}?usp=sharing`);
+  const shareLink = await page.inputValue('[name=share-link]');
+  check(shareLink.endsWith(`#/parcours?drive=${FOLDER}`), `lien de visite à envoyer : ${shareLink}`);
+  // Le visiteur ouvre ce lien : la visite démarre seule.
+  await page.goto(base + '#/');
+  await page.goto(shareLink.replace(/^.*#/, base + '#'));
+  await page.waitForSelector('.ps-player canvas', { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('.ps-title').textContent.length > 0);
+  await page.waitForTimeout(1500);
+  const dTitle = await page.textContent('.ps-title');
+  const dPre = await page.evaluate(() => window.photosphereParcours.cache.has('salon.jpg') && !window.photosphereParcours.cache.has('cuisine.jpg'));
+  check(dTitle === 'Entrée' && dPre, `Google Drive : lien de visite ouvert directement (« ${dTitle} »), photo liée préchargée, ${mediaCalls} fichier(s) téléchargé(s)`);
+  await page.screenshot({ path: path.join(shots, '03-parcours-drive.png') });
+  await page.click('.ps-back');
+  await page.waitForSelector('.parcours-page');
+  // Dossier non partagé (ou lien faux) : message clair.
+  await page.fill('[name=drive-link]', 'https://drive.google.com/drive/folders/dossierInconnu99999999999');
+  await page.click('[data-parcours-drive]');
+  await page.waitForTimeout(1500);
+  const errMsg = (await page.locator('.toast').allTextContents()).join(' | ');
+  check(/introuvable|partag/.test(errMsg), `Google Drive : dossier introuvable signalé (« ${errMsg.slice(0, 120)} »)`);
 } catch (e) {
   failures++;
   console.error(e);
