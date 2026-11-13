@@ -5,7 +5,7 @@
 import { RELIEF_DIR } from './relief-files.js';
 
 // Clé d'accès à l'API Google Drive (console.cloud.google.com, restreinte au site de PhotoSphère).
-export const GOOGLE_API_KEY = '';
+export const GOOGLE_API_KEY = 'AIzaSyCA0MY58YEDkMQNgxpPXjG3RAHA4kq_Vag';
 const API = 'https://www.googleapis.com/drive/v3/files';
 const FOLDER = 'application/vnd.google-apps.folder';
 
@@ -61,7 +61,7 @@ function storedKey() {
   }
 }
 
-export async function driveSource(link, key = GOOGLE_API_KEY || storedKey()) {
+export async function driveSource(link, key = storedKey() || GOOGLE_API_KEY) {
   if (!key) throw new Error('Lecture des dossiers Google Drive pas encore configurée (clé d’accès manquante).');
   const id = driveFolderId(link);
   if (!id) throw new Error('Lien de dossier Google Drive non reconnu.');
