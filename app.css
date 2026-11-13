@@ -58,6 +58,7 @@ body.dragging .empty, body.dragging .grid { outline: 3px dashed var(--accent); o
 .selection-actions[hidden] { display: none; }
 .batch-report { max-height: 50vh; overflow: auto; padding-left: 18px; font-size: 14px; }
 .batch-report .ko { color: #ff8a8a; }
+.batch-report .skip { color: var(--muted); }
 .card.selected { outline: 2px solid var(--accent); }
 .thumb { position: relative; aspect-ratio: 2 / 1; background: #000; cursor: pointer; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -221,6 +222,13 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-node.selected .plan-actions { display: flex; }
 .plan-contacts, .plan-links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 .plan-contacts circle { stroke: #fff; stroke-width: 2; cursor: move; pointer-events: all; }
+.plan-contacts line.link-hit { stroke: transparent; stroke-width: 14; stroke-linecap: round; pointer-events: stroke; cursor: pointer; }
+.plan-contacts line.link-hit:hover { stroke: rgba(229,72,77,.18); }
+.plan-links line.selected { stroke: #e5484d; stroke-width: 6; opacity: 1; }
+.plan-contacts circle.contact.selected { fill: #e5484d; }
+.plan-zoom { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; color: var(--muted); }
+.plan-zoom select { padding: 3px 4px; border-radius: 6px; }
+.plan-view.drawing .plan-contacts line.link-hit { pointer-events: none; }
 .plan-contacts circle.auto { fill: #0b98d0; }
 .plan-contacts circle.manual { fill: #f08c00; }
 .plan-contacts circle.hidden, .plan-links line.hidden { opacity: .45; }

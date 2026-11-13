@@ -108,6 +108,15 @@ try {
   await page.click('dialog [data-close]');
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 300000 });
   check(true, 'photos redressées reconverties');
+  // Second passage : les photos déjà redressées sont ignorées.
+  const before2 = await db(async (db) => (await db.listPhotos()).map((p) => JSON.stringify(p.params)).join());
+  await page.click('[data-act=select-all]');
+  await page.click('[data-act=batch-level]');
+  await page.waitForSelector('.batch-report', { timeout: 120000 });
+  const report2 = await page.textContent('dialog h2');
+  const after2 = await db(async (db) => (await db.listPhotos()).map((p) => JSON.stringify(p.params)).join());
+  check(/2 ignorée/.test(report2) && before2 === after2, `redressement par lot : photos déjà redressées ignorées (« ${report2} »)`);
+  await page.click('dialog [data-close]');
 
   if (process.env.PS_DEPTH_ASSETS) {
     const assets = process.env.PS_DEPTH_ASSETS;
@@ -218,7 +227,13 @@ try {
   await page.mouse.click(small.x + small.width / 2, small.y + small.height / 2);
   await page.waitForTimeout(500);
   const bigBox = await page.locator('.plan-node.selected .plan-pic').boundingBox();
-  check(bigBox && Math.abs(bigBox.width / small.width - 5) < 0.3, `plan : clic sur une photo → affichée 5 fois plus grande (${small.width.toFixed(0)} → ${bigBox && bigBox.width.toFixed(0)} px)`);
+  check(bigBox && Math.abs(bigBox.width / small.width - 8) < 0.4, `plan : clic sur une photo → affichée 8 fois plus grande (${small.width.toFixed(0)} → ${bigBox && bigBox.width.toFixed(0)} px)`);
+  await page.selectOption('[data-zoom]', '5');
+  await page.waitForTimeout(300);
+  const box5 = await page.locator('.plan-node.selected .plan-pic').boundingBox();
+  check(box5 && Math.abs(box5.width / small.width - 5) < 0.3, `plan : agrandissement réglable (×5 → ${box5 && box5.width.toFixed(0)} px)`);
+  await page.selectOption('[data-zoom]', '8');
+  await page.waitForTimeout(300);
   await page.fill('.plan-name-input', 'Salon côté jardin');
   await page.press('.plan-name-input', 'Enter');
   await page.waitForTimeout(400);
@@ -228,6 +243,47 @@ try {
   await page.mouse.click(vb.x + vb.width - 60, vb.y + 60);
   await page.waitForTimeout(400);
   check((await page.locator('.plan-node.selected').count()) === 0 && (await page.locator('.plan-name-input').count()) === 0, 'plan : clic dans le vide → taille normale');
+  // Agrandie puis déplacée : elle reprend aussitôt sa taille.
+  const sm = await page.locator(`.plan-node[data-id="${placedId}"] .plan-pic`).boundingBox();
+  await page.mouse.click(sm.x + sm.width / 2, sm.y + sm.height / 2);
+  await page.waitForTimeout(400);
+  const big2 = await page.locator('.plan-node.selected .plan-pic').boundingBox();
+  await page.mouse.move(big2.x + big2.width / 2, big2.y + big2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(big2.x + big2.width / 2 + 40, big2.y + big2.height / 2 + 10, { steps: 4 });
+  const during = await page.locator('.plan-node.selected').count();
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check(during === 0, 'plan : la photo agrandie reprend sa taille dès qu’on la déplace');
+  // Relier les deux photos (déposer la photo non placée sur l'autre), puis sélectionner et supprimer le lien.
+  const poolId = await db(async (db) => (await db.listPhotos()).find((p) => !p.mapPlaced).id);
+  await page.click('[data-fit]');
+  await page.waitForTimeout(300);
+  const a1 = await page.locator(`.plan-node[data-id="${poolId}"] .plan-pic`).boundingBox();
+  const b1 = await page.locator(`.plan-node[data-id="${placedId}"] .plan-pic`).boundingBox();
+  await page.mouse.move(a1.x + a1.width / 2, a1.y + a1.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b1.x + b1.width / 2, b1.y + b1.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const nLinks = await db(async (db) => (await db.listPhotos()).reduce((n, p) => n + (p.hotspots || []).length, 0));
+  // Milieu du trait cliquable (calculé : un trait horizontal a une boîte de hauteur nulle).
+  const hit = await page.evaluate(() => {
+    const l = document.querySelector('.plan-contacts line.link-hit');
+    if (!l) return null;
+    const m = l.getScreenCTM();
+    const pt = (x, y) => ({ x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f });
+    const a = pt(+l.getAttribute('x1'), +l.getAttribute('y1')), b = pt(+l.getAttribute('x2'), +l.getAttribute('y2'));
+    return { x: a.x + (b.x - a.x) * 0.6, y: a.y + (b.y - a.y) * 0.6 };
+  });
+  await page.mouse.click(hit.x, hit.y);
+  await page.waitForTimeout(300);
+  const selShown = (await page.locator('.plan-links line.selected').count()) >= 2 && (await page.isVisible('[data-del-link=both]'));
+  await page.screenshot({ path: path.join(shots, '05b-lien-selectionne.png') });
+  await page.click('[data-del-link=both]');
+  await page.waitForTimeout(600);
+  const afterDel = await db(async (db) => (await db.listPhotos()).map((p) => ({ n: (p.hotspots || []).length, placed: !!(p.mapPlaced && p.mapPos) })));
+  check(nLinks === 2 && selShown && afterDel.every((x) => x.n === 0 && x.placed), `plan : lien sélectionné d’un clic (en rouge) puis supprimé dans les deux sens, photos restées sur le plan (${JSON.stringify(afterDel)})`);
   // Trait tracé puis déplacé en restant dans l'outil Traits.
   await page.click('[data-tool=line]');
   await page.mouse.click(vb.x + 500, vb.y + 200);
