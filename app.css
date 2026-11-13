@@ -253,3 +253,11 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .man-keys td { padding: 3px 12px 3px 0; vertical-align: top; }
 .man-keys td:first-child { white-space: nowrap; font-weight: 600; }
 .manual-btn { padding: 2px 8px; margin-left: 4px; vertical-align: middle; }
+
+/* Parcours partagé */
+.parcours-page h3 { margin-top: 26px; }
+.parcours-drive { display: flex; gap: 8px; flex-wrap: wrap; }
+.parcours-drive input { flex: 1; min-width: 240px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+.parcours-share { margin-top: 10px; }
+.parcours-share[hidden] { display: none; }
+.parcours-share input { width: 100%; }
