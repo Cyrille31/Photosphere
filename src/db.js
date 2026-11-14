@@ -89,10 +89,11 @@ export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v
 // Dessin du plan (traits des pièces, textes) : { lines: [{ x1, y1, x2, y2 }], texts: [{ x, y, text, size }] }.
 export async function getPlanDrawing() {
   const d = await getSetting('planDrawing');
-  return { lines: (d && d.lines) || [], texts: (d && d.texts) || [] };
+  return { lines: (d && d.lines) || [], texts: (d && d.texts) || [], ...(d && d.ceilingH ? { ceilingH: d.ceilingH } : {}) };
 }
 export async function putPlanDrawing(d) {
-  await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [] });
+  // ceilingH : hauteur sous plafond commune (plan des pièces).
+  await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [], ...(d.ceilingH ? { ceilingH: d.ceilingH } : {}) });
   notify();
 }
 

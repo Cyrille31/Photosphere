@@ -261,3 +261,15 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .parcours-share { margin-top: 10px; }
 .parcours-share[hidden] { display: none; }
 .parcours-share input { width: 100%; }
+
+/* Éditeur, onglet Pièce */
+.ed-room-corner { position: absolute; transform: translate(-50%, -50%); width: 24px; height: 24px; border-radius: 50%; background: #e5484d; color: #fff; font: 700 13px system-ui, sans-serif; display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); pointer-events: none; }
+.ed-room-corner.floor { background: #3b82f6; }
+.ed-room-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.ed-room-lines polyline { fill: none; stroke-width: 2.5; stroke-dasharray: 7 5; }
+.ed-room-lines polyline.ceil { stroke: #ff3b3b; }
+.ed-room-lines polyline.floor { stroke: #3b82f6; }
+
+.plan-rooms { display: inline-flex; align-items: center; gap: 6px; }
+.plan-rooms label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 3px; }
+.plan-rooms input { width: 58px; padding: 3px 4px; border-radius: 6px; }

@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import { escapeHtml, toast } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
+import { placeRooms } from './room.js';
 
 const SPACING = 170; // distance entre deux photos liées lors de la disposition automatique
 
@@ -200,6 +201,10 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
         <button class="btn small" data-tool="move" title="Glissez un trait pour le déplacer, ou une extrémité pour l’allonger ou le réorienter (les murs raccordés suivent)">✥ Déplacer</button>
         <button class="btn small" data-tool="erase" title="Cliquez un trait ou un texte pour l’effacer">⌫ Effacer</button>
         <button class="btn small" data-draw-undo disabled title="Défaire la dernière modification du dessin (Ctrl+Z)">↶ Défaire</button>
+      </span>
+      <span class="plan-rooms">
+        <button class="btn small primary" data-place-rooms title="Dessine chaque pièce (d’après les coins du plafond indiqués dans l’éditeur, onglet Pièce), y place ses photos et les relie">🏠 Placer les pièces</button>
+        <label title="Hauteur sous plafond, commune à toutes les pièces">↕ <input type="number" data-ceiling min="1.8" max="8" step="0.05"> m</label>
       </span>
       <label class="plan-zoom" title="Agrandissement d’une photo quand on clique dessus">🔍 ×<select data-zoom>${[3, 5, 8, 10, 12, 16].map((z) => `<option value="${z}" ${z === ZOOM ? 'selected' : ''}>${z}</option>`).join('')}</select></label>
       <span class="plan-modes">
@@ -947,6 +952,75 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   };
   window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
+  // ---------- pièces : plan d'après les coins du plafond ----------
+  const PX_PER_M = 50;
+  const ceilIn = container.querySelector('[data-ceiling]');
+  ceilIn.value = drawing.ceilingH || 2.8;
+  ceilIn.addEventListener('change', async () => {
+    const v = parseFloat(ceilIn.value);
+    if (!(v > 1.5)) return;
+    drawing.ceilingH = v;
+    await saveDrawing();
+  });
+  container.querySelector('[data-place-rooms]').addEventListener('click', async () => {
+    const withRoom = list.filter((p) => p.room && (p.room.corners || []).length >= 4);
+    if (!withRoom.length) return toast('Aucune pièce : dans l’éditeur, onglet « Pièce », indiquez les 4 coins du plafond de chaque photo.', true, 8000);
+    // Place libre à droite de ce qui est déjà sur le plan, pour les pièces nouvelles.
+    const onPlanIds = list.filter((p) => !pool.has(p.id)).map((p) => p.id);
+    const xs = [...onPlanIds.map((id) => pos.get(id).x), ...drawing.lines.flatMap((l) => [l.x1, l.x2])];
+    const freeX = xs.length ? Math.max(...xs) + 150 : 0;
+    const res = placeRooms(list, {
+      ceilingH: drawing.ceilingH || 2.8,
+      pxPerM: PX_PER_M,
+      freeX,
+      // Pièce dont une photo est déjà placée (pas dans la zone des photos non placées) : elle s'y raccroche.
+      anchorOf: (p) => (!pool.has(p.id) && p.mapPos ? pos.get(p.id) : null),
+    });
+    pushUndo();
+    // Murs et nom de chaque pièce (remplacent ceux d'un placement précédent de la même pièce).
+    for (const r of res.rooms) {
+      const key = r.name.trim().toLowerCase();
+      drawing.lines = drawing.lines.filter((l) => l.room !== key);
+      drawing.texts = drawing.texts.filter((t) => t.room !== key);
+      r.corners.forEach((c, i) => {
+        const d = r.corners[(i + 1) % 4];
+        drawing.lines.push({ x1: Math.round(c[0] * 2) / 2, y1: Math.round(c[1] * 2) / 2, x2: Math.round(d[0] * 2) / 2, y2: Math.round(d[1] * 2) / 2, room: key });
+      });
+      const cx = r.corners.reduce((s2, c) => s2 + c[0], 0) / 4, cy = Math.min(...r.corners.map((c) => c[1])) + 22;
+      drawing.texts.push({ x: Math.round(cx), y: Math.round(cy), text: `${r.name} (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m)`, size: 14, room: key });
+    }
+    await saveDrawing();
+    // Photos à leur place, sur le plan même sans lien.
+    for (const [id, q] of res.positions) {
+      const mp = { x: Math.round(q.x), y: Math.round(q.y) };
+      Object.assign(byId.get(id), { mapPos: mp, mapPlaced: true });
+      pos.set(id, { ...mp });
+      await db.updatePhoto(id, (cur) => ({ ...cur, mapPos: mp, mapPlaced: true }));
+    }
+    // Liens entre les photos d'une même pièce (automatiques : ils suivent le plan).
+    let made = 0;
+    for (const [aId, bId] of res.pairs) {
+      for (const [p, q] of [[byId.get(aId), byId.get(bId)], [byId.get(bId), byId.get(aId)]]) {
+        const yaw = +bearing(p.mapPos, q.mapPos).toFixed(2);
+        const ex = p.hotspots.find((h) => h.target === q.id);
+        if (ex) {
+          if (ex.auto) ex.yaw = yaw;
+        } else {
+          p.hotspots.push({ id: newHotspotId(), target: q.id, yaw, pitch: 0, label: '', auto: true });
+          made++;
+        }
+      }
+    }
+    for (const id of new Set(res.pairs.flat())) {
+      const hs = byId.get(id).hotspots;
+      await db.updatePhoto(id, (cur) => ({ ...cur, hotspots: hs }));
+    }
+    await layout();
+    render();
+    fit();
+    toast(`${res.rooms.length} pièce(s) dessinée(s), ${res.positions.size} photo(s) placée(s), ${made} lien(s) créé(s).`, false, 6000);
+  });
+
   container.querySelector('[data-zoom]').addEventListener('change', (e) => {
     ZOOM = +e.target.value;
     try {

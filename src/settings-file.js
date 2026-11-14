@@ -17,7 +17,7 @@ export function buildSettings(photos, plan = null) {
     format: FORMAT,
     version: 1,
     exportedAt: new Date().toISOString(),
-    ...(plan && (plan.lines.length || plan.texts.length) ? { plan } : {}),
+    ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH) ? { plan } : {}),
     // Ordre de prise de vue (puis nom) : un parcours partagé commence par la première photo prise.
     photos: [...photos].sort((a, b) => (a.takenAt || 0) - (b.takenAt || 0) || String(a.name).localeCompare(String(b.name))).map((p) => ({
       file: p.fileName,
@@ -29,6 +29,7 @@ export function buildSettings(photos, plan = null) {
       ...(p.mapPos ? { mapPos: p.mapPos } : {}),
       ...(p.mapRot ? { mapRot: p.mapRot } : {}),
       ...(p.mapPlaced ? { mapPlaced: true } : {}),
+      ...(p.room && (p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       ...(p.relief ? { relief: p.relief } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
@@ -79,6 +80,7 @@ export async function applySettings(data) {
       ...(e.mapPos ? { mapPos: e.mapPos } : {}),
       ...(e.mapRot != null ? { mapRot: e.mapRot } : {}),
       ...(e.mapPlaced ? { mapPlaced: true } : {}),
+      ...(e.room ? { room: e.room } : {}),
       ...(e.relief ? { relief: e.relief } : {}),
       srcType,
       params,
