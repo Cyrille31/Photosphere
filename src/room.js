@@ -271,3 +271,156 @@ export function fitCameraRatio(em, rect) {
   }
   return best.rho;
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Pièce d'après les coins du plafond cliqués (ou détectés) : photo.room = { name, corners: [{ yaw, pitch }]
+// (4 coins plafond, degrés, repère de la photo redressée : cap 0 = nord), floor: { yaw, pitch } (coin au
+// sol, facultatif), camH (hauteur de l'appareil, m, facultative) }.
+
+// Position horizontale (x : est, z : nord) d'un coin du plafond, pour une distance objectif-plafond Hc.
+export function cornerXZ(c, Hc = 1) {
+  const el = c.pitch * DEG, a = c.yaw * DEG;
+  const r = Hc / Math.tan(Math.max(el, 0.5 * DEG));
+  return [r * Math.sin(a), r * Math.cos(a)];
+}
+
+// Rectangle le plus proche de 4 points (ou plus) : { cx, cz, phi, w, l } ; phi dans (-45°, 45°] (radians),
+// w : longueur selon (cos phi, sin phi) dans le plan (x, z), l : selon la perpendiculaire.
+export function rectFromPoints(pts) {
+  const n = pts.length;
+  const mx = pts.reduce((s, p) => s + p[0], 0) / n, mz = pts.reduce((s, p) => s + p[1], 0) / n;
+  const order = [...pts].sort((a, b) => Math.atan2(a[1] - mz, a[0] - mx) - Math.atan2(b[1] - mz, b[0] - mx));
+  // Orientation : moyenne des directions des côtés, modulo 90° (angle ×4).
+  let sc = 0, ss = 0;
+  for (let i = 0; i < n; i++) {
+    const p = order[i], q = order[(i + 1) % n];
+    const dx = q[0] - p[0], dz = q[1] - p[1], len = Math.hypot(dx, dz);
+    const t = Math.atan2(dz, dx);
+    sc += len * Math.cos(4 * t);
+    ss += len * Math.sin(4 * t);
+  }
+  const phi = Math.atan2(ss, sc) / 4;
+  const e1 = [Math.cos(phi), Math.sin(phi)], e2 = [-Math.sin(phi), Math.cos(phi)];
+  const us = pts.map((p) => p[0] * e1[0] + p[1] * e1[1]).sort((a, b) => a - b);
+  const vs = pts.map((p) => p[0] * e2[0] + p[1] * e2[1]).sort((a, b) => a - b);
+  const half = (v) => {
+    const k = Math.floor(v.length / 2);
+    const lo = v.slice(0, k).reduce((s, x) => s + x, 0) / k, hi = v.slice(v.length - k).reduce((s, x) => s + x, 0) / k;
+    return { c: (lo + hi) / 2, size: hi - lo };
+  };
+  const U = half(us), V = half(vs);
+  return { cx: U.c * e1[0] + V.c * e2[0], cz: U.c * e1[1] + V.c * e2[1], phi, w: U.size, l: V.size };
+}
+
+// Coins (x, z) d'un rectangle, dans l'ordre.
+export function rectCorners(r) {
+  const e1 = [Math.cos(r.phi), Math.sin(r.phi)], e2 = [-Math.sin(r.phi), Math.cos(r.phi)];
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [r.cx + (a * r.w * e1[0] + b * r.l * e2[0]) / 2, r.cz + (a * r.w * e1[1] + b * r.l * e2[1]) / 2]);
+}
+
+// Distance horizontale du centre de la photo au bord d'un rectangle (qui la contient), cap `a` (radians).
+export function rectDistance(r, a) {
+  const d = [Math.sin(a), Math.cos(a)];
+  const e1 = [Math.cos(r.phi), Math.sin(r.phi)], e2 = [-Math.sin(r.phi), Math.cos(r.phi)];
+  const c1 = r.cx * e1[0] + r.cz * e1[1], c2 = r.cx * e2[0] + r.cz * e2[1];
+  const d1 = d[0] * e1[0] + d[1] * e1[1], d2 = d[0] * e2[0] + d[1] * e2[1];
+  let t = Infinity;
+  for (const [dd, c, half] of [[d1, c1, r.w / 2], [d2, c2, r.l / 2]]) {
+    if (Math.abs(dd) < 1e-9) continue;
+    for (const s of [c - half, c + half]) {
+      const v = s / dd;
+      if (v > 1e-9) t = Math.min(t, v);
+    }
+  }
+  return t;
+}
+
+// Pièce d'une photo, en mètres : { rect (repère de la photo, appareil à l'origine), camH, Hc } ou null.
+// ceilingH : hauteur sous plafond commune ; defaultCamH : hauteur de l'appareil si rien ne la donne.
+export function photoRoom(room, ceilingH, defaultCamH = 1.6) {
+  if (!room || !room.corners || room.corners.length < 4) return null;
+  const unit = rectFromPoints(room.corners.map((c) => cornerXZ(c, 1)));
+  let camH = room.camH || null;
+  if (!camH && room.floor && room.floor.pitch < 0) {
+    // Coin au sol sur le bord du rectangle : tan(-el) · distance = hauteur de l'appareil (unités Hc = 1).
+    const k = Math.tan(-room.floor.pitch * DEG) * rectDistance(unit, room.floor.yaw * DEG);
+    if (Number.isFinite(k) && k > 0.2 && k < 5) camH = (ceilingH * k) / (1 + k);
+  }
+  camH = camH || defaultCamH;
+  const Hc = Math.max(0.3, ceilingH - camH);
+  return { rect: { cx: unit.cx * Hc, cz: unit.cz * Hc, phi: unit.phi, w: unit.w * Hc, l: unit.l * Hc }, camH, Hc };
+}
+
+// Nom de pièce proposé d'après le nom de la photo (« 360_0887 entrée 1-1 » → « entrée »).
+export function guessRoomName(name) {
+  return String(name || '')
+    .replace(/^\s*(360_)?\d+\s*/i, '')
+    .replace(/[\s_-]*\d+([-_.]\d+)*\s*$/, '')
+    .trim();
+}
+
+// Place les pièces : photos [{ id, name, room, mapPos?, cameraH? }] → { positions: Map(id → {x, y}),
+// rooms: [{ name, corners: [[x, y]] (plan), w, l }], pairs: [[idA, idB]] } (coordonnées du plan, y vers
+// le sud ; pxPerM pixels par mètre). Une pièce dont une photo est déjà sur le plan s'y raccroche.
+export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 1.6, anchorOf = () => null, freeX = 0 } = {}) {
+  const groups = new Map();
+  for (const p of photos) {
+    const pr = photoRoom(p.room, ceilingH, p.cameraH || defaultCamH);
+    if (!pr) continue;
+    const key = String((p.room && p.room.name) || p.id).trim().toLowerCase();
+    if (!groups.has(key)) groups.set(key, { name: (p.room && p.room.name) || p.name, items: [] });
+    groups.get(key).items.push({ p, ...pr });
+  }
+  const positions = new Map(), rooms = [], pairs = [];
+  let nextX = freeX;
+  for (const g of groups.values()) {
+    // Orientation commune (modulo 90°) ; chaque photo s'y aligne (axes éventuellement échangés).
+    let sc = 0, ss = 0;
+    g.items.forEach((it) => ((sc += Math.cos(4 * it.rect.phi)), (ss += Math.sin(4 * it.rect.phi))));
+    const phi = Math.atan2(ss, sc) / 4;
+    let W = 0, L = 0;
+    for (const it of g.items) {
+      const k = Math.round((it.rect.phi - phi) / (Math.PI / 2));
+      it.swap = k % 2 !== 0;
+      W += it.swap ? it.rect.l : it.rect.w;
+      L += it.swap ? it.rect.w : it.rect.l;
+    }
+    W /= g.items.length;
+    L /= g.items.length;
+    // Centre de la pièce sur le plan : d'après une photo déjà placée, sinon à droite du reste.
+    let C = null;
+    for (const it of g.items) {
+      const a = anchorOf(it.p);
+      if (a) {
+        C = { x: a.x + it.rect.cx * pxPerM, y: a.y - it.rect.cz * pxPerM };
+        break;
+      }
+    }
+    if (!C) {
+      const span = (Math.abs(W * Math.cos(phi)) + Math.abs(L * Math.sin(phi))) * pxPerM;
+      C = { x: nextX + span / 2, y: 0 };
+      nextX += span + 2 * pxPerM;
+    }
+    // Photo : à l'opposé du centre de son rectangle (l'appareil est à l'origine de son repère).
+    for (const it of g.items) positions.set(it.p.id, { x: C.x - it.rect.cx * pxPerM, y: C.y + it.rect.cz * pxPerM });
+    const rect = { cx: 0, cz: 0, phi, w: W, l: L };
+    rooms.push({ name: g.name, corners: rectCorners(rect).map(([x, z]) => [C.x + x * pxPerM, C.y - z * pxPerM]), w: W, l: L });
+    for (let i = 0; i < g.items.length; i++) for (let j = i + 1; j < g.items.length; j++) pairs.push([g.items[i].p.id, g.items[j].p.id]);
+  }
+  return { positions, rooms, pairs };
+}
+
+// Coins du plafond (cap, élévation en degrés) d'un rectangle trouvé par fitCeilingRect (unités Hc = 1).
+export function cornersFromFit(fit) {
+  const corners = [];
+  for (let k = 0; k < 4; k++) {
+    const a1 = fit.phi + (k * Math.PI) / 2, a2 = fit.phi + ((k + 1) * Math.PI) / 2;
+    const n1 = [Math.cos(a1), Math.sin(a1)], n2 = [Math.cos(a2), Math.sin(a2)];
+    const det = n1[0] * n2[1] - n1[1] * n2[0];
+    const x = (fit.d[k] * n2[1] - n1[1] * fit.d[(k + 1) % 4]) / det;
+    const z = (n1[0] * fit.d[(k + 1) % 4] - fit.d[k] * n2[0]) / det;
+    const r = Math.hypot(x, z);
+    corners.push({ yaw: +((Math.atan2(x, z) / DEG)).toFixed(2), pitch: +((Math.atan(1 / r) / DEG)).toFixed(2) });
+  }
+  return corners;
+}

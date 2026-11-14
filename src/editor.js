@@ -6,6 +6,7 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
 import { autoLevel } from './autolevel.js';
+import { edgeMap, fitCeilingRect, cornersFromFit, rectFromPoints, rectDistance, cornerXZ, photoRoom, guessRoomName } from './room.js';
 import { reliefKey, depthAt, loadDepthImage, loadImageBitmap } from './depth.js';
 import { computeDepth } from './depth-ai.js';
 import { toast, escapeHtml, dialog } from './ui.js';
@@ -75,6 +76,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <button data-tab="lens">Objectifs</button>
           <button data-tab="links">Liens</button>
           <button data-tab="relief">Relief</button>
+          <button data-tab="room">Pièce</button>
         </div>
       </div>
       <div class="ed-body">
@@ -113,6 +115,22 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
             </div>
             <p class="note">Calibrage automatique fait à l’import ; relancez-le après une modification. ${manualButton('objectifs')}</p>
           </div>
+        </section>
+        <section data-panel="room" hidden>
+          <p class="note">Les 4 coins du plafond donnent le plan de la pièce et la place de la photo dedans (plan → « 🏠 Placer les pièces »). ${manualButton('piece')}</p>
+          <label class="field">Pièce (même nom pour toutes ses photos)<input type="text" name="roomName" list="room-names" placeholder="ex. Salle à manger" autocomplete="off"></label>
+          <datalist id="room-names"></datalist>
+          <div class="tools">
+            <button class="btn small primary" data-room-pick>📐 Cliquer les 4 coins du plafond</button>
+            <button class="btn small" data-room-detect title="Proposition automatique d’après la jonction plafond / mur (à vérifier)">✨ Détecter</button>
+          </div>
+          <div class="tools">
+            <button class="btn small" data-room-floor title="Un coin du sol (pied d’un angle de mur) : donne la hauteur de l’appareil">➕ Coin au sol</button>
+            <button class="btn small" data-room-clear>✕ Effacer les coins</button>
+          </div>
+          <label class="field">Hauteur sous plafond, commune à toutes les photos (m)<input type="number" name="ceilingH" min="1.8" max="8" step="0.05"></label>
+          <label class="field">Hauteur de l’appareil (m)<input type="number" name="camH" min="0.3" max="3" step="0.05"></label>
+          <p class="note room-info"></p>
         </section>
         <section data-panel="relief" hidden>
           <p class="note">Distances estimées par IA pour l’effet 3D dans le casque : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>. ${manualButton('relief')}</p>
@@ -216,6 +234,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const t = photos.find((x) => x.id === h.target);
       if (s) html += `<div class="ed-hot-label" style="left:${s.x / dpr}px;top:${s.y / dpr}px">→ ${escapeHtml(h.label || (t ? t.name : '?'))}</div>`;
     });
+    html += roomMarkers(frame, dpr);
     box.innerHTML = html;
   }
 
@@ -238,7 +257,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     }
     lastKey = key;
     lastTime = now;
-    history.push(clone({ params: p.params, srcType: p.srcType, hotspots: p.hotspots, reverse: reverseLinks.length }));
+    history.push(clone({ params: p.params, srcType: p.srcType, hotspots: p.hotspots, room: p.room, reverse: reverseLinks.length }));
     if (history.length > 60) history.shift();
     updateUndo();
   }
@@ -248,6 +267,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     p.params = s.params;
     p.srcType = s.srcType;
     p.hotspots = s.hotspots;
+    p.room = s.room;
     reverseLinks.length = Math.min(reverseLinks.length, s.reverse);
     lastKey = '';
     dirty = true;
@@ -265,6 +285,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     const old = { yaw: p.params.yaw, pitch: p.params.pitch, roll: p.params.roll };
     const next = { yaw: wrapDeg(level.yaw), pitch: level.pitch, roll: level.roll };
     if (keepHotspots) p.hotspots = p.hotspots.map((h) => remapHotspot(h, old, next));
+    // Coins de la pièce : ils restent sur les mêmes points de la scène.
+    if (p.room) {
+      p.room.corners = (p.room.corners || []).map((c) => remapHotspot(c, old, next));
+      if (p.room.floor) p.room.floor = remapHotspot(p.room.floor, old, next);
+    }
     Object.assign(p.params, next);
     dirty = true;
     syncInputs();
@@ -327,6 +352,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     const frame = controller.frame();
     const d = renderer.pick(x, y, frame);
     if (!d) return;
+    if (roomPick) return roomTap(d);
     if (tool) {
       tool.points.push(d);
       const need = tool.kind === 'horizon' ? 2 : 4;
@@ -647,6 +673,234 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     })
   );
 
+  // ---------- pièce : coins du plafond ----------
+  // p.room = { name, corners: [{ yaw, pitch }] ×4, floor: { yaw, pitch }, camH } dans le repère de la photo
+  // redressée (comme les liens). La hauteur sous plafond est commune (réglage du plan).
+  if (!p.room) p.room = { name: guessRoomName(p.name), corners: [] };
+  if (!p.room.corners) p.room.corners = [];
+  let roomPick = null; // 'ceiling' | 'floor'
+  let ceilingH = 2.8;
+  db.getPlanDrawing().then((d) => {
+    if (d.ceilingH) ceilingH = d.ceilingH;
+    syncRoom();
+  });
+  const roomTabOpen = () => !$('[data-panel=room]').hidden;
+  const defaultCamH = () => (p.relief && p.relief.h) || 1.6;
+  function roomInfo() {
+    return photoRoom({ ...p.room, camH: p.room.camH || null }, ceilingH, defaultCamH());
+  }
+  function syncRoom() {
+    const nameIn = $('[name=roomName]');
+    if (document.activeElement !== nameIn) nameIn.value = p.room.name || '';
+    const ch = $('[name=ceilingH]');
+    if (document.activeElement !== ch) ch.value = ceilingH;
+    const r = roomInfo();
+    const cam = $('[name=camH]');
+    if (document.activeElement !== cam) cam.value = +(r ? r.camH : p.room.camH || defaultCamH()).toFixed(2);
+    const n = p.room.corners.length;
+    $('.room-info').innerHTML = r
+      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. Vérifiez que la ligne rouge suit la jonction plafond / mur ; faites glisser un coin pour le corriger.`
+      : n
+        ? `${n} coin(s) sur 4.`
+        : 'Aucun coin pour l’instant.';
+  }
+  // Coins, ligne plafond / mur prévue (rouge) et ligne sol / mur (bleue) sur l'image.
+  function roomMarkers(frame, dpr) {
+    if (!roomTabOpen() || !p.room) return '';
+    let html = '';
+    p.room.corners.forEach((c, i) => {
+      const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
+      if (sc) html += `<div class="ed-room-corner" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">${i + 1}</div>`;
+    });
+    if (p.room.floor) {
+      const sf = renderer.project(dirFromLonLat(p.room.floor.yaw * DEG, p.room.floor.pitch * DEG), frame);
+      if (sf) html += `<div class="ed-room-corner floor" style="left:${sf.x / dpr}px;top:${sf.y / dpr}px">⌄</div>`;
+    }
+    const r = roomInfo();
+    if (r) {
+      const unit = rectFromPoints(p.room.corners.map((c) => cornerXZ(c, 1)));
+      const k = r.camH / r.Hc;
+      for (const [cls, f] of [['ceil', (rr) => Math.atan(1 / rr)], ['floor', (rr) => -Math.atan(k / rr)]]) {
+        let seg = [], path = '';
+        const flush = () => {
+          if (seg.length > 1) path += `<polyline class="${cls}" points="${seg.join(' ')}"/>`;
+          seg = [];
+        };
+        for (let a = -180; a <= 180; a += 1.5) {
+          const rr = rectDistance(unit, a * DEG);
+          const sp = Number.isFinite(rr) ? renderer.project(dirFromLonLat(a * DEG, f(rr)), frame) : null;
+          if (!sp) {
+            flush();
+            continue;
+          }
+          const pt = `${(sp.x / dpr).toFixed(1)},${(sp.y / dpr).toFixed(1)}`;
+          // Saut (bord de la vue à plat, arrière de la vue) : nouveau morceau.
+          if (seg.length) {
+            const [px, py] = seg[seg.length - 1].split(',').map(Number);
+            if (Math.abs(px - sp.x / dpr) > 150 || Math.abs(py - sp.y / dpr) > 150) flush();
+          }
+          seg.push(pt);
+        }
+        flush();
+        html += `<svg class="ed-room-lines">${path}</svg>`;
+      }
+    }
+    return html;
+  }
+  function roomTap(d) {
+    const { lon, lat } = lonLatFromDir(d);
+    const pos = { yaw: +(lon / DEG).toFixed(2), pitch: +(lat / DEG).toFixed(2) };
+    if (roomPick === 'ceiling') {
+      if (pos.pitch < 2) return toast('Un coin du plafond est au-dessus de l’horizon : cliquez plus haut.', true);
+      snapshot();
+      p.room.corners.push(pos);
+      dirty = true;
+      if (p.room.corners.length >= 4) {
+        roomPick = null;
+        hint('');
+      } else hint(`Cliquez le coin ${p.room.corners.length + 1} sur 4 (là où deux murs rencontrent le plafond). <button class="btn small" data-room-stop>Arrêter</button>`);
+    } else if (roomPick === 'floor') {
+      if (pos.pitch > -2) return toast('Un coin au sol est sous l’horizon : cliquez plus bas.', true);
+      snapshot();
+      p.room.floor = pos;
+      delete p.room.camH;
+      dirty = true;
+      roomPick = null;
+      hint('');
+    }
+    bindRoomStop();
+    syncRoom();
+    redraw();
+  }
+  function bindRoomStop() {
+    const b = $('[data-room-stop]');
+    if (b)
+      b.addEventListener('click', () => {
+        roomPick = null;
+        hint('');
+      });
+  }
+  $('[data-room-pick]').addEventListener('click', () => {
+    stopTool();
+    placing = null;
+    snapshot();
+    p.room.corners = [];
+    roomPick = 'ceiling';
+    if (controller.mode === 'flat') setView('persp');
+    controller.pitch = 25 * DEG;
+    hint('Cliquez le coin 1 sur 4 (là où deux murs rencontrent le plafond), puis les suivants en tournant la vue. <button class="btn small" data-room-stop>Arrêter</button>');
+    bindRoomStop();
+    syncRoom();
+    redraw();
+  });
+  $('[data-room-floor]').addEventListener('click', () => {
+    stopTool();
+    roomPick = 'floor';
+    hint('Cliquez un coin du sol (le pied d’un angle entre deux murs, bien visible). <button class="btn small" data-room-stop>Arrêter</button>');
+    bindRoomStop();
+  });
+  $('[data-room-clear]').addEventListener('click', () => {
+    snapshot();
+    p.room.corners = [];
+    delete p.room.floor;
+    dirty = true;
+    syncRoom();
+    redraw();
+  });
+  $('[data-room-detect]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    hint('Recherche de la jonction plafond / mur…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      renderer.setParams(p.params, p.srcType);
+      const W = 2048, H = 1024;
+      const flat = renderer.readFlat(W, H);
+      const rgba = new Uint8Array(W * H * 4);
+      for (let y = 0; y < H; y++) rgba.set(flat.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+      const fit = fitCeilingRect(edgeMap(rgba, W, H));
+      snapshot();
+      p.room.corners = cornersFromFit(fit);
+      dirty = true;
+      toast('Coins proposés : vérifiez la ligne rouge et faites glisser les coins mal placés.', false, 6000);
+    } catch (err) {
+      toast('Détection impossible : ' + err.message, true);
+    }
+    hint('');
+    btn.disabled = false;
+    syncRoom();
+    redraw();
+  });
+  $('[name=roomName]').addEventListener('input', (e) => {
+    p.room.name = e.target.value.trim();
+    dirty = true;
+  });
+  $('[name=ceilingH]').addEventListener('change', async (e) => {
+    const v = parseFloat(e.target.value);
+    if (!(v > 1.5)) return;
+    ceilingH = v;
+    const d = await db.getPlanDrawing();
+    await db.putPlanDrawing({ ...d, ceilingH: v });
+    syncRoom();
+    redraw();
+  });
+  $('[name=camH]').addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
+    if (!(v > 0.2)) return;
+    snapshot();
+    p.room.camH = v;
+    delete p.room.floor;
+    dirty = true;
+    syncRoom();
+    redraw();
+  });
+  // Noms de pièces déjà utilisés (proposés à la saisie).
+  $('#room-names').innerHTML = [...new Set(photos.map((x) => x.room && x.room.name).filter(Boolean))].map((n) => `<option value="${escapeHtml(n)}">`).join('');
+  // Faire glisser un coin pour le corriger (onglet Pièce ouvert).
+  stage.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!roomTabOpen() || e.button !== 0 || tool || placing || roomPick || e.target !== canvas) return;
+      const r0 = canvas.getBoundingClientRect();
+      const sx = canvas.width / r0.width;
+      const at = (ev) => renderer.pick((ev.clientX - r0.left) * sx, (ev.clientY - r0.top) * sx, controller.frame());
+      const d = at(e);
+      if (!d) return;
+      const all = [...p.room.corners.map((c, i) => ({ c, i })), ...(p.room.floor ? [{ c: p.room.floor, i: 'floor' }] : [])];
+      let best = null, bestAng = 0.07;
+      for (const it of all) {
+        const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, dirFromLonLat(it.c.yaw * DEG, it.c.pitch * DEG)))));
+        if (ang < bestAng) (bestAng = ang), (best = it);
+      }
+      if (!best) return;
+      e.stopPropagation();
+      e.preventDefault();
+      snapshot();
+      canvas.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        const nd = at(ev);
+        if (!nd) return;
+        const { lon, lat } = lonLatFromDir(nd);
+        const pos = { yaw: +(lon / DEG).toFixed(2), pitch: +(lat / DEG).toFixed(2) };
+        if (best.i === 'floor') {
+          p.room.floor = pos;
+          delete p.room.camH;
+        } else p.room.corners[best.i] = pos;
+        dirty = true;
+        syncRoom();
+        redraw();
+      };
+      const up = () => {
+        canvas.removeEventListener('pointermove', move, true);
+        canvas.removeEventListener('pointerup', up, true);
+      };
+      canvas.addEventListener('pointermove', move, true);
+      canvas.addEventListener('pointerup', up, true);
+    },
+    true
+  );
+  syncRoom();
+
   // ---------- relief (profondeur par IA) ----------
   const depthStatus = (txt) => {
     const el = $('.depth-status');
@@ -865,6 +1119,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       srcType: p.srcType,
       params: p.params,
       hotspots: p.hotspots,
+      ...(p.room && (p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       // Relief : gardé s'il correspond au redressement (la carte est refaite sinon).
       ...(p.relief ? { relief: p.relief } : {}),
       status: imageChanged || cur.status !== 'done' ? 'pending' : 'done',

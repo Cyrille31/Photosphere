@@ -11,6 +11,7 @@ const SECTIONS = [
   ['relief', 'Relief (effet 3D dans le casque)'],
   ['visionneuse', 'Visionneuse et casque VR'],
   ['plan', 'Plan'],
+  ['piece', 'Plan des pièces'],
   ['parcours', 'Parcours partagé'],
   ['exporter', 'Exporter, conserver, transférer'],
   ['raccourcis', 'Raccourcis'],
@@ -93,6 +94,15 @@ const MANUAL = `
       <li><b>T Texte</b> : un clic pour écrire (nom de pièce), clic sur un texte pour le modifier (vide = supprimé), glisser pour le déplacer ; quatre tailles.</li>
       <li><b>⌫ Effacer</b> un trait ou un texte ; <b>↶ Défaire</b> (Ctrl + Z).</li>
     </ul></li>
+</ul></section>
+
+<section id="man-piece"><h3>Plan des pièces</h3>
+<p>PhotoSphère dessine chaque pièce (rectangulaire) sur le plan, y place ses photos à leur vraie position et les relie, d’après les <b>coins du plafond</b> : ils restent visibles même dans une pièce encombrée.</p>
+<ul>
+  <li><b>Nord</b> : réglez-le d’abord sur chaque photo (onglet Redresser) : c’est lui qui permet d’aligner les photos d’une même pièce.</li>
+  <li><b>Éditeur, onglet « Pièce »</b> : donnez le nom de la pièce (le même pour toutes ses photos ; il est proposé d’après le nom de la photo), puis <b>« 📐 Cliquer les 4 coins du plafond »</b> (là où deux murs rencontrent le plafond, en tournant la vue), ou <b>« ✨ Détecter »</b> pour une proposition automatique. La ligne rouge en pointillés montre la jonction plafond / mur prévue : elle doit suivre la vraie ; faites glisser un coin pour le corriger.</li>
+  <li><b>Hauteurs</b> : la hauteur sous plafond est commune à toutes les pièces (réglable aussi sur le plan). La hauteur de l’appareil se donne à la main, ou d’un clic sur un <b>coin au sol</b> (le pied d’un angle de mur) : la ligne bleue montre alors la jonction sol / mur prévue.</li>
+  <li><b>Plan, « 🏠 Placer les pièces »</b> : chaque pièce est dessinée (murs et nom avec ses dimensions), ses photos y sont placées et reliées entre elles (liens automatiques). Relancé après une correction, il remplace les murs de la pièce. Une pièce dont une photo est déjà placée s’y raccroche ; sinon elle se met à droite. Rapprochez ensuite les pièces avec « ✥ Déplacer » et reliez les photos d’une pièce à l’autre.</li>
 </ul></section>
 
 <section id="man-parcours"><h3>Parcours partagé</h3>
