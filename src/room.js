@@ -114,3 +114,160 @@ export function roomQuad(depth, opts = {}) {
 export function quadSides(corners) {
   return corners.map((p, i) => Math.hypot(corners[(i + 1) % 4][0] - p[0], corners[(i + 1) % 4][1] - p[1]));
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Pièce rectangulaire d'après la ligne plafond / mur de l'image (le plafond est rarement encombré).
+// Repère de la photo redressée : x à droite (est), z devant (nord), y en haut, caméra à l'origine.
+// Unité : la distance de l'objectif au plafond (Hc = 1) ; la hauteur de plafond commune donne l'échelle.
+
+// Carte des bords horizontaux (variation de luminosité selon la hauteur), image RGBA w × h, ligne 0 en
+// haut ; réduite à `cols` colonnes. Renvoie { e: Float32Array, w, h } (valeurs normalisées).
+export function edgeMap(rgba, w, h, cols = 720) {
+  const sx = w / cols, rows = Math.round(h / sx);
+  const lum = new Float32Array(cols * rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let s = 0, n = 0;
+      for (let yy = Math.floor(r * sx); yy < Math.floor((r + 1) * sx); yy++) {
+        for (let xx = Math.floor(c * sx); xx < Math.floor((c + 1) * sx); xx++) {
+          const i = (yy * w + xx) * 4;
+          s += 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+          n++;
+        }
+      }
+      lum[r * cols + c] = s / n;
+    }
+  }
+  const e = new Float32Array(cols * rows);
+  let sum = 0;
+  for (let r = 1; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const gy = lum[(r + 1) * cols + c] - lum[(r - 1) * cols + c];
+      const gx = lum[r * cols + ((c + 1) % cols)] - lum[r * cols + ((c - 1 + cols) % cols)];
+      const v = Math.max(0, Math.abs(gy) - 0.5 * Math.abs(gx));
+      e[r * cols + c] = v;
+      sum += v;
+    }
+  }
+  const mean = sum / e.length || 1;
+  for (let i = 0; i < e.length; i++) e[i] = Math.min(6, e[i] / mean);
+  // Couleur du plafond : médiane de la calotte au-dessus de l'objectif (latitude > 60°), en
+  // chrominance (peu sensible à l'éclairage) et luminosité.
+  const col = new Float32Array(cols * rows * 3);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = (Math.floor((r + 0.5) * sx) * w + Math.floor((c + 0.5) * sx)) * 4;
+      const R = rgba[i], G = rgba[i + 1], B = rgba[i + 2], L = R + G + B + 1;
+      col.set([R / L, G / L, L / 3], (r * cols + c) * 3);
+    }
+  }
+  const capRows = Math.max(2, Math.floor(rows * (30 / 180)));
+  const med = (k) => {
+    const v = [];
+    for (let r = 0; r < capRows; r++) for (let c = 0; c < cols; c += 2) v.push(col[(r * cols + c) * 3 + k]);
+    v.sort((a, b) => a - b);
+    return v[v.length >> 1];
+  };
+  const ref = [med(0), med(1), med(2)];
+  // Texture locale (tous sens) normalisée.
+  const like = new Float32Array(cols * rows);
+  for (let r = 1; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      const tex = Math.abs(lum[i + 1 - (c === cols - 1 ? cols : 0)] - lum[i]) + Math.abs(lum[i + cols] - lum[i]);
+      const k = i * 3;
+      const dc = Math.hypot((col[k] - ref[0]) / 0.03, (col[k + 1] - ref[1]) / 0.03);
+      const dl = Math.abs(col[k + 2] - ref[2]) / 90;
+      like[i] = Math.exp(-(dc * dc + dl * dl) / 2) * Math.exp(-tex / 10);
+    }
+  }
+  // Cumul par colonne (de haut en bas) : moyenne d'une bande de lignes en temps constant.
+  const cum = new Float32Array(cols * (rows + 1));
+  for (let c = 0; c < cols; c++) for (let r = 0; r < rows; r++) cum[(r + 1) * cols + c] = cum[r * cols + c] + like[r * cols + c];
+  return { e, w: cols, h: rows, cum };
+}
+
+// Distance horizontale, depuis la caméra, au mur d'un rectangle (orientation phi, distances d[0..3] aux
+// murs de normales phi, phi + 90°, …) dans la direction de cap `a` (radians, 0 = nord / z).
+export function rectRange(a, phi, d) {
+  const dx = Math.sin(a), dz = Math.cos(a);
+  let best = Infinity;
+  for (let k = 0; k < 4; k++) {
+    const t = phi + (k * Math.PI) / 2;
+    const proj = dx * Math.cos(t) + dz * Math.sin(t); // composante vers la normale du mur k (repère x/z)
+    if (proj > 1e-6) best = Math.min(best, d[k] / proj);
+  }
+  return best;
+}
+
+// Score d'une ligne prévue : somme, colonne par colonne, du bord le plus fort à ±1 ligne de la latitude
+// prévue (lat(a) en radians), sur les latitudes utiles [latMin, latMax].
+// ceiling : la ligne est celle du plafond ; on exige en plus le plafond au-dessus (lisse, de sa
+// couleur) et le mur juste en dessous (différent).
+function lineScore(em, latOf, latMin, latMax, ceiling = false) {
+  let s = 0;
+  const band = Math.max(3, Math.round(em.h * (10 / 180)));
+  for (let c = 0; c < em.w; c++) {
+    const a = ((c + 0.5) / em.w - 0.5) * 2 * Math.PI;
+    const lat = latOf(a);
+    if (!(lat > latMin && lat < latMax)) continue;
+    const r = Math.round((0.5 - lat / Math.PI) * em.h - 0.5);
+    let m = 0;
+    for (let k = -1; k <= 1; k++) if (r + k > 0 && r + k < em.h - 1) m = Math.max(m, em.e[(r + k) * em.w + c]);
+    if (ceiling && em.cum) {
+      const r0 = Math.max(0, r - band), r1 = Math.min(em.h, r + band);
+      const above = (em.cum[r * em.w + c] - em.cum[r0 * em.w + c]) / Math.max(1, r - r0);
+      const below = (em.cum[r1 * em.w + c] - em.cum[(r + 1) * em.w + c]) / Math.max(1, r1 - r - 1);
+      s += 0.35 * m + 3 * (above - below);
+    } else s += m;
+  }
+  return s;
+}
+
+// Rectangle de la pièce d'après la ligne plafond / mur. Renvoie { phi, d: [4], score } (d en unités de
+// distance objectif-plafond).
+export function fitCeilingRect(em, { phiInit = null } = {}) {
+  const grid = [];
+  for (let k = 0; k < 64; k++) grid.push(0.25 * Math.pow(60, k / 63)); // 0,25 à 15 fois Hc
+  const ceilLat = (phi, d) => (a) => Math.atan(1 / rectRange(a, phi, d));
+  const lo = 4 * DEG, hi = 75 * DEG;
+  const optimise = (phi) => {
+    let d = [2, 2, 2, 2];
+    let best = lineScore(em, ceilLat(phi, d), lo, hi, true);
+    for (let it = 0; it < 4; it++) {
+      for (let k = 0; k < 4; k++) {
+        for (const v of grid) {
+          const t = d.slice();
+          t[k] = v;
+          const s = lineScore(em, ceilLat(phi, t), lo, hi, true);
+          if (s > best) (best = s), (d = t);
+        }
+      }
+    }
+    return { phi, d, score: best };
+  };
+  let res = null;
+  const phis = [];
+  if (phiInit != null) for (let k = -12; k <= 12; k += 2) phis.push(phiInit + k * DEG);
+  else for (let k = 0; k < 90; k += 3) phis.push(k * DEG);
+  for (const phi of phis) {
+    const r = optimise(phi);
+    if (!res || r.score > res.score) res = r;
+  }
+  // Affinage de l'orientation.
+  for (let k = -2; k <= 2; k += 0.5) {
+    const r = optimise(res.phi + k * DEG);
+    if (r.score > res.score) res = r;
+  }
+  return res;
+}
+
+// Hauteur de l'objectif (en unités Hc) d'après la ligne sol / mur, pour un rectangle donné.
+export function fitCameraRatio(em, rect) {
+  let best = null;
+  for (let rho = 0.5; rho <= 4; rho *= 1.03) {
+    const s = lineScore(em, (a) => -Math.atan(rho / rectRange(a, rect.phi, rect.d)), -75 * DEG, -4 * DEG);
+    if (!best || s > best.s) best = { rho, s };
+  }
+  return best.rho;
+}
