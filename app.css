@@ -273,3 +273,19 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .plan-rooms { display: inline-flex; align-items: center; gap: 6px; }
 .plan-rooms label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 3px; }
 .plan-rooms input { width: 58px; padding: 3px 4px; border-radius: 6px; }
+
+/* Plan : pièces sélectionnables et flèche nord-sud */
+.plan-roomsel { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.plan-roomsel .room-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.plan-roomsel .room-hit:hover { stroke: rgba(11,152,208,.18); }
+.plan-roomsel .room-sel { fill: rgba(11,152,208,.06); stroke: #0b98d0; stroke-width: 2.5; stroke-dasharray: 8 5; pointer-events: none; }
+.plan-roomsel .room-corner { fill: #fff; stroke: #0b98d0; stroke-width: 2.5; pointer-events: all; cursor: nwse-resize; }
+.plan-roomsel .room-rot-line { stroke: #0b98d0; stroke-width: 2; }
+.plan-roomsel .room-rot { fill: #0b98d0; stroke: #fff; stroke-width: 2; pointer-events: all; cursor: grab; }
+.plan-roomsel .compass-base { fill: rgba(255,255,255,.85); stroke: #111; stroke-width: 1.5; pointer-events: all; cursor: move; }
+.plan-roomsel .compass-n { fill: #e5484d; pointer-events: none; }
+.plan-roomsel .compass-s { fill: #111; pointer-events: none; }
+.plan-roomsel .compass-label { font: 700 13px system-ui, sans-serif; text-anchor: middle; fill: #e5484d; pointer-events: none; }
+.plan-roomsel .compass-label.s { fill: #111; }
+.plan-roomsel .compass-rot { fill: transparent; pointer-events: all; cursor: grab; }
+.plan-view.drawing .plan-roomsel * { pointer-events: none !important; }

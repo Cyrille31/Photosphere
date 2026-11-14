@@ -4,13 +4,23 @@
 import * as db from './db.js';
 import { escapeHtml, toast } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
-import { placeRooms } from './room.js';
+import { placeRooms, roomCorners } from './room.js';
+import { levelToViewTilt, withCap, remapHotspot, wrapDeg } from './math.js';
 
 const SPACING = 170; // distance entre deux photos liées lors de la disposition automatique
 
-// Cap (degrés, 0 = nord, 90 = est) de b vu depuis a, sur le plan (y vers le bas = sud).
+// Direction du nord sur le plan (degrés, sens horaire depuis le haut ; 0 : le nord est en haut). Réglée
+// par la flèche nord-sud du plan.
+let NORTH = 0;
+export function setPlanNorth(deg) {
+  NORTH = +deg || 0;
+}
+export const planNorth = () => NORTH;
+
+// Cap (degrés, 0 = nord, 90 = est) de b vu depuis a, sur le plan (y vers le bas).
 export function bearing(a, b) {
-  return (Math.atan2(b.x - a.x, -(b.y - a.y)) * 180) / Math.PI;
+  const v = (Math.atan2(b.x - a.x, -(b.y - a.y)) * 180) / Math.PI - NORTH;
+  return ((v + 540) % 360) - 180;
 }
 
 // Positions des photos qui n'en ont pas encore : en suivant les liens à partir des photos déjà
@@ -35,11 +45,11 @@ export function autoLayout(photos) {
         if (pos.has(n.id)) continue;
         let placed = null;
         for (let k = 0; k < 12 && !placed; k++) {
-          const yaw = ((n.yaw + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 25) * Math.PI) / 180;
+          const yaw = ((n.yaw + NORTH + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 25) * Math.PI) / 180;
           const x = a.x + SPACING * Math.sin(yaw), y = a.y - SPACING * Math.cos(yaw);
           if (free(x, y)) placed = { x, y };
         }
-        if (!placed) placed = { x: a.x + SPACING * Math.sin((n.yaw * Math.PI) / 180) * 1.6, y: a.y - SPACING * Math.cos((n.yaw * Math.PI) / 180) * 1.6 };
+        if (!placed) placed = { x: a.x + SPACING * Math.sin(((n.yaw + NORTH) * Math.PI) / 180) * 1.6, y: a.y - SPACING * Math.cos(((n.yaw + NORTH) * Math.PI) / 180) * 1.6 };
         pos.set(n.id, placed);
         queue.push(n.id);
       }
@@ -189,7 +199,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
 
   container.innerHTML = `<div class="plan">
     <div class="plan-bar">
-      <span class="plan-north" title="Le haut du plan est le nord">N ↑</span>
+      <span class="plan-north" title="La flèche nord-sud du plan se déplace (glisser son centre) et se tourne (glisser sa pointe N)">🧭 Nord</span>
       <button class="btn small" data-fit>⤢ Tout afficher</button>
       <span class="plan-tools">
         <button class="btn small" data-tool="photos" title="Déplacer, tourner et relier les photos">✋ Photos</button>
@@ -238,6 +248,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   function render() {
     const { w, h } = picSize(mode);
     world.innerHTML = `<svg class="plan-drawing" width="1" height="1"></svg>
+      <svg class="plan-roomsel" width="1" height="1"></svg>
       ${zone ? `<div class="plan-pool" style="left:${zone.x}px;top:${zone.y}px;width:${zone.w}px;height:${zone.h}px"><span>Photos non placées (${pool.size}) — glissez-en une sur le plan pour la placer, ou sur une photo pour les relier</span></div>` : ''}
       <svg class="plan-links" width="1" height="1"></svg>
       ${list
@@ -262,6 +273,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     placeNodes();
     drawLinks();
     drawDrawing();
+    drawRooms();
     bindNameInput();
   }
 
@@ -713,6 +725,21 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       }
       return;
     }
+    const crot = e.target.closest('[data-compass-rot]'), cmove = e.target.closest('[data-compass-move]');
+    const rrot = e.target.closest('[data-room-rot]'), rcorner = e.target.closest('[data-room-corner]'), rhit = e.target.closest('[data-room]');
+    if (crot || cmove) {
+      view.setPointerCapture(e.pointerId);
+      drag = { kind: crot ? 'compass-rot' : 'compass-move', sx: e.clientX, sy: e.clientY, start: { ...compassPos() }, moved: false };
+      return;
+    }
+    if (rrot || rcorner || (rhit && !e.target.closest('.plan-node'))) {
+      view.setPointerCapture(e.pointerId);
+      const key = rhit ? rhit.dataset.room : selRoom;
+      if (rhit && selRoom !== key) selectRoom(key);
+      const m = toWorld(e);
+      drag = { kind: rrot ? 'room-rot' : rcorner ? 'room-size' : 'room-move', key, corner: rcorner ? +rcorner.dataset.roomCorner : 0, sx: e.clientX, sy: e.clientY, p0: [m.x / scale(), m.y / scale()], snap: roomSnapshot(roomOf(key)), moved: false };
+      return;
+    }
     const dot = e.target.closest('[data-contact]');
     const node = e.target.closest('.plan-node');
     const hit = e.target.closest('[data-link]');
@@ -771,6 +798,18 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       panX = drag.px + dx;
       panY = drag.py + dy;
       applyView();
+    } else if (drag.kind === 'room-move' || drag.kind === 'room-size' || drag.kind === 'room-rot') {
+      roomDrag(e, drag);
+    } else if (drag.kind === 'compass-move' || drag.kind === 'compass-rot') {
+      if (drag.kind === 'compass-move') drawing.compass = { x: Math.round(drag.start.x + dx / zoom / scale()), y: Math.round(drag.start.y + dy / zoom / scale()) };
+      else {
+        const m = toWorld(e);
+        const cp = compassPos();
+        let n = (Math.atan2(m.x / scale() - cp.x, -(m.y / scale() - cp.y)) * 180) / Math.PI;
+        n = Math.round(e.shiftKey ? n / 15 * 1 : n) * (e.shiftKey ? 15 : 1);
+        setPlanNorth(((n % 360) + 360) % 360);
+      }
+      drawRooms();
     } else if (drag.kind === 'node') {
       // Dès qu'on déplace une photo, l'agrandissement disparaît.
       if (selected) {
@@ -819,6 +858,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       return saveDrawing();
     }
     if (d.draw && !d.moved) return drawClick(e, d.target);
+    if (d.kind.startsWith('room-')) return d.moved ? roomDrop(d) : undefined;
+    if (d.kind.startsWith('compass-')) return d.moved ? compassDrop(d) : undefined;
     if (d.kind === 'node' && !d.moved) {
       const now = performance.now();
       if (linkFrom && linkFrom !== d.id) {
@@ -841,7 +882,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       }
       return d.link ? selectLink(d.link.id, d.link.k) : selectLink(d.id, d.k);
     }
-    // Clic dans le vide : la photo agrandie reprend sa taille, le lien sélectionné est oublié.
+    // Clic dans le vide : la photo agrandie reprend sa taille, le lien et la pièce sélectionnés sont oubliés.
+    if (d.kind === 'pan' && !d.moved && !d.draw && selRoom) selectRoom(null);
     if (d.kind === 'pan' && !d.moved && !d.draw && (selected || selLink)) {
       unselectLink();
       if (selected) {
@@ -952,6 +994,173 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   };
   window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
+  // ---------- pièces sur le plan (sélection, déplacement, taille, rotation) et flèche nord ----------
+  const PX = 50; // pixels du plan par mètre
+  drawing.rooms = drawing.rooms || [];
+  setPlanNorth(drawing.north || 0);
+  let selRoom = null;
+  const roomOf = (key) => drawing.rooms.find((r) => r.key === key);
+  // Murs et nom d'une pièce, d'après son modèle (remplacent les précédents).
+  function writeRoomWalls(r) {
+    drawing.lines = drawing.lines.filter((l) => l.room !== r.key);
+    drawing.texts = drawing.texts.filter((t) => t.room !== r.key);
+    const c = roomCorners(r, PX);
+    const rd = (v) => Math.round(v * 2) / 2;
+    c.forEach((p, i) => {
+      const q = c[(i + 1) % 4];
+      drawing.lines.push({ x1: rd(p[0]), y1: rd(p[1]), x2: rd(q[0]), y2: rd(q[1]), room: r.key });
+    });
+    drawing.texts.push({ x: Math.round(r.cx), y: Math.round(Math.min(...c.map((p) => p[1])) + 20), text: `${r.name} (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m)`, size: 14, room: r.key });
+  }
+  function compassPos() {
+    if (drawing.compass) return drawing.compass;
+    const pts = [...pos.values()];
+    return pts.length ? { x: Math.min(...pts.map((q) => q.x)) - 90, y: Math.min(...pts.map((q) => q.y)) - 40 } : { x: -90, y: -60 };
+  }
+  function drawRooms() {
+    const svg = world.querySelector('.plan-roomsel');
+    if (!svg) return;
+    const k = scale();
+    const P = (p) => `${p[0] * k},${p[1] * k}`;
+    let html = '';
+    for (const r of drawing.rooms) {
+      const c = roomCorners(r, PX);
+      html += `<polygon class="room-hit" data-room="${escapeHtml(r.key)}" points="${c.map(P).join(' ')}"><title>${escapeHtml(r.name)} : cliquer pour la sélectionner</title></polygon>`;
+      if (r.key !== selRoom) continue;
+      html += `<polygon class="room-sel" points="${c.map(P).join(' ')}"/>`;
+      c.forEach((p, i) => (html += `<rect class="room-corner" data-room-corner="${i}" x="${p[0] * k - 7}" y="${p[1] * k - 7}" width="14" height="14"><title>Glisser : changer la taille</title></rect>`));
+      // Poignée de rotation : au-delà du milieu du premier côté.
+      const m = [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
+      const d = [m[0] - r.cx, m[1] - r.cy], n = Math.hypot(d[0], d[1]) || 1;
+      const h = [m[0] + (d[0] / n) * 30, m[1] + (d[1] / n) * 30];
+      html += `<line class="room-rot-line" x1="${m[0] * k}" y1="${m[1] * k}" x2="${h[0] * k}" y2="${h[1] * k}"/><circle class="room-rot" data-room-rot="1" cx="${h[0] * k}" cy="${h[1] * k}" r="9"><title>Glisser : tourner la pièce (le nord de ses photos suit)</title></circle>`;
+    }
+    // Flèche nord-sud.
+    const cp = compassPos();
+    html += `<g class="compass" transform="translate(${cp.x * k},${cp.y * k}) rotate(${planNorth()})">
+      <circle class="compass-base" data-compass-move="1" r="24"><title>Glisser : déplacer la flèche</title></circle>
+      <path class="compass-n" d="M0,-38 L8,-6 L0,-10 L-8,-6 Z"/><path class="compass-s" d="M0,38 L8,6 L0,10 L-8,6 Z"/>
+      <text class="compass-label" y="-44">N</text><text class="compass-label s" y="56">S</text>
+      <circle class="compass-rot" data-compass-rot="1" cy="-38" r="10"><title>Glisser : orienter le nord</title></circle>
+    </g>`;
+    svg.innerHTML = html;
+  }
+  function selectRoom(key) {
+    selRoom = key;
+    const r = key && roomOf(key);
+    help.innerHTML = r
+      ? `Pièce « ${escapeHtml(r.name)} » (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m) : glisser son contour pour la déplacer, les poignées carrées pour changer sa taille, la poignée ronde pour la tourner (le nord de ses photos suit). <button class="btn small" data-room-done>Terminer</button>`
+      : TOOL_HELP[tool] || helpDefault;
+    const done = help.querySelector('[data-room-done]');
+    if (done) done.addEventListener('click', () => selectRoom(null));
+    drawRooms();
+  }
+  // État de départ d'un geste sur une pièce : la pièce et la position de ses photos.
+  function roomSnapshot(r) {
+    return { room: { ...r }, photos: new Map(r.ids.filter((id) => pos.has(id)).map((id) => [id, { ...pos.get(id) }])) };
+  }
+  function roomDrag(e, d) {
+    const r = roomOf(d.key);
+    const s0 = d.snap.room;
+    const m = toWorld(e);
+    const P = [m.x / scale(), m.y / scale()];
+    if (d.kind === 'room-move') {
+      const ddx = (e.clientX - d.sx) / zoom / scale(), ddy = (e.clientY - d.sy) / zoom / scale();
+      r.cx = s0.cx + ddx;
+      r.cy = s0.cy + ddy;
+      d.snap.photos.forEach((q, id) => pos.set(id, { x: q.x + ddx, y: q.y + ddy }));
+    } else if (d.kind === 'room-size') {
+      const c0 = roomCorners(s0, PX);
+      const O = c0[(d.corner + 2) % 4];
+      const U = [Math.cos(s0.ang), Math.sin(s0.ang)], V = [Math.sin(s0.ang), -Math.cos(s0.ang)];
+      const sa = [-1, 1, 1, -1][d.corner], sb = [-1, -1, 1, 1][d.corner];
+      const u = (P[0] - O[0]) * U[0] + (P[1] - O[1]) * U[1], v = (P[0] - O[0]) * V[0] + (P[1] - O[1]) * V[1];
+      const wpx = Math.max(PX * 0.5, u * sa), lpx = Math.max(PX * 0.5, v * sb);
+      r.w = wpx / PX;
+      r.l = lpx / PX;
+      r.cx = O[0] + (sa * wpx * U[0] + sb * lpx * V[0]) / 2;
+      r.cy = O[1] + (sa * wpx * U[1] + sb * lpx * V[1]) / 2;
+      const fu = r.w / s0.w, fv = r.l / s0.l;
+      d.snap.photos.forEach((q, id) => {
+        const qu = (q.x - O[0]) * U[0] + (q.y - O[1]) * U[1], qv = (q.x - O[0]) * V[0] + (q.y - O[1]) * V[1];
+        pos.set(id, { x: O[0] + qu * fu * U[0] + qv * fv * V[0], y: O[1] + qu * fu * U[1] + qv * fv * V[1] });
+      });
+    } else if (d.kind === 'room-rot') {
+      const a0 = Math.atan2(d.p0[1] - s0.cy, d.p0[0] - s0.cx), a1 = Math.atan2(P[1] - s0.cy, P[0] - s0.cx);
+      let da = a1 - a0;
+      if (e.shiftKey) da = Math.round(da / (Math.PI / 12)) * (Math.PI / 12);
+      d.da = da;
+      r.ang = s0.ang + da;
+      const c = Math.cos(da), sn = Math.sin(da);
+      d.snap.photos.forEach((q, id) => {
+        const x = q.x - s0.cx, y = q.y - s0.cy;
+        pos.set(id, { x: s0.cx + x * c - y * sn, y: s0.cy + x * sn + y * c });
+      });
+    }
+    writeRoomWalls(r);
+    placeNodes();
+    drawLinks();
+    drawDrawing();
+    drawRooms();
+  }
+  // Fin d'un geste : positions, liens automatiques réorientés, et (rotation) nord des photos corrigé.
+  async function roomDrop(d) {
+    const r = roomOf(d.key);
+    const ids = [...d.snap.photos.keys()];
+    if (d.kind === 'room-rot' && d.da) {
+      const dDeg = (d.da * 180) / Math.PI;
+      for (const id of ids) {
+        const upd = await db.updatePhoto(id, (cur) => {
+          const pr = { yaw: 0, pitch: 0, roll: 0, ...cur.params };
+          const old = { yaw: pr.yaw, pitch: pr.pitch, roll: pr.roll };
+          // La pièce tourne de dDeg (sens horaire) : ce que la photo voyait au cap β est maintenant au cap
+          // β + dDeg ; on corrige son nord en conséquence (liens et coins restent sur les mêmes points).
+          const lvl = withCap(pr, levelToViewTilt(pr, 0).cap - dDeg);
+          const next = { yaw: wrapDeg(lvl.yaw), pitch: lvl.pitch, roll: lvl.roll };
+          const rm = (h) => remapHotspot(h, old, next);
+          const room = cur.room ? { ...cur.room, corners: (cur.room.corners || []).map(rm), ...(cur.room.floor ? { floor: rm(cur.room.floor) } : {}) } : cur.room;
+          return { ...cur, params: { ...cur.params, ...next }, hotspots: (cur.hotspots || []).map(rm), room, status: 'pending' };
+        });
+        if (upd) Object.assign(byId.get(id), { params: upd.params, hotspots: upd.hotspots, room: upd.room });
+      }
+    }
+    for (const id of ids) {
+      const mp = { x: Math.round(pos.get(id).x), y: Math.round(pos.get(id).y) };
+      Object.assign(byId.get(id), { mapPos: mp, mapPlaced: true });
+      await db.updatePhoto(id, (cur) => ({ ...cur, mapPos: mp, mapPlaced: true }));
+    }
+    await retargetAndSave(ids);
+    await saveDrawing();
+    drawLinks();
+    selectRoom(d.key); // dimensions à jour dans la ligne d'aide
+    if (d.kind === 'room-rot' && d.da) toast(`Pièce « ${r.name} » tournée de ${((d.da * 180) / Math.PI).toFixed(1)}° : le nord de ses ${ids.length} photo(s) a été corrigé (elles vont être reconverties).`, false, 7000);
+  }
+  // Liens automatiques des photos `ids` (et de leurs voisines) réorientés d'après le plan, enregistrés.
+  async function retargetAndSave(ids) {
+    const changed = new Set();
+    for (const id of ids) retargetAutoLinks(list, pos, id).forEach((x) => changed.add(x));
+    for (const id of changed) {
+      const hs = byId.get(id).hotspots;
+      await db.updatePhoto(id, (cur) => ({
+        ...cur,
+        hotspots: (cur.hotspots || []).map((h) => {
+          const n = hs.find((x) => x.id === h.id);
+          return n && h.auto ? { ...h, yaw: n.yaw } : h;
+        }),
+      }));
+    }
+  }
+  async function compassDrop(d) {
+    if (d.kind === 'compass-rot') {
+      drawing.north = planNorth();
+      // Le nord a tourné : tous les liens automatiques sont réorientés.
+      await retargetAndSave(list.map((p) => p.id));
+      drawLinks();
+      toast(`Nord du plan orienté à ${Math.round(planNorth())}° : liens automatiques réorientés.`);
+    }
+    await saveDrawing();
+  }
+
   // ---------- pièces : plan d'après les coins du plafond ----------
   const PX_PER_M = 50;
   const ceilIn = container.querySelector('[data-ceiling]');
@@ -972,22 +1181,17 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     const res = placeRooms(list, {
       ceilingH: drawing.ceilingH || 2.8,
       pxPerM: PX_PER_M,
+      north: planNorth(),
       freeX,
       // Pièce dont une photo est déjà placée (pas dans la zone des photos non placées) : elle s'y raccroche.
       anchorOf: (p) => (!pool.has(p.id) && p.mapPos ? pos.get(p.id) : null),
     });
     pushUndo();
-    // Murs et nom de chaque pièce (remplacent ceux d'un placement précédent de la même pièce).
+    // Pièces (modèle, murs et nom) : remplacent celles d'un placement précédent du même nom.
     for (const r of res.rooms) {
-      const key = r.name.trim().toLowerCase();
-      drawing.lines = drawing.lines.filter((l) => l.room !== key);
-      drawing.texts = drawing.texts.filter((t) => t.room !== key);
-      r.corners.forEach((c, i) => {
-        const d = r.corners[(i + 1) % 4];
-        drawing.lines.push({ x1: Math.round(c[0] * 2) / 2, y1: Math.round(c[1] * 2) / 2, x2: Math.round(d[0] * 2) / 2, y2: Math.round(d[1] * 2) / 2, room: key });
-      });
-      const cx = r.corners.reduce((s2, c) => s2 + c[0], 0) / 4, cy = Math.min(...r.corners.map((c) => c[1])) + 22;
-      drawing.texts.push({ x: Math.round(cx), y: Math.round(cy), text: `${r.name} (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m)`, size: 14, room: key });
+      const { corners, ...model } = r;
+      drawing.rooms = drawing.rooms.filter((x) => x.key !== r.key).concat([model]);
+      writeRoomWalls(model);
     }
     await saveDrawing();
     // Photos à leur place, sur le plan même sans lien.

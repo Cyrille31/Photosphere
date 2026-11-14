@@ -91,6 +91,19 @@ try {
     if (f === 'salon-a.jpg') {
       check((await page.locator('.ed-room-corner').count()) >= 2 && (await page.locator('.ed-room-lines polyline.ceil').count()) >= 1, 'éditeur : coins numérotés et ligne plafond / mur prévue affichés sur l’image');
       await page.screenshot({ path: path.join(shots, '01-editeur-piece.png') });
+      // Déplacer un coin ne déplace que lui (puis on le remet en place avec Défaire).
+      const before = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const c1 = await page.locator('.ed-room-corner').first().boundingBox();
+      await page.mouse.move(c1.x + c1.width / 2, c1.y + c1.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(c1.x + c1.width / 2 + 40, c1.y + c1.height / 2 + 15, { steps: 5 });
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      const after = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const movedOnly = before.filter((x, i) => x !== after[i]);
+      check(movedOnly.length === 1, `éditeur : glisser un coin ne déplace que lui (${movedOnly.length} coin déplacé)`);
+      await page.click('[data-undo]');
+      await page.waitForTimeout(300);
     }
     await page.click('[data-save]');
     await page.waitForSelector('.grid');
@@ -116,6 +129,93 @@ try {
   check(st.walls === 4 && /Salon/.test(st.text || ''), `plan : murs de la pièce dessinés (${st.walls} traits) et nommés (« ${st.text} »)`);
   check(st.la === 1 && st.lb === 1 && Math.abs(st.yawAB - 45) < 8, `plan : photos de la pièce reliées (cap A → B ${st.yawAB}°, attendu 45°)`);
   await page.screenshot({ path: path.join(shots, '02-plan-pieces.png') });
+
+  // ---------- plan : sélectionner, déplacer, agrandir, tourner une pièce ----------
+  const edgeMid = () => page.evaluate(() => {
+    const pg = document.querySelector('.plan-roomsel .room-hit');
+    const m = pg.getScreenCTM();
+    const pts = pg.getAttribute('points').trim().split(/\s+/).map((t) => t.split(',').map(Number));
+    const P = ([x, y]) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
+    const a = P(pts[1]), b = P(pts[2]);
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  });
+  const state = () => db(async (db, ids) => {
+    const a = await db.getPhoto(ids['salon-a.jpg']), b = await db.getPhoto(ids['salon-b.jpg']);
+    const d = await db.getPlanDrawing();
+    return { a: a.mapPos, b: b.mapPos, room: d.rooms && d.rooms[0], capA: a.params.yaw || 0, statusA: a.status, yawAB: a.hotspots[0].yaw, north: d.north || 0 };
+  }, ids);
+  let [mx, my] = await edgeMid();
+  await page.mouse.click(mx, my);
+  await page.waitForTimeout(300);
+  check((await page.locator('.plan-roomsel .room-sel').count()) === 1 && (await page.locator('.plan-roomsel .room-corner').count()) === 4, 'plan : clic sur un mur → pièce sélectionnée (poignées de taille et de rotation)');
+  let s0 = await state();
+  await page.mouse.move(mx, my);
+  await page.mouse.down();
+  await page.mouse.move(mx + 60, my + 40, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  let s1 = await state();
+  const z = await page.evaluate(() => {
+    const t = document.querySelector('.plan-world').style.transform.match(/scale\(([\d.]+)\)/);
+    return t ? +t[1] : 1;
+  });
+  const exp = [60 / z, 40 / z];
+  check(Math.abs(s1.a.x - s0.a.x - exp[0]) < 3 && Math.abs(s1.a.y - s0.a.y - exp[1]) < 3 && Math.abs(s1.b.x - s0.b.x - exp[0]) < 3 && Math.abs(s1.room.cx - s0.room.cx - exp[0]) < 3, `plan : pièce déplacée avec ses photos (${(s1.a.x - s0.a.x).toFixed(0)} ; ${(s1.a.y - s0.a.y).toFixed(0)} px)`);
+  const h = await page.locator('.plan-roomsel .room-corner').nth(2).boundingBox();
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  // Vers l'extérieur : dans le prolongement centre → coin.
+  const rc = await page.evaluate(() => {
+    const r = document.querySelector('.plan-roomsel .room-hit').getBoundingClientRect();
+    return [r.x + r.width / 2, r.y + r.height / 2];
+  });
+  const hx = h.x + h.width / 2, hy = h.y + h.height / 2, hn = Math.hypot(hx - rc[0], hy - rc[1]);
+  await page.mouse.move(hx + ((hx - rc[0]) / hn) * 60, hy + ((hy - rc[1]) / hn) * 60, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+  const s2 = await state();
+  check(s2.room.w + s2.room.l > s1.room.w + s1.room.l + 0.5, `plan : pièce agrandie par une poignée (${s1.room.w.toFixed(1)} × ${s1.room.l.toFixed(1)} → ${s2.room.w.toFixed(1)} × ${s2.room.l.toFixed(1)} m)`);
+  // Rotation : la poignée ronde tourne de ~30° autour du centre de la pièce.
+  const rh = await page.locator('.plan-roomsel .room-rot').boundingBox();
+  const ctr = await page.evaluate(() => {
+    const pg = document.querySelector('.plan-roomsel .room-hit');
+    const r = pg.getBoundingClientRect();
+    return [r.x + r.width / 2, r.y + r.height / 2];
+  });
+  const r0 = [rh.x + rh.width / 2, rh.y + rh.height / 2];
+  const ang = (30 * Math.PI) / 180, vx = r0[0] - ctr[0], vy = r0[1] - ctr[1];
+  await page.mouse.move(r0[0], r0[1]);
+  await page.mouse.down();
+  for (let k = 1; k <= 10; k++) {
+    const a = (ang * k) / 10;
+    await page.mouse.move(ctr[0] + vx * Math.cos(a) - vy * Math.sin(a), ctr[1] + vx * Math.sin(a) + vy * Math.cos(a));
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(1200);
+  const s3 = await state();
+  const dAng = ((s3.room.ang - s2.room.ang) * 180) / Math.PI;
+  const dCap = ((s3.capA - s2.capA + 540) % 360) - 180;
+  check(Math.abs(dAng - 30) < 3 && Math.abs(dCap + dAng) < 1.5 && s3.statusA === 'pending', `plan : pièce tournée de ${dAng.toFixed(1)}°, nord de ses photos corrigé de ${dCap.toFixed(1)}° (reconversion prévue)`);
+  await page.screenshot({ path: path.join(shots, '03-plan-piece-tournee.png') });
+
+  // ---------- flèche nord-sud ----------
+  const ct = await page.locator('.plan-roomsel .compass-rot').boundingBox();
+  const cb = await page.locator('.plan-roomsel .compass-base').boundingBox();
+  const cc = [cb.x + cb.width / 2, cb.y + cb.height / 2];
+  const t0 = [ct.x + ct.width / 2, ct.y + ct.height / 2];
+  const R = Math.hypot(t0[0] - cc[0], t0[1] - cc[1]);
+  await page.mouse.move(t0[0], t0[1]);
+  await page.mouse.down();
+  for (let k = 1; k <= 8; k++) {
+    const a = ((20 * k) / 8) * (Math.PI / 180);
+    await page.mouse.move(cc[0] + R * Math.sin(a), cc[1] - R * Math.cos(a));
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  const s4 = await state();
+  const dYaw = ((s4.yawAB - s3.yawAB + 540) % 360) - 180;
+  check(Math.abs(s4.north - 20) < 2 && Math.abs(dYaw + 20) < 2, `flèche nord orientée à ${s4.north}° : lien automatique réorienté de ${dYaw.toFixed(1)}°`);
+  await page.screenshot({ path: path.join(shots, '04-plan-nord.png') });
 } catch (e) {
   failures++;
   console.error(e);
