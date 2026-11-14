@@ -359,16 +359,24 @@ export function guessRoomName(name) {
     .trim();
 }
 
-// Place les pièces : photos [{ id, name, room, mapPos?, cameraH? }] → { positions: Map(id → {x, y}),
-// rooms: [{ name, corners: [[x, y]] (plan), w, l }], pairs: [[idA, idB]] } (coordonnées du plan, y vers
-// le sud ; pxPerM pixels par mètre). Une pièce dont une photo est déjà sur le plan s'y raccroche.
-export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 1.6, anchorOf = () => null, freeX = 0 } = {}) {
+// Vecteur (x : est, z : nord) de la photo → vecteur du plan (x à droite, y vers le bas), le nord du plan
+// étant tourné de `northDeg` (sens horaire depuis le haut).
+export function toPlan([x, z], northDeg = 0) {
+  const n = northDeg * DEG, c = Math.cos(n), s = Math.sin(n);
+  return [x * c - z * s, -(x * s + z * c)];
+}
+
+// Place les pièces : photos [{ id, name, room, cameraH? }] → { positions: Map(id → {x, y}),
+// rooms: [{ key, name, cx, cy, w, l, ang, ids, corners }], pairs: [[idA, idB]] }. Coordonnées du plan
+// (y vers le bas), pxPerM pixels par mètre ; w, l en mètres ; ang : angle (radians, écran) de l'axe w.
+// Une pièce dont une photo est déjà sur le plan (anchorOf) s'y raccroche ; sinon elle se met à droite.
+export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 1.6, anchorOf = () => null, freeX = 0, north = 0 } = {}) {
   const groups = new Map();
   for (const p of photos) {
     const pr = photoRoom(p.room, ceilingH, p.cameraH || defaultCamH);
     if (!pr) continue;
     const key = String((p.room && p.room.name) || p.id).trim().toLowerCase();
-    if (!groups.has(key)) groups.set(key, { name: (p.room && p.room.name) || p.name, items: [] });
+    if (!groups.has(key)) groups.set(key, { key, name: (p.room && p.room.name) || p.name, items: [] });
     groups.get(key).items.push({ p, ...pr });
   }
   const positions = new Map(), rooms = [], pairs = [];
@@ -387,27 +395,39 @@ export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 
     }
     W /= g.items.length;
     L /= g.items.length;
-    // Centre de la pièce sur le plan : d'après une photo déjà placée, sinon à droite du reste.
+    const off = (it) => toPlan([it.rect.cx, it.rect.cz], north).map((v) => v * pxPerM); // centre de la pièce vu de la photo
     let C = null;
     for (const it of g.items) {
       const a = anchorOf(it.p);
       if (a) {
-        C = { x: a.x + it.rect.cx * pxPerM, y: a.y - it.rect.cz * pxPerM };
+        const o = off(it);
+        C = { x: a.x + o[0], y: a.y + o[1] };
         break;
       }
     }
+    const U = toPlan([Math.cos(phi), Math.sin(phi)], north);
+    const ang = Math.atan2(U[1], U[0]);
     if (!C) {
-      const span = (Math.abs(W * Math.cos(phi)) + Math.abs(L * Math.sin(phi))) * pxPerM;
+      const span = (Math.abs(W * U[0]) + Math.abs(L * U[1])) * pxPerM;
       C = { x: nextX + span / 2, y: 0 };
       nextX += span + 2 * pxPerM;
     }
-    // Photo : à l'opposé du centre de son rectangle (l'appareil est à l'origine de son repère).
-    for (const it of g.items) positions.set(it.p.id, { x: C.x - it.rect.cx * pxPerM, y: C.y + it.rect.cz * pxPerM });
-    const rect = { cx: 0, cz: 0, phi, w: W, l: L };
-    rooms.push({ name: g.name, corners: rectCorners(rect).map(([x, z]) => [C.x + x * pxPerM, C.y - z * pxPerM]), w: W, l: L });
+    for (const it of g.items) {
+      const o = off(it);
+      positions.set(it.p.id, { x: C.x - o[0], y: C.y - o[1] });
+    }
+    const room = { key: g.key, name: g.name, cx: C.x, cy: C.y, w: W, l: L, ang, ids: g.items.map((it) => it.p.id) };
+    room.corners = roomCorners(room, pxPerM);
+    rooms.push(room);
     for (let i = 0; i < g.items.length; i++) for (let j = i + 1; j < g.items.length; j++) pairs.push([g.items[i].p.id, g.items[j].p.id]);
   }
   return { positions, rooms, pairs };
+}
+
+// Coins (plan) d'une pièce { cx, cy, w, l (m), ang } : ordre (-,-), (+,-), (+,+), (-,+) selon les axes.
+export function roomCorners(r, pxPerM = 50) {
+  const U = [Math.cos(r.ang), Math.sin(r.ang)], V = [Math.sin(r.ang), -Math.cos(r.ang)];
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [r.cx + ((a * r.w * U[0] + b * r.l * V[0]) * pxPerM) / 2, r.cy + ((a * r.w * U[1] + b * r.l * V[1]) * pxPerM) / 2]);
 }
 
 // Coins du plafond (cap, élévation en degrés) d'un rectangle trouvé par fitCeilingRect (unités Hc = 1).

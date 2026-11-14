@@ -89,11 +89,16 @@ export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v
 // Dessin du plan (traits des pièces, textes) : { lines: [{ x1, y1, x2, y2 }], texts: [{ x, y, text, size }] }.
 export async function getPlanDrawing() {
   const d = await getSetting('planDrawing');
-  return { lines: (d && d.lines) || [], texts: (d && d.texts) || [], ...(d && d.ceilingH ? { ceilingH: d.ceilingH } : {}) };
+  const extra = {};
+  for (const k of ['ceilingH', 'rooms', 'north', 'compass']) if (d && d[k] != null) extra[k] = d[k];
+  return { lines: (d && d.lines) || [], texts: (d && d.texts) || [], ...extra };
 }
 export async function putPlanDrawing(d) {
-  // ceilingH : hauteur sous plafond commune (plan des pièces).
-  await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [], ...(d.ceilingH ? { ceilingH: d.ceilingH } : {}) });
+  // ceilingH : hauteur sous plafond commune ; rooms : pièces dessinées ; north : direction du nord sur le
+  // plan (degrés) ; compass : position de la flèche nord-sud.
+  const extra = {};
+  for (const k of ['ceilingH', 'rooms', 'north', 'compass']) if (d[k] != null) extra[k] = d[k];
+  await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [], ...extra });
   notify();
 }
 

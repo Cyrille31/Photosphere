@@ -699,7 +699,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     if (document.activeElement !== cam) cam.value = +(r ? r.camH : p.room.camH || defaultCamH()).toFixed(2);
     const n = p.room.corners.length;
     $('.room-info').innerHTML = r
-      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. Vérifiez que la ligne rouge suit la jonction plafond / mur ; faites glisser un coin pour le corriger.`
+      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. La ligne rouge relie les coins : elle doit suivre la jonction plafond / mur ; faites glisser un coin pour le corriger (le plan utilise le rectangle le plus proche).`
       : n
         ? `${n} coin(s) sur 4.`
         : 'Aucun coin pour l’instant.';
@@ -718,30 +718,35 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     }
     const r = roomInfo();
     if (r) {
-      const unit = rectFromPoints(p.room.corners.map((c) => cornerXZ(c, 1)));
+      // Ligne plafond / mur : les côtés droits qui joignent les coins cliqués (dans l'ordre du tour), vus
+      // depuis l'appareil ; ligne sol / mur : les mêmes côtés au niveau du sol.
+      const pts = p.room.corners.map((c) => ({ c, xz: cornerXZ(c, 1) })).sort((u, v) => u.c.yaw - v.c.yaw);
       const k = r.camH / r.Hc;
       for (const [cls, f] of [['ceil', (rr) => Math.atan(1 / rr)], ['floor', (rr) => -Math.atan(k / rr)]]) {
-        let seg = [], path = '';
-        const flush = () => {
+        let path = '';
+        for (let i = 0; i < pts.length; i++) {
+          const A = pts[i].xz, B = pts[(i + 1) % pts.length].xz;
+          let seg = [];
+          for (let t = 0; t <= 1.0001; t += 1 / 40) {
+            const x = A[0] + (B[0] - A[0]) * t, z = A[1] + (B[1] - A[1]) * t;
+            const sp = renderer.project(dirFromLonLat(Math.atan2(x, z), f(Math.hypot(x, z))), frame);
+            if (!sp) {
+              if (seg.length > 1) path += `<polyline class="${cls}" points="${seg.join(' ')}"/>`;
+              seg = [];
+              continue;
+            }
+            const pt = [sp.x / dpr, sp.y / dpr];
+            if (seg.length) {
+              const [px, py] = seg[seg.length - 1].split(',').map(Number);
+              if (Math.abs(px - pt[0]) > 150 || Math.abs(py - pt[1]) > 150) {
+                if (seg.length > 1) path += `<polyline class="${cls}" points="${seg.join(' ')}"/>`;
+                seg = [];
+              }
+            }
+            seg.push(pt.map((v) => v.toFixed(1)).join(','));
+          }
           if (seg.length > 1) path += `<polyline class="${cls}" points="${seg.join(' ')}"/>`;
-          seg = [];
-        };
-        for (let a = -180; a <= 180; a += 1.5) {
-          const rr = rectDistance(unit, a * DEG);
-          const sp = Number.isFinite(rr) ? renderer.project(dirFromLonLat(a * DEG, f(rr)), frame) : null;
-          if (!sp) {
-            flush();
-            continue;
-          }
-          const pt = `${(sp.x / dpr).toFixed(1)},${(sp.y / dpr).toFixed(1)}`;
-          // Saut (bord de la vue à plat, arrière de la vue) : nouveau morceau.
-          if (seg.length) {
-            const [px, py] = seg[seg.length - 1].split(',').map(Number);
-            if (Math.abs(px - sp.x / dpr) > 150 || Math.abs(py - sp.y / dpr) > 150) flush();
-          }
-          seg.push(pt);
         }
-        flush();
         html += `<svg class="ed-room-lines">${path}</svg>`;
       }
     }
