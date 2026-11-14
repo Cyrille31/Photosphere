@@ -142,7 +142,8 @@ try {
   const state = () => db(async (db, ids) => {
     const a = await db.getPhoto(ids['salon-a.jpg']), b = await db.getPhoto(ids['salon-b.jpg']);
     const d = await db.getPlanDrawing();
-    return { a: a.mapPos, b: b.mapPos, room: d.rooms && d.rooms[0], capA: a.params.yaw || 0, statusA: a.status, yawAB: a.hotspots[0].yaw, north: d.north || 0 };
+    const n = document.querySelector('.plan-node .plan-pic');
+    return { a: a.mapPos, b: b.mapPos, room: d.rooms && d.rooms[0], capA: a.params.yaw || 0, statusA: a.status, yawAB: a.hotspots[0].yaw, north: d.north || 0, nodeW: n ? Math.round(n.getBoundingClientRect().width) : 0 };
   }, ids);
   let [mx, my] = await edgeMid();
   await page.mouse.click(mx, my);
@@ -216,6 +217,75 @@ try {
   const dYaw = ((s4.yawAB - s3.yawAB + 540) % 360) - 180;
   check(Math.abs(s4.north - 20) < 2 && Math.abs(dYaw + 20) < 2, `flèche nord orientée à ${s4.north}° : lien automatique réorienté de ${dYaw.toFixed(1)}°`);
   await page.screenshot({ path: path.join(shots, '04-plan-nord.png') });
+
+  // ---------- rotation avec Maj : côtés sur des angles de 15 en 15° ----------
+  {
+    const rh2 = await page.locator('.plan-roomsel .room-rot').boundingBox();
+    const c2 = await page.evaluate(() => {
+      const r = document.querySelector('.plan-roomsel .room-hit').getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    });
+    const q0 = [rh2.x + rh2.width / 2, rh2.y + rh2.height / 2];
+    const ux = q0[0] - c2[0], uy = q0[1] - c2[1];
+    await page.mouse.move(q0[0], q0[1]);
+    await page.mouse.down();
+    await page.keyboard.down('Shift');
+    for (let k = 1; k <= 6; k++) {
+      const a = ((-11 * k) / 6) * (Math.PI / 180);
+      await page.mouse.move(c2[0] + ux * Math.cos(a) - uy * Math.sin(a), c2[1] + ux * Math.sin(a) + uy * Math.cos(a));
+    }
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(1000);
+    const s5 = await state();
+    const deg = (((s5.room.ang * 180) / Math.PI) % 15 + 15) % 15;
+    check(Math.min(deg, 15 - deg) < 0.01, `plan : Maj + rotation → côtés à un multiple de 15° (${((s5.room.ang * 180) / Math.PI).toFixed(2)}°)`);
+  }
+
+  // ---------- nom de la pièce : petit, dans un coin, déplaçable ----------
+  {
+    const lab = page.locator('.plan-roomsel .room-label-hit').first();
+    const lb = await lab.boundingBox();
+    const d0 = await db(async (db) => (await db.getPlanDrawing()).texts.find((t) => t.room === 'salon'));
+    await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(lb.x + lb.width / 2 + 40, lb.y + lb.height / 2 - 30, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    const d1 = await db(async (db) => (await db.getPlanDrawing()).texts.find((t) => t.room === 'salon'));
+    check(d0.size <= 12 && d0.text === 'Salon' && d1.x > d0.x + 10 && d1.y < d0.y - 8, `plan : nom de la pièce en petit (${d0.size}) et déplaçable (${d0.x},${d0.y} → ${d1.x},${d1.y})`);
+  }
+
+  // ---------- échelle ----------
+  {
+    const s6 = await state();
+    const d0 = await db(async (db) => db.getPlanDrawing());
+    const se = await page.locator('.plan-roomsel .scale-end').boundingBox();
+    const label0 = await page.locator('.plan-roomsel .scale-label').textContent();
+    const sx = se.x + se.width / 2, sy = se.y + se.height / 2;
+    const bar = await page.evaluate(() => {
+      const p = document.querySelector('.plan-roomsel .scale-line').getBoundingClientRect();
+      return p.width;
+    });
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + bar, sy, { steps: 8 }); // longueur doublée
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+    const s7 = await state();
+    const d1 = await db(async (db) => db.getPlanDrawing());
+    const fA = Math.hypot(s7.b.x - s7.a.x, s7.b.y - s7.a.y) / Math.hypot(s6.b.x - s6.a.x, s6.b.y - s6.a.y);
+    const wall = (d) => { const l = d.lines.find((x) => x.room === 'salon'); return Math.hypot(l.x2 - l.x1, l.y2 - l.y1); };
+    const fW = wall(d1) / wall(d0);
+    const nodeW0 = s6.nodeW, nodeW1 = s7.nodeW;
+    check(Math.abs((d1.pxPerM || 50) / (d0.pxPerM || 50) - 2) < 0.15 && Math.abs(fA - 2) < 0.15 && Math.abs(fW - 2) < 0.15 && Math.abs(s7.room.w - s6.room.w) < 1e-6 && Math.abs(nodeW1 - nodeW0) < 0.5,
+      `plan : échelle ${label0} doublée → ${d1.pxPerM} px/m, distances ×${fA.toFixed(2)}, murs ×${fW.toFixed(2)}, pièce ${s7.room.w.toFixed(1)} m, photos de même taille (${nodeW0} → ${nodeW1} px)`);
+    await page.screenshot({ path: path.join(shots, '05-plan-echelle.png') });
+    await page.click('[data-room-done]').catch(() => {});
+    await page.click('[data-fit]');
+    await page.waitForTimeout(6000); // messages refermés
+    await page.screenshot({ path: path.join(shots, '06-plan-vue.png') });
+  }
 } catch (e) {
   failures++;
   console.error(e);

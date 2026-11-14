@@ -725,6 +725,21 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       }
       return;
     }
+    const scaleEnd = e.target.closest('[data-scale-end]'), rlabel = e.target.closest('[data-room-label]');
+    // Poignées du plan : pas de sélection ni de glisser-déposer natif du texte (il annulerait le geste).
+    if (e.target.closest('.plan-roomsel')) e.preventDefault();
+    if (scaleEnd) {
+      view.setPointerCapture(e.pointerId);
+      drag = scaleStart(e);
+      return;
+    }
+    if (rlabel) {
+      view.setPointerCapture(e.pointerId);
+      const r = roomOf(rlabel.dataset.roomLabel);
+      const lp = labelPos(r);
+      drag = { kind: 'label', key: r.key, sx: e.clientX, sy: e.clientY, start: lp, moved: false };
+      return;
+    }
     const crot = e.target.closest('[data-compass-rot]'), cmove = e.target.closest('[data-compass-move]');
     const rrot = e.target.closest('[data-room-rot]'), rcorner = e.target.closest('[data-room-corner]'), rhit = e.target.closest('[data-room]');
     if (crot || cmove) {
@@ -798,6 +813,14 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       panX = drag.px + dx;
       panY = drag.py + dy;
       applyView();
+    } else if (drag.kind === 'scale') {
+      scaleDrag(e, drag);
+    } else if (drag.kind === 'label') {
+      const r = roomOf(drag.key);
+      r.label = { dx: +((drag.start[0] + dx / zoom / scale() - r.cx) / ppm()).toFixed(3), dy: +((drag.start[1] + dy / zoom / scale() - r.cy) / ppm()).toFixed(3) };
+      writeRoomWalls(r);
+      drawDrawing();
+      drawRooms();
     } else if (drag.kind === 'room-move' || drag.kind === 'room-size' || drag.kind === 'room-rot') {
       roomDrag(e, drag);
     } else if (drag.kind === 'compass-move' || drag.kind === 'compass-rot') {
@@ -860,6 +883,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     if (d.draw && !d.moved) return drawClick(e, d.target);
     if (d.kind.startsWith('room-')) return d.moved ? roomDrop(d) : undefined;
     if (d.kind.startsWith('compass-')) return d.moved ? compassDrop(d) : undefined;
+    if (d.kind === 'scale') return d.moved ? scaleDrop(d) : undefined;
+    if (d.kind === 'label') return d.moved ? saveDrawing() : selectRoom(d.key);
     if (d.kind === 'node' && !d.moved) {
       const now = performance.now();
       if (linkFrom && linkFrom !== d.id) {
@@ -995,7 +1020,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   window.addEventListener('keydown', onKey);
   container.querySelector('[data-fit]').addEventListener('click', fit);
   // ---------- pièces sur le plan (sélection, déplacement, taille, rotation) et flèche nord ----------
-  const PX = 50; // pixels du plan par mètre
+  // Échelle du plan (pixels par mètre), réglable par la barre d'échelle sous la flèche nord-sud.
+  const ppm = () => drawing.pxPerM || 50;
   drawing.rooms = drawing.rooms || [];
   setPlanNorth(drawing.north || 0);
   let selRoom = null;
@@ -1004,13 +1030,40 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   function writeRoomWalls(r) {
     drawing.lines = drawing.lines.filter((l) => l.room !== r.key);
     drawing.texts = drawing.texts.filter((t) => t.room !== r.key);
-    const c = roomCorners(r, PX);
+    const c = roomCorners(r, ppm());
     const rd = (v) => Math.round(v * 2) / 2;
     c.forEach((p, i) => {
       const q = c[(i + 1) % 4];
       drawing.lines.push({ x1: rd(p[0]), y1: rd(p[1]), x2: rd(q[0]), y2: rd(q[1]), room: r.key });
     });
-    drawing.texts.push({ x: Math.round(r.cx), y: Math.round(Math.min(...c.map((p) => p[1])) + 20), text: `${r.name} (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m)`, size: 14, room: r.key });
+    const lp = labelPos(r);
+    drawing.texts.push({ x: Math.round(lp[0]), y: Math.round(lp[1]), text: r.name, size: LABEL_SIZE, room: r.key });
+  }
+  // Nom de la pièce, en petit : dans le coin en bas à gauche (à l'écran), sauf s'il a été déplacé
+  // (r.label : décalage depuis le centre, en mètres).
+  const LABEL_SIZE = 11;
+  const labelW = (r) => Math.max(20, r.name.length * LABEL_SIZE * 0.6);
+  function labelPos(r) {
+    if (r.label) return [r.cx + r.label.dx * ppm(), r.cy + r.label.dy * ppm()];
+    const c = roomCorners(r, ppm());
+    let q = c[0];
+    for (const p of c) if (p[1] - p[0] > q[1] - q[0]) q = p;
+    const hw = labelW(r) / 2 + 6, hh = 10;
+    const inside = (x, y) => {
+      let ins = false;
+      for (let i = 0, j = 3; i < 4; j = i++) {
+        const [xi, yi] = c[i], [xj, yj] = c[j];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) ins = !ins;
+      }
+      return ins;
+    };
+    let x = q[0] + hw, y = q[1] - hh;
+    // Pièce tournée : on rapproche l'étiquette du centre jusqu'à ce qu'elle tienne dedans.
+    for (let t = 0; t < 12 && ![[-1, -1], [1, -1], [1, 1], [-1, 1]].every(([a, b]) => inside(x + a * hw, y + b * hh)); t++) {
+      x += (r.cx - x) * 0.2;
+      y += (r.cy - y) * 0.2;
+    }
+    return [x, y];
   }
   function compassPos() {
     if (drawing.compass) return drawing.compass;
@@ -1024,7 +1077,9 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     const P = (p) => `${p[0] * k},${p[1] * k}`;
     let html = '';
     for (const r of drawing.rooms) {
-      const c = roomCorners(r, PX);
+      const c = roomCorners(r, ppm());
+      const lp = labelPos(r), lw = labelW(r) * k, lh = LABEL_SIZE * 1.4 * k;
+      html += `<rect class="room-label-hit" data-room-label="${escapeHtml(r.key)}" x="${lp[0] * k - lw / 2}" y="${lp[1] * k - lh / 2}" width="${lw}" height="${lh}"><title>Glisser : déplacer le nom de la pièce</title></rect>`;
       html += `<polygon class="room-hit" data-room="${escapeHtml(r.key)}" points="${c.map(P).join(' ')}"><title>${escapeHtml(r.name)} : cliquer pour la sélectionner</title></polygon>`;
       if (r.key !== selRoom) continue;
       html += `<polygon class="room-sel" points="${c.map(P).join(' ')}"/>`;
@@ -1043,7 +1098,65 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       <text class="compass-label" y="-44">N</text><text class="compass-label s" y="56">S</text>
       <circle class="compass-rot" data-compass-rot="1" cy="-38" r="10"><title>Glisser : orienter le nord</title></circle>
     </g>`;
+    // Barre d'échelle, sous la flèche.
+    const sb = scaleBar(drag && drag.kind === 'scale' ? drag.L : null);
+    const len = sb.L * ppm() * k;
+    html += `<g class="scalebar" transform="translate(${sb.x * k},${sb.y * k})">
+      <rect class="scale-bg" x="-8" y="-20" width="${len + 16}" height="32" rx="4"/>
+      <path class="scale-line" d="M0,-5 V5 M0,0 H${len} M${len},-5 V5"/>
+      <text class="scale-label" x="${len / 2}" y="-8">${String(sb.L).replace('.', ',')} m</text>
+      <circle class="scale-end" data-scale-end="1" cx="${len}" cy="0" r="9"><title>Glisser : changer l'échelle (toutes les distances du plan suivent, pas la taille des photos)</title></circle>
+    </g>`;
     svg.innerHTML = html;
+  }
+  // Barre d'échelle : longueur « ronde » (en mètres) d'au moins 40 pixels du plan.
+  function scaleBar(L) {
+    const cp = compassPos();
+    if (!L) L = [0.25, 0.5, 1, 2, 5, 10, 20, 50, 100].find((v) => v * ppm() >= 40) || 100;
+    return { x: cp.x - 30, y: cp.y + 82, L };
+  }
+  // Changer l'échelle : photos, traits, textes et pièces s'écartent (ou se rapprochent) depuis la flèche,
+  // les pièces gardent leurs dimensions en mètres ; la taille des photos ne change pas.
+  function scaleStart(e) {
+    const sb = scaleBar();
+    const ids = list.filter((p) => !pool.has(p.id)).map((p) => p.id);
+    return {
+      kind: 'scale', sx: e.clientX, sy: e.clientY, moved: false, L: sb.L, x0: sb.x, O: { ...compassPos() }, ppm0: ppm(),
+      photos: new Map(ids.map((id) => [id, { ...pos.get(id) }])),
+      lines: drawing.lines.filter((l) => !l.room).map((l) => ({ ...l })),
+      texts: drawing.texts.filter((t) => !t.room).map((t) => ({ ...t })),
+      rooms: drawing.rooms.map((r) => ({ ...r })),
+    };
+  }
+  function scaleDrag(e, d) {
+    const m = toWorld(e);
+    const P1 = Math.min(1000, Math.max(5, (m.x / scale() - d.x0) / d.L));
+    const f = P1 / d.ppm0, O = d.O;
+    const sx = (x) => O.x + (x - O.x) * f, sy = (y) => O.y + (y - O.y) * f;
+    const r2 = (v) => Math.round(v * 2) / 2;
+    drawing.pxPerM = +P1.toFixed(2);
+    d.photos.forEach((q, id) => pos.set(id, { x: sx(q.x), y: sy(q.y) }));
+    drawing.lines = d.lines.map((l) => ({ ...l, x1: r2(sx(l.x1)), y1: r2(sy(l.y1)), x2: r2(sx(l.x2)), y2: r2(sy(l.y2)) }));
+    drawing.texts = d.texts.map((t) => ({ ...t, x: Math.round(sx(t.x)), y: Math.round(sy(t.y)) }));
+    drawing.rooms = d.rooms.map((r) => ({ ...r, cx: sx(r.cx), cy: sy(r.cy) }));
+    drawing.rooms.forEach((r) => writeRoomWalls(r));
+    placeNodes();
+    drawLinks();
+    drawDrawing();
+    drawRooms();
+  }
+  async function scaleDrop(d) {
+    for (const id of d.photos.keys()) {
+      const mp = { x: Math.round(pos.get(id).x), y: Math.round(pos.get(id).y) };
+      byId.get(id).mapPos = mp;
+      await db.updatePhoto(id, (cur) => ({ ...cur, mapPos: mp }));
+    }
+    // Les retours en arrière du dessin ne suivraient pas les photos : on les oublie.
+    undoStack.length = 0;
+    await saveDrawing();
+    await layout();
+    render();
+    toast(`Échelle du plan : ${Math.round(ppm())} pixels par mètre.`);
   }
   function selectRoom(key) {
     selRoom = key;
@@ -1070,14 +1183,16 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       r.cy = s0.cy + ddy;
       d.snap.photos.forEach((q, id) => pos.set(id, { x: q.x + ddx, y: q.y + ddy }));
     } else if (d.kind === 'room-size') {
-      const c0 = roomCorners(s0, PX);
+      const c0 = roomCorners(s0, ppm());
       const O = c0[(d.corner + 2) % 4];
       const U = [Math.cos(s0.ang), Math.sin(s0.ang)], V = [Math.sin(s0.ang), -Math.cos(s0.ang)];
       const sa = [-1, 1, 1, -1][d.corner], sb = [-1, -1, 1, 1][d.corner];
       const u = (P[0] - O[0]) * U[0] + (P[1] - O[1]) * U[1], v = (P[0] - O[0]) * V[0] + (P[1] - O[1]) * V[1];
+      const PX = ppm();
       const wpx = Math.max(PX * 0.5, u * sa), lpx = Math.max(PX * 0.5, v * sb);
       r.w = wpx / PX;
       r.l = lpx / PX;
+      delete r.label; // nom replacé dans le coin
       r.cx = O[0] + (sa * wpx * U[0] + sb * lpx * V[0]) / 2;
       r.cy = O[1] + (sa * wpx * U[1] + sb * lpx * V[1]) / 2;
       const fu = r.w / s0.w, fv = r.l / s0.l;
@@ -1088,7 +1203,9 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     } else if (d.kind === 'room-rot') {
       const a0 = Math.atan2(d.p0[1] - s0.cy, d.p0[0] - s0.cx), a1 = Math.atan2(P[1] - s0.cy, P[0] - s0.cx);
       let da = a1 - a0;
-      if (e.shiftKey) da = Math.round(da / (Math.PI / 12)) * (Math.PI / 12);
+      // Maj : côtés de la pièce sur des angles de 15 en 15° par rapport à la grille.
+      if (e.shiftKey) da = Math.round((s0.ang + da) / (Math.PI / 12)) * (Math.PI / 12) - s0.ang;
+      delete r.label;
       d.da = da;
       r.ang = s0.ang + da;
       const c = Math.cos(da), sn = Math.sin(da);
@@ -1162,7 +1279,6 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   }
 
   // ---------- pièces : plan d'après les coins du plafond ----------
-  const PX_PER_M = 50;
   const ceilIn = container.querySelector('[data-ceiling]');
   ceilIn.value = drawing.ceilingH || 2.8;
   ceilIn.addEventListener('change', async () => {
@@ -1180,7 +1296,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     const freeX = xs.length ? Math.max(...xs) + 150 : 0;
     const res = placeRooms(list, {
       ceilingH: drawing.ceilingH || 2.8,
-      pxPerM: PX_PER_M,
+      pxPerM: ppm(),
       north: planNorth(),
       freeX,
       // Pièce dont une photo est déjà placée (pas dans la zone des photos non placées) : elle s'y raccroche.
@@ -1261,6 +1377,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     })
   );
 
+  // Noms des pièces au format actuel (petits, dans un coin).
+  drawing.rooms.forEach((r) => writeRoomWalls(r));
   await layout();
   render();
   setTool('photos');
