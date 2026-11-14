@@ -68,53 +68,38 @@ export function dominantOrientation(walls) {
   return (best + 0.5) * DEG;
 }
 
-// Droite (moindres carrés robustes) passant au mieux par des points : { nx, nz, c } avec nx·x + nz·z = c.
-function fitLine(pts, guessN) {
-  let n = guessN, c = 0, cur = pts;
-  for (let it = 0; it < 4; it++) {
-    if (cur.length < 3) break;
-    let sw = 0, mx = 0, mz = 0;
-    for (const p of cur) (sw += p.w), (mx += p.w * p.x), (mz += p.w * p.z);
-    mx /= sw;
-    mz /= sw;
-    let sxx = 0, szz = 0, sxz = 0;
-    for (const p of cur) {
-      const dx = p.x - mx, dz = p.z - mz;
-      sxx += p.w * dx * dx;
-      szz += p.w * dz * dz;
-      sxz += p.w * dx * dz;
-    }
-    // Normale = vecteur propre de la plus petite valeur propre.
-    const t = 0.5 * Math.atan2(2 * sxz, sxx - szz); // direction de la droite
-    n = [-Math.sin(t), Math.cos(t)];
-    if (n[0] * guessN[0] + n[1] * guessN[1] < 0) n = [-n[0], -n[1]];
-    c = n[0] * mx + n[1] * mz;
-    const res = cur.map((p) => Math.abs(n[0] * p.x + n[1] * p.z - c)).sort((a, b) => a - b);
-    const tol = Math.max(0.06, 2.5 * res[res.length >> 1]);
-    cur = cur.filter((p) => Math.abs(n[0] * p.x + n[1] * p.z - c) < tol);
+const median = (v) => {
+  const s = [...v].sort((a, b) => a - b);
+  return s.length ? s[s.length >> 1] : 0;
+};
+
+// Mur de normale proche de `dirA` (radians, repère x/z) : position (médiane robuste des points qui lui
+// font face), puis petite rotation (±10°) si elle l'ajuste mieux (pièce en trapèze).
+function fitWall(walls, dirA) {
+  const sector = walls.filter((p) => Math.abs(((Math.atan2(p.z, p.x) - dirA + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) < 32 * DEG);
+  if (sector.length < 6) return null;
+  let best = null;
+  for (let dd = -10; dd <= 10; dd += 1) {
+    const a = dirA + dd * DEG;
+    const nx = Math.cos(a), nz = Math.sin(a);
+    const d = sector.map((p) => nx * p.x + nz * p.z);
+    const c = median(d);
+    // Coût : écart médian au mur, plus une légère préférence pour les murs à angle droit.
+    const cost = median(d.map((v) => Math.abs(v - c))) + 0.004 * Math.abs(dd);
+    if (!best || cost < best.cost) best = { nx, nz, c, cost };
   }
-  return { nx: n[0], nz: n[1], c };
+  return best;
 }
 
-// Quadrilatère du sol : un mur par côté (secteurs de ±40° autour des 4 directions dominantes), droite
-// ajustée sur chaque mur, coins aux intersections des murs voisins. Renvoie { corners: [[x, z] ×4],
-// phi, ceil, sides } (coins dans l'ordre, repère de la photo, en hauteurs d'objectif).
+// Quadrilatère du sol : un mur par côté (secteurs autour des 4 directions dominantes), coins aux
+// intersections des murs voisins. Renvoie { corners: [[x, z] ×4], phi, ceil, walls } (coins dans l'ordre,
+// repère de la photo, en hauteurs d'objectif).
 export function roomQuad(depth, opts = {}) {
   const { walls, ceil } = wallProfile(depth, opts);
   const phi = dominantOrientation(walls);
   const lines = [];
-  for (let k = 0; k < 4; k++) {
-    const dirA = phi + (k * Math.PI) / 2; // direction (repère x/z) de la normale du mur
-    const n = [Math.cos(dirA), Math.sin(dirA)];
-    // Points dont la direction depuis la caméra est proche de cette normale.
-    const pts = walls.filter((p) => {
-      const ang = Math.atan2(p.z, p.x);
-      let d = Math.abs(((ang - dirA + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
-      return d < 40 * DEG;
-    });
-    lines.push(pts.length >= 6 ? fitLine(pts, n) : null);
-  }
-  if (lines.some((l) => !l)) return { corners: null, phi, ceil, walls };
+  for (let k = 0; k < 4; k++) lines.push(fitWall(walls, phi + (k * Math.PI) / 2));
+  if (lines.some((l) => !l || l.c <= 0)) return { corners: null, phi, ceil, walls };
   const corners = [];
   for (let k = 0; k < 4; k++) {
     const a = lines[k], b = lines[(k + 1) % 4];
