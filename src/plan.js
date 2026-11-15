@@ -226,6 +226,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     </div>
     <div class="plan-view">
       <div class="plan-world"></div>
+      <div class="plan-roompanel" hidden></div>
     </div>
   </div>`;
   bindManualButtons(container);
@@ -254,9 +255,10 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       ${list
         .map(
           (p) => `<div class="plan-node ${mode}${p.id === selected ? ' selected' : ''}" data-id="${p.id}" style="width:${w * zf(p.id)}px;margin:${(-h * zf(p.id)) / 2}px 0 0 ${(-w * zf(p.id)) / 2}px">
+            ${p.id === drawing.start ? '<div class="plan-start" title="Photo de départ du parcours">Départ ▼</div>' : ''}
             <div class="plan-pic" style="width:${w * zf(p.id)}px;height:${h * zf(p.id)}px;${thumbs.has(p.id) ? `background-image:url('${thumbs.get(p.id)}');` : ''}"></div>
             ${p.id === selected ? `<input class="plan-name-input" value="${escapeHtml(p.name)}" aria-label="Nom de la photo" title="Modifier le nom (Entrée pour valider)">` : `<span class="plan-name">${escapeHtml(p.name)}</span>`}
-            <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button></div>
+            <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button><button class="btn small" data-act="start" title="Le parcours partagé (et la visite exportée) commence par cette photo">🚩 Départ</button></div>
           </div>`
         )
         .join('')}
@@ -267,6 +269,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       b.addEventListener('click', () => {
         const id = b.closest('.plan-node').dataset.id;
         if (b.dataset.act === 'link') startLink(id);
+        else if (b.dataset.act === 'start') setStart(id);
         else onOpen(id, b.dataset.act);
       })
     );
@@ -275,6 +278,14 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     drawDrawing();
     drawRooms();
     bindNameInput();
+  }
+
+  // Photo de départ du parcours (enregistrée avec le plan, reprise dans photosphere.json).
+  async function setStart(id) {
+    drawing.start = id;
+    await saveDrawing();
+    render();
+    toast(`Le parcours commencera par « ${byId.get(id).name} ».`);
   }
 
   // Nom de la photo agrandie : Entrée ou clic ailleurs pour valider, Échap pour annuler.
@@ -1084,8 +1095,9 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       if (r.key !== selRoom) continue;
       html += `<polygon class="room-sel" points="${c.map(P).join(' ')}"/>`;
       c.forEach((p, i) => (html += `<rect class="room-corner" data-room-corner="${i}" x="${p[0] * k - 7}" y="${p[1] * k - 7}" width="14" height="14"><title>Glisser : changer la taille</title></rect>`));
-      // Poignée de rotation : au-delà du milieu du premier côté.
-      const m = [(c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2];
+      // Poignée de rotation : au-delà du milieu du côté le plus haut à l'écran.
+      const mids = c.map((p, i) => [(p[0] + c[(i + 1) % 4][0]) / 2, (p[1] + c[(i + 1) % 4][1]) / 2]);
+      const m = mids.reduce((a, b) => (b[1] < a[1] ? b : a));
       const d = [m[0] - r.cx, m[1] - r.cy], n = Math.hypot(d[0], d[1]) || 1;
       const h = [m[0] + (d[0] / n) * 30, m[1] + (d[1] / n) * 30];
       html += `<line class="room-rot-line" x1="${m[0] * k}" y1="${m[1] * k}" x2="${h[0] * k}" y2="${h[1] * k}"/><circle class="room-rot" data-room-rot="1" cx="${h[0] * k}" cy="${h[1] * k}" r="9"><title>Glisser : tourner la pièce (le nord de ses photos suit)</title></circle>`;
@@ -1162,11 +1174,90 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     selRoom = key;
     const r = key && roomOf(key);
     help.innerHTML = r
-      ? `Pièce « ${escapeHtml(r.name)} » (${r.w.toFixed(1)} × ${r.l.toFixed(1)} m) : glisser son contour pour la déplacer, les poignées carrées pour changer sa taille, la poignée ronde pour la tourner (le nord de ses photos suit). <button class="btn small" data-room-done>Terminer</button>`
+      ? `Pièce « ${escapeHtml(r.name)} » : glisser le contour (déplacer), un carré (taille ; Maj : mêmes proportions), le rond (tourner, le nord des photos suit ; Maj : pas de 15°).`
       : TOOL_HELP[tool] || helpDefault;
-    const done = help.querySelector('[data-room-done]');
-    if (done) done.addEventListener('click', () => selectRoom(null));
+    roomPanel(r);
     drawRooms();
+  }
+  // Fenêtre de la pièce sélectionnée : nom et dimensions, modifiables.
+  const panel = container.querySelector('.plan-roompanel');
+  panel.addEventListener('pointerdown', (e) => e.stopPropagation());
+  panel.addEventListener('wheel', (e) => e.stopPropagation());
+  panel.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter' && e.target.blur) e.target.blur();
+  });
+  function roomPanel(r) {
+    panel.hidden = !r;
+    if (!r) return (panel.innerHTML = '');
+    panel.innerHTML = `<b>Pièce</b>
+      <label>Nom <input type="text" data-rp="name" value="${escapeHtml(r.name)}"></label>
+      <label>Largeur <input type="number" data-rp="w" min="0.5" max="100" step="0.05"> m</label>
+      <label>Longueur <input type="number" data-rp="l" min="0.5" max="100" step="0.05"> m</label>
+      <span class="note">Surface : <span data-rp="area"></span> m²</span>
+      <button class="btn small" data-room-done>Terminer</button>`;
+    updateRoomPanel(r);
+    panel.querySelector('[data-room-done]').addEventListener('click', () => selectRoom(null));
+    panel.querySelector('[data-rp=name]').addEventListener('change', (e) => renameRoom(r.key, e.target.value.trim()));
+    for (const k of ['w', 'l'])
+      panel.querySelector(`[data-rp=${k}]`).addEventListener('change', (e) => {
+        const v = parseFloat(String(e.target.value).replace(',', '.'));
+        const cur = roomOf(selRoom);
+        if (!cur || !(v >= 0.5)) return updateRoomPanel(cur);
+        sizeRoom(cur, k === 'w' ? v : cur.w, k === 'l' ? v : cur.l);
+      });
+  }
+  function updateRoomPanel(r) {
+    if (!r || panel.hidden) return;
+    const set = (k, v) => {
+      const el = panel.querySelector(`[data-rp=${k}]`);
+      if (el && document.activeElement !== el) el.value = v;
+    };
+    set('w', r.w.toFixed(2));
+    set('l', r.l.toFixed(2));
+    panel.querySelector('[data-rp=area]').textContent = (r.w * r.l).toFixed(1).replace('.', ',');
+  }
+  // Nouvelles dimensions (m) saisies : la pièce garde son centre, ses photos suivent.
+  async function sizeRoom(r, w, l) {
+    const snap = roomSnapshot(r);
+    const U = [Math.cos(r.ang), Math.sin(r.ang)], V = [Math.sin(r.ang), -Math.cos(r.ang)];
+    const fu = w / r.w, fv = l / r.l;
+    snap.photos.forEach((q, id) => {
+      const qu = (q.x - r.cx) * U[0] + (q.y - r.cy) * U[1], qv = (q.x - r.cx) * V[0] + (q.y - r.cy) * V[1];
+      pos.set(id, { x: r.cx + qu * fu * U[0] + qv * fv * V[0], y: r.cy + qu * fu * U[1] + qv * fv * V[1] });
+    });
+    pushUndo();
+    r.w = w;
+    r.l = l;
+    delete r.label;
+    writeRoomWalls(r);
+    placeNodes();
+    drawLinks();
+    drawDrawing();
+    await roomDrop({ kind: 'room-size', key: r.key, snap });
+  }
+  // Renommer une pièce : sur le plan et dans ses photos (onglet Pièce de l'éditeur).
+  async function renameRoom(key, name) {
+    const r = roomOf(key);
+    if (!r || !name || name === r.name) return;
+    pushUndo();
+    drawing.lines = drawing.lines.filter((x) => x.room !== r.key);
+    drawing.texts = drawing.texts.filter((x) => x.room !== r.key);
+    const nk = name.toLowerCase();
+    if (!drawing.rooms.some((x) => x !== r && x.key === nk)) r.key = nk;
+    r.name = name;
+    selRoom = r.key;
+    writeRoomWalls(r);
+    for (const id of r.ids) {
+      const ph = byId.get(id);
+      if (!ph || !ph.room) continue;
+      ph.room = { ...ph.room, name };
+      await db.updatePhoto(id, (cur) => ({ ...cur, room: { ...(cur.room || {}), name } }));
+    }
+    await saveDrawing();
+    drawDrawing();
+    selectRoom(r.key);
+    toast(`Pièce renommée « ${name} » (et dans ses ${r.ids.length} photo(s)).`);
   }
   // État de départ d'un geste sur une pièce : la pièce et la position de ses photos.
   function roomSnapshot(r) {
@@ -1189,7 +1280,15 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       const sa = [-1, 1, 1, -1][d.corner], sb = [-1, -1, 1, 1][d.corner];
       const u = (P[0] - O[0]) * U[0] + (P[1] - O[1]) * U[1], v = (P[0] - O[0]) * V[0] + (P[1] - O[1]) * V[1];
       const PX = ppm();
-      const wpx = Math.max(PX * 0.5, u * sa), lpx = Math.max(PX * 0.5, v * sb);
+      let wu = u * sa, lv = v * sb;
+      if (e.shiftKey) {
+        // Maj : mêmes proportions (projection sur la diagonale de départ).
+        const W0 = s0.w * PX, L0 = s0.l * PX;
+        const f = Math.max((PX * 0.5) / Math.min(W0, L0), (wu * W0 + lv * L0) / (W0 * W0 + L0 * L0));
+        wu = W0 * f;
+        lv = L0 * f;
+      }
+      const wpx = Math.max(PX * 0.5, wu), lpx = Math.max(PX * 0.5, lv);
       r.w = wpx / PX;
       r.l = lpx / PX;
       delete r.label; // nom replacé dans le coin
@@ -1219,6 +1318,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     drawLinks();
     drawDrawing();
     drawRooms();
+    updateRoomPanel(r);
   }
   // Fin d'un geste : positions, liens automatiques réorientés, et (rotation) nord des photos corrigé.
   async function roomDrop(d) {
@@ -1306,9 +1406,15 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     // Pièces (modèle, murs et nom) : remplacent celles d'un placement précédent du même nom.
     for (const r of res.rooms) {
       const { corners, ...model } = r;
-      drawing.rooms = drawing.rooms.filter((x) => x.key !== r.key).concat([model]);
+      // Remplace la pièce du même nom, et celles qui avaient ses photos (pièce renommée dans l'éditeur).
+      const old = drawing.rooms.filter((x) => x.key === r.key || (x.ids || []).some((id) => r.ids.includes(id)));
+      const oldKeys = new Set(old.map((x) => x.key));
+      drawing.lines = drawing.lines.filter((x) => !oldKeys.has(x.room));
+      drawing.texts = drawing.texts.filter((x) => !oldKeys.has(x.room));
+      drawing.rooms = drawing.rooms.filter((x) => !old.includes(x)).concat([model]);
       writeRoomWalls(model);
     }
+    if (selRoom && !roomOf(selRoom)) selectRoom(null);
     await saveDrawing();
     // Photos à leur place, sur le plan même sans lien.
     for (const [id, q] of res.positions) {

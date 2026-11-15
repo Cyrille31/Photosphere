@@ -90,15 +90,15 @@ export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v
 export async function getPlanDrawing() {
   const d = await getSetting('planDrawing');
   const extra = {};
-  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM']) if (d && d[k] != null) extra[k] = d[k];
+  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM', 'start']) if (d && d[k] != null) extra[k] = d[k];
   return { lines: (d && d.lines) || [], texts: (d && d.texts) || [], ...extra };
 }
 export async function putPlanDrawing(d) {
   // ceilingH : hauteur sous plafond commune ; rooms : pièces dessinées ; north : direction du nord sur le
   // plan (degrés) ; compass : position de la flèche nord-sud ;
-  // pxPerM : échelle du plan (pixels par mètre).
+  // pxPerM : échelle du plan (pixels par mètre) ; start : photo de départ du parcours (id).
   const extra = {};
-  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM']) if (d[k] != null) extra[k] = d[k];
+  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM', 'start']) if (d[k] != null) extra[k] = d[k];
   await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [], ...extra });
   notify();
 }

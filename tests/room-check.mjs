@@ -92,22 +92,54 @@ try {
       check((await page.locator('.ed-room-corner').count()) >= 2 && (await page.locator('.ed-room-lines polyline.ceil').count()) >= 1, 'éditeur : coins numérotés et ligne plafond / mur prévue affichés sur l’image');
       await page.screenshot({ path: path.join(shots, '01-editeur-piece.png') });
       // Déplacer un coin ne déplace que lui (puis on le remet en place avec Défaire).
-      const before = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
-      const c1 = await page.locator('.ed-room-corner').first().boundingBox();
+      const before = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner:not(.floor)')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const c1 = await page.locator('.ed-room-corner:not(.floor)').first().boundingBox();
       await page.mouse.move(c1.x + c1.width / 2, c1.y + c1.height / 2);
       await page.mouse.down();
       await page.mouse.move(c1.x + c1.width / 2 + 40, c1.y + c1.height / 2 + 15, { steps: 5 });
       await page.mouse.up();
       await page.waitForTimeout(300);
-      const after = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const after = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner:not(.floor)')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
       const movedOnly = before.filter((x, i) => x !== after[i]);
       check(movedOnly.length === 1, `éditeur : glisser un coin ne déplace que lui (${movedOnly.length} coin déplacé)`);
+      await page.click('[data-undo]');
+      await page.waitForTimeout(300);
+      // Coins au sol (bleus) : un par coin du plafond ; en glisser un déplace le coin rouge correspondant.
+      const nFloor = await page.locator('.ed-room-corner.floor').count();
+      const reds0 = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner:not(.floor)')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const vis = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner.floor')].findIndex((e) => {
+        const r = e.getBoundingClientRect();
+        return r.x > 60 && r.x < innerWidth - 400 && r.y > 120 && r.y < innerHeight - 60;
+      }));
+      if (vis >= 0) {
+        const fb = await page.locator('.ed-room-corner.floor').nth(vis).boundingBox();
+        await page.mouse.move(fb.x + fb.width / 2, fb.y + fb.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(fb.x + fb.width / 2 + 35, fb.y + fb.height / 2 + 10, { steps: 5 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+      }
+      const reds1 = await page.evaluate(() => [...document.querySelectorAll('.ed-room-corner:not(.floor)')].map((e) => e.textContent + ':' + e.style.left + ',' + e.style.top));
+      const redMoved = reds0.filter((x, i) => x !== reds1[i]);
+      check(nFloor === reds0.length && nFloor > 0 && vis >= 0 && redMoved.length === 1 && redMoved[0].startsWith(String(vis + 1) + ':'), `éditeur : un coin au sol (bleu) sous chaque coin du plafond ; en glisser un déplace son coin du plafond (${redMoved.map((x) => x.split(':')[0]).join(', ') || 'aucun'})`);
       await page.click('[data-undo]');
       await page.waitForTimeout(300);
     }
     await page.click('[data-save]');
     await page.waitForSelector('.grid');
   }
+  // Photo suivante depuis l'onglet Pièce : on reste sur l'onglet Pièce.
+  await page.goto(base + '#/edit/' + ids['salon-a.jpg']);
+  await page.waitForSelector('[data-tab=room]');
+  await page.waitForTimeout(800);
+  await page.click('[data-tab=room]');
+  await page.click('[data-nav="1"]');
+  await page.waitForFunction((id) => location.hash === '#/edit/' + id, ids['salon-b.jpg']);
+  await page.waitForSelector('[data-tab=room]');
+  await page.waitForTimeout(1500);
+  check(await page.evaluate(() => document.querySelector('[data-tab=room]').classList.contains('active') && !document.querySelector('[data-panel=room]').hidden), 'éditeur : photo suivante → toujours sur l’onglet Pièce');
+  await page.goto(base + '#/');
+  await page.waitForSelector('.grid');
   const saved = await db(async (db) => (await db.listPhotos()).map((p) => p.room && p.room.corners.length));
   check(saved.every((n) => n === 4), 'coins de la pièce enregistrés avec chaque photo');
 
@@ -256,6 +288,44 @@ try {
     check(d0.size <= 12 && d0.text === 'Salon' && d1.x > d0.x + 10 && d1.y < d0.y - 8, `plan : nom de la pièce en petit (${d0.size}) et déplaçable (${d0.x},${d0.y} → ${d1.x},${d1.y})`);
   }
 
+  // ---------- fenêtre de la pièce : nom et dimensions ----------
+  {
+    const pv = await page.evaluate(() => {
+      const p = document.querySelector('.plan-roompanel');
+      return p && !p.hidden ? [p.querySelector('[data-rp=name]').value, +p.querySelector('[data-rp=w]').value, +p.querySelector('[data-rp=l]').value] : null;
+    });
+    const sA = await state();
+    check(pv && pv[0] === 'Salon' && Math.abs(pv[1] - sA.room.w) < 0.01 && Math.abs(pv[2] - sA.room.l) < 0.01, `plan : pièce sélectionnée → fenêtre avec son nom et ses dimensions (${pv && pv.join(' ; ')})`);
+    await page.fill('.plan-roompanel [data-rp=w]', '6');
+    await page.press('.plan-roompanel [data-rp=w]', 'Enter');
+    await page.waitForTimeout(800);
+    const sB = await state();
+    check(Math.abs(sB.room.w - 6) < 0.01 && Math.abs(sB.room.l - sA.room.l) < 0.01, `plan : largeur saisie → pièce de ${sB.room.w.toFixed(2)} × ${sB.room.l.toFixed(2)} m`);
+    // Redimensionner à la souris avec Maj : mêmes proportions, et la fenêtre suit.
+    const hc = await page.locator('.plan-roomsel .room-corner').nth(2).boundingBox();
+    const ctr2 = await page.evaluate(() => {
+      const r = document.querySelector('.plan-roomsel .room-hit').getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    });
+    const hx = hc.x + hc.width / 2, hy = hc.y + hc.height / 2;
+    await page.mouse.move(hx, hy);
+    await page.mouse.down();
+    await page.keyboard.down('Shift');
+    await page.mouse.move(hx + (hx - ctr2[0]) * 0.3 + 25, hy + (hy - ctr2[1]) * 0.3 - 10, { steps: 8 });
+    const live = +(await page.inputValue('.plan-roompanel [data-rp=w]'));
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(800);
+    const sC = await state();
+    check(Math.abs(sC.room.w / sC.room.l - sB.room.w / sB.room.l) < 0.01 && sC.room.w > sB.room.w + 0.3 && Math.abs(live - sC.room.w) < 0.05, `plan : Maj + poignée → proportions gardées (${sB.room.w.toFixed(2)} × ${sB.room.l.toFixed(2)} → ${sC.room.w.toFixed(2)} × ${sC.room.l.toFixed(2)} m), fenêtre mise à jour (${live})`);
+    // Renommer dans la fenêtre : le plan et les photos suivent.
+    await page.fill('.plan-roompanel [data-rp=name]', 'Séjour');
+    await page.press('.plan-roompanel [data-rp=name]', 'Enter');
+    await page.waitForTimeout(800);
+    const rn = await db(async (db) => ({ names: (await db.listPhotos()).map((p) => p.room.name), label: (await db.getPlanDrawing()).texts.filter((t) => t.room).map((t) => t.text) }));
+    check(rn.names.every((n) => n === 'Séjour') && rn.label.join() === 'Séjour', `plan : pièce renommée dans la fenêtre → photos (${rn.names.join(', ')}) et plan (${rn.label.join(', ')})`);
+  }
+
   // ---------- échelle ----------
   {
     const s6 = await state();
@@ -275,7 +345,7 @@ try {
     const s7 = await state();
     const d1 = await db(async (db) => db.getPlanDrawing());
     const fA = Math.hypot(s7.b.x - s7.a.x, s7.b.y - s7.a.y) / Math.hypot(s6.b.x - s6.a.x, s6.b.y - s6.a.y);
-    const wall = (d) => { const l = d.lines.find((x) => x.room === 'salon'); return Math.hypot(l.x2 - l.x1, l.y2 - l.y1); };
+    const wall = (d) => { const l = d.lines.find((x) => x.room); return Math.hypot(l.x2 - l.x1, l.y2 - l.y1); };
     const fW = wall(d1) / wall(d0);
     const nodeW0 = s6.nodeW, nodeW1 = s7.nodeW;
     check(Math.abs((d1.pxPerM || 50) / (d0.pxPerM || 50) - 2) < 0.15 && Math.abs(fA - 2) < 0.15 && Math.abs(fW - 2) < 0.15 && Math.abs(s7.room.w - s6.room.w) < 1e-6 && Math.abs(nodeW1 - nodeW0) < 0.5,
@@ -285,6 +355,39 @@ try {
     await page.click('[data-fit]');
     await page.waitForTimeout(6000); // messages refermés
     await page.screenshot({ path: path.join(shots, '06-plan-vue.png') });
+  }
+
+  // ---------- photo de départ ----------
+  {
+    const nb = await page.locator('.plan-node[data-id="' + ids['salon-b.jpg'] + '"] .plan-pic').boundingBox();
+    await page.mouse.click(nb.x + nb.width / 2, nb.y + nb.height / 2);
+    await page.waitForTimeout(400);
+    await page.click('.plan-node.selected [data-act=start]');
+    await page.waitForTimeout(600);
+    const st2 = await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const { buildSettings } = await import('./src/settings-file.js');
+      const s = buildSettings(await db.listPhotos(), await db.getPlanDrawing());
+      return { start: s.start, planStart: s.plan && s.plan.start, marker: document.querySelectorAll('.plan-start').length, on: !!document.querySelector('.plan-node[data-id] .plan-start')?.closest('.plan-node').dataset.id };
+    });
+    const markerOn = await page.evaluate(() => document.querySelector('.plan-start') && document.querySelector('.plan-start').closest('.plan-node').dataset.id);
+    check(st2.start === 'salon-b.jpg' && st2.marker === 1 && markerOn === ids['salon-b.jpg'] && st2.planStart === undefined, `plan : photo de départ choisie → repère « Départ » sur le plan, « ${st2.start} » dans photosphere.json`);
+    await page.screenshot({ path: path.join(shots, '07-plan-depart.png') });
+  }
+
+  // ---------- pièce renommée dans l'éditeur puis « Placer les pièces » : pas de doublon ----------
+  {
+    await db(async (db) => {
+      for (const p of await db.listPhotos()) await db.updatePhoto(p.id, (cur) => ({ ...cur, room: { ...cur.room, name: 'Grand salon' } }));
+    });
+    await page.goto(base + '#/');
+    await page.goto(base + '#/plan');
+    await page.waitForSelector('.plan-node');
+    await page.waitForTimeout(500);
+    await page.click('[data-place-rooms]');
+    await page.waitForTimeout(1200);
+    const d = await db(async (db) => db.getPlanDrawing());
+    check(d.rooms.length === 1 && d.rooms[0].name === 'Grand salon' && d.texts.filter((t) => t.room).map((t) => t.text).join() === 'Grand salon' && d.lines.filter((l) => l.room).length === 4, `plan : pièce renommée dans l’éditeur → « Placer les pièces » la remplace (${d.rooms.map((r) => r.name).join(', ')})`);
   }
 } catch (e) {
   failures++;
