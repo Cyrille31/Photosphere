@@ -670,14 +670,15 @@ document.addEventListener('click', (e) => {
   if (menu && !menu.hidden && !e.target.closest('.menu')) menu.hidden = true;
 });
 
-function exportTourDialog() {
+async function exportTourDialog() {
   const ready = state.photos.filter((p) => p.status === 'done');
   if (!ready.length) return toast('Aucune photo convertie pour le moment.', true);
+  const startId = (await db.getPlanDrawing()).start;
   dialog(
     `<h2>Visite autonome</h2>
     <p>Crée un fichier <b>.html</b> unique contenant toutes les photos converties et leurs liens. Il s’ouvre dans n’importe quel navigateur (smartphone à bout de bras, casque VR, ordinateur), même sans connexion.</p>
     <label class="field">Titre<input type="text" name="title" value="Ma visite 360°"></label>
-    <label class="field">Photo de départ<select name="start">${ready.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select></label>
+    <label class="field">Photo de départ<select name="start">${ready.map((p) => `<option value="${p.id}" ${p.id === startId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></label>
     <label class="field">Résolution des photos dans la visite<select name="width">
       <option value="4096" selected>4096 × 2048 (recommandé, compatible tous smartphones)</option>
       <option value="6144">6144 × 3072 (plus net, fichier plus lourd)</option>

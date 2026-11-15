@@ -288,6 +288,13 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .plan-roomsel .compass-label { font: 700 13px system-ui, sans-serif; text-anchor: middle; fill: #e5484d; pointer-events: none; }
 .plan-roomsel .compass-label.s { fill: #111; }
 .plan-roomsel .compass-rot { fill: transparent; pointer-events: all; cursor: grab; }
+.plan-roompanel { position: absolute; bottom: 10px; left: 10px; z-index: 20; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 210px; background: rgba(255,255,255,.96); color: #111; border: 1px solid #ccc; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.2); font-size: 13px; }
+.plan-roompanel[hidden] { display: none; }
+.plan-roompanel label { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.plan-roompanel input { width: 110px; padding: 3px 6px; border: 1px solid #bbb; border-radius: 6px; font: inherit; color: #111; background: #fff; }
+.plan-roompanel input[type=number] { width: 80px; }
+.plan-roompanel .note { color: #555; }
+.plan-start { position: absolute; top: -30px; left: 50%; transform: translateX(-50%); padding: 2px 8px; border-radius: 10px; background: #16a34a; color: #fff; font: 700 14px system-ui, sans-serif; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.35); pointer-events: none; }
 .plan-roomsel .room-label-hit { fill: transparent; pointer-events: all; cursor: move; }
 .plan-roomsel .room-label-hit:hover { fill: rgba(11,152,208,.12); }
 .plan-roomsel .scale-bg { fill: rgba(255,255,255,.85); stroke: #bbb; stroke-width: 1; pointer-events: none; }

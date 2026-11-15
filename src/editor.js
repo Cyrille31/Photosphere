@@ -198,7 +198,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     controller.yaw = initialView.yaw;
     controller.pitch = initialView.pitch;
   }
-  const currentView = () => ({ yaw: controller.yaw, pitch: controller.pitch });
+  // Vue courante (et onglet ouvert : on le retrouve sur la photo suivante).
+  const currentView = () => {
+    const t = container.querySelector('[data-tab].active');
+    return { yaw: controller.yaw, pitch: controller.pitch, ...(t ? { tab: t.dataset.tab } : {}) };
+  };
 
   function redraw() {
     if (raf) return;
@@ -699,7 +703,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     if (document.activeElement !== cam) cam.value = +(r ? r.camH : p.room.camH || defaultCamH()).toFixed(2);
     const n = p.room.corners.length;
     $('.room-info').innerHTML = r
-      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. La ligne rouge relie les coins : elle doit suivre la jonction plafond / mur ; faites glisser un coin pour le corriger (le plan utilise le rectangle le plus proche).`
+      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. La ligne rouge relie les coins du plafond, la bleue ceux du sol : elles doivent suivre les jonctions avec les murs. Faites glisser un coin rouge, ou un coin bleu (le rouge suit, à la verticale), pour les corriger. Le plan utilise le rectangle le plus proche.`
       : n
         ? `${n} coin(s) sur 4.`
         : 'Aucun coin pour l’instant.';
@@ -712,11 +716,17 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
       if (sc) html += `<div class="ed-room-corner" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">${i + 1}</div>`;
     });
-    if (p.room.floor) {
+    const r = roomInfo();
+    if (r) {
+      // Coins au sol (bleus), à la verticale des coins du plafond : on peut les faire glisser.
+      floorCorners(r).forEach((c, i) => {
+        const sf = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
+        if (sf) html += `<div class="ed-room-corner floor" style="left:${sf.x / dpr}px;top:${sf.y / dpr}px">${i + 1}</div>`;
+      });
+    } else if (p.room.floor) {
       const sf = renderer.project(dirFromLonLat(p.room.floor.yaw * DEG, p.room.floor.pitch * DEG), frame);
       if (sf) html += `<div class="ed-room-corner floor" style="left:${sf.x / dpr}px;top:${sf.y / dpr}px">⌄</div>`;
     }
-    const r = roomInfo();
     if (r) {
       // Ligne plafond / mur : les côtés droits qui joignent les coins cliqués (dans l'ordre du tour), vus
       // depuis l'appareil ; ligne sol / mur : les mêmes côtés au niveau du sol.
@@ -751,6 +761,12 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       }
     }
     return html;
+  }
+  // Coin au sol à la verticale d'un coin du plafond : même cap ; distance d = Hc / tan(el plafond),
+  // el sol = -atan(camH / d).
+  function floorCorners(r) {
+    const k = r.camH / r.Hc;
+    return p.room.corners.map((c) => ({ yaw: c.yaw, pitch: +((-Math.atan(k * Math.tan(c.pitch * DEG))) / DEG).toFixed(2) }));
   }
   function roomTap(d) {
     const { lon, lat } = lonLatFromDir(d);
@@ -871,7 +887,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       const at = (ev) => renderer.pick((ev.clientX - r0.left) * sx, (ev.clientY - r0.top) * sx, controller.frame());
       const d = at(e);
       if (!d) return;
-      const all = [...p.room.corners.map((c, i) => ({ c, i })), ...(p.room.floor ? [{ c: p.room.floor, i: 'floor' }] : [])];
+      const ri = roomInfo();
+      const all = [...p.room.corners.map((c, i) => ({ c, i })), ...(ri ? floorCorners(ri).map((c, i) => ({ c, i: 'f' + i })) : p.room.floor ? [{ c: p.room.floor, i: 'floor' }] : [])];
       let best = null, bestAng = 0.07;
       for (const it of all) {
         const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, dirFromLonLat(it.c.yaw * DEG, it.c.pitch * DEG)))));
@@ -890,6 +907,13 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         if (best.i === 'floor') {
           p.room.floor = pos;
           delete p.room.camH;
+        } else if (typeof best.i === 'string') {
+          // Coin au sol : le coin du plafond correspondant suit, à la verticale (hauteur de l'appareil fixe).
+          if (pos.pitch > -1) return;
+          p.room.camH = +ri.camH.toFixed(3);
+          delete p.room.floor;
+          const pc = Math.atan((Math.tan(-pos.pitch * DEG) * ri.Hc) / ri.camH) / DEG;
+          p.room.corners[+best.i.slice(1)] = { yaw: pos.yaw, pitch: +pc.toFixed(2) };
         } else p.room.corners[best.i] = pos;
         dirty = true;
         syncRoom();
@@ -1204,6 +1228,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   hint('');
   redraw();
 
+  if (initialView && initialView.tab && !(focus && focus.linkTo)) {
+    const t = $(`[data-tab=${initialView.tab}]`);
+    if (t && !t.classList.contains('active')) t.click();
+  }
   if (focus && focus.linkTo) {
     $('[data-tab=links]').click();
     const back = photos.find((x) => x.id === focus.linkTo);

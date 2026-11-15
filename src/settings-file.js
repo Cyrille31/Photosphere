@@ -11,13 +11,17 @@ export function isSettingsFile(file) {
   return /\.json$/i.test(file.name);
 }
 
+const withoutStart = ({ start, ...rest }) => rest;
+
 export function buildSettings(photos, plan = null) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   return {
     format: FORMAT,
     version: 1,
     exportedAt: new Date().toISOString(),
-    ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH || (plan.rooms || []).length || plan.north || plan.pxPerM) ? { plan } : {}),
+    // Photo de départ du parcours (choisie sur le plan), désignée par son nom de fichier.
+    ...(plan && plan.start && byId.has(plan.start) ? { start: byId.get(plan.start).fileName } : {}),
+    ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH || (plan.rooms || []).length || plan.north || plan.pxPerM) ? { plan: withoutStart(plan) } : {}),
     // Ordre de prise de vue (puis nom) : un parcours partagé commence par la première photo prise.
     photos: [...photos].sort((a, b) => (a.takenAt || 0) - (b.takenAt || 0) || String(a.name).localeCompare(String(b.name))).map((p) => ({
       file: p.fileName,
@@ -60,6 +64,10 @@ export async function applySettings(data) {
     if (p) idOf.set(key(e.file), p.id);
   });
   if (data.plan && (Array.isArray(data.plan.lines) || Array.isArray(data.plan.texts))) await db.putPlanDrawing(data.plan);
+  if (data.start && idOf.has(key(data.start))) {
+    const d = await db.getPlanDrawing();
+    await db.putPlanDrawing({ ...d, start: idOf.get(key(data.start)) });
+  }
   let applied = 0;
   const unmatched = [];
   for (const e of data.photos) {
