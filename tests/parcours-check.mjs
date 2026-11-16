@@ -87,6 +87,8 @@ try {
       for (let i = 0; i < u.length; i += 0x8000) t += String.fromCharCode(...u.subarray(i, i + 0x8000));
       return btoa(t);
     };
+    // Départ choisi sur le plan : l'entrée, regard tourné à 60°.
+    await db.putPlanDrawing({ ...(await db.getPlanDrawing()), start: by['entree.jpg'].id, startYaw: 60 });
     const settings = buildSettings(await db.listPhotos(), await db.getPlanDrawing());
     return { json: JSON.stringify(settings), depthName: reliefNames('salon.jpg').depth, depth: await b64(png) };
   });
@@ -127,6 +129,8 @@ try {
   await page.waitForTimeout(800);
   const title0 = await page.textContent('.ps-title');
   check(title0 === 'Entrée', `parcours ouvert sur la première photo du parcours (« ${title0} », ${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+  const yaw0 = +(await page.evaluate(() => document.querySelector('.ps-player').dataset.yaw));
+  check(Math.abs(((yaw0 - 60 + 540) % 360) - 180) < 2, `parcours : regard de départ choisi sur le plan (${yaw0}°, attendu 60°)`);
   // Préchargement : la photo liée (salon) et sa carte de relief sont déjà en mémoire.
   await page.waitForFunction(() => window.photosphereParcours && window.photosphereParcours.cache.has('salon.jpg'), null, { timeout: 15000 }).catch(() => {});
   const pre = await page.evaluate(() => ({ salon: window.photosphereParcours.cache.has('salon.jpg'), relief: window.photosphereParcours.cache.has('salon.jpg.profondeur.png'), cuisine: window.photosphereParcours.cache.has('cuisine.jpg') }));

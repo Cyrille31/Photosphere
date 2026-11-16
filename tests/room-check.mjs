@@ -372,6 +372,27 @@ try {
     });
     const markerOn = await page.evaluate(() => document.querySelector('.plan-start') && document.querySelector('.plan-start').closest('.plan-node').dataset.id);
     check(st2.start === 'salon-b.jpg' && st2.marker === 1 && markerOn === ids['salon-b.jpg'] && st2.planStart === undefined, `plan : photo de départ choisie → repère « Départ » sur le plan, « ${st2.start} » dans photosphere.json`);
+    // Sens d'arrivée : la flèche verte autour de la photo de départ, tournée d'un quart de tour.
+    const hb = await page.locator('.plan-startdir [data-start-dir]').boundingBox();
+    const nc = await page.locator('.plan-node[data-id="' + ids['salon-b.jpg'] + '"] .plan-pic').boundingBox();
+    const cx = nc.x + nc.width / 2, cy = nc.y + nc.height / 2, hx = hb.x + hb.width / 2, hy = hb.y + hb.height / 2;
+    const yawBefore = await db(async (db) => (await db.getPlanDrawing()).startYaw || 0);
+    await page.mouse.move(hx, hy);
+    await page.mouse.down();
+    for (let k = 1; k <= 8; k++) {
+      const a = (Math.PI / 2) * (k / 8), vx = hx - cx, vy = hy - cy;
+      await page.mouse.move(cx + vx * Math.cos(a) - vy * Math.sin(a), cy + vx * Math.sin(a) + vy * Math.cos(a));
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    const sy = await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const { buildSettings } = await import('./src/settings-file.js');
+      const d = await db.getPlanDrawing();
+      return { yaw: d.startYaw, file: buildSettings(await db.listPhotos(), d).startYaw };
+    });
+    const turned = ((sy.yaw - yawBefore + 540) % 360) - 180;
+    check(Math.abs(turned - 90) < 4 && sy.file === sy.yaw, `plan : flèche de départ tournée de ${turned.toFixed(1)}° → sens d’arrivée ${sy.yaw}° (repris dans photosphere.json)`);
     await page.screenshot({ path: path.join(shots, '07-plan-depart.png') });
   }
 
@@ -388,6 +409,20 @@ try {
     await page.waitForTimeout(1200);
     const d = await db(async (db) => db.getPlanDrawing());
     check(d.rooms.length === 1 && d.rooms[0].name === 'Grand salon' && d.texts.filter((t) => t.room).map((t) => t.text).join() === 'Grand salon' && d.lines.filter((l) => l.room).length === 4, `plan : pièce renommée dans l’éditeur → « Placer les pièces » la remplace (${d.rooms.map((r) => r.name).join(', ')})`);
+
+    // Retirer une photo du plan : retour dans la zone des photos non placées, liens gardés, hors de sa pièce.
+    const na = await page.locator('.plan-node[data-id="' + ids['salon-a.jpg'] + '"] .plan-pic').boundingBox();
+    await page.mouse.click(na.x + na.width / 2, na.y + na.height / 2);
+    await page.waitForTimeout(400);
+    await page.click('.plan-node.selected [data-act=unplace]');
+    await page.waitForTimeout(800);
+    const un = await db(async (db, id) => ({ p: await db.getPhoto(id), d: await db.getPlanDrawing() }), ids['salon-a.jpg']);
+    const pooled = await page.evaluate(() => (document.querySelector('.plan-pool span') || {}).textContent || '');
+    check(un.p.mapHidden && !un.p.mapPos && un.p.hotspots.length === 1 && !un.d.rooms[0].ids.includes(ids['salon-a.jpg']) && /\(1\)/.test(pooled), `plan : photo retirée du plan (zone : « ${pooled.slice(0, 30)}… », lien gardé)`);
+    await page.click('[data-place-rooms]');
+    await page.waitForTimeout(1200);
+    const still = await db(async (db, id) => (await db.getPhoto(id)).mapHidden, ids['salon-a.jpg']);
+    check(still === true, 'plan : « Placer les pièces » laisse de côté la photo retirée');
   }
 } catch (e) {
   failures++;

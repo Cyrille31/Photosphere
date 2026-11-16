@@ -109,6 +109,8 @@ export async function openParcours(container, source, { onExit, title } = {}) {
   const player = createPlayer(container, {
     photos,
     startId: start.id,
+    // Sens du regard en entrant (choisi sur le plan, flèche autour de la photo de départ).
+    ...(data.startYaw != null && start === byId.get(key(data.start)) ? { initialView: { yaw: (data.startYaw * Math.PI) / 180, pitch: 0 } } : {}),
     title: title || data.title || 'Parcours',
     maxHalf: 4096, // pleine définition (casque)
     onShow: (photo) => {

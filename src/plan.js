@@ -178,7 +178,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
 
   const isLinked = (id) => byId.get(id).hotspots.some((h) => byId.has(h.target)) || list.some((p) => p.hotspots.some((h) => h.target === id));
   // Sur le plan : photo reliée à une autre, ou placée à la main (même sans lien, en attendant).
-  const onPlan = (id) => isLinked(id) || !!(byId.get(id).mapPlaced && byId.get(id).mapPos);
+  // mapHidden : photo retirée du plan (elle reste dans la zone des photos non placées, liens conservés).
+  const onPlan = (id) => !byId.get(id).mapHidden && (isLinked(id) || !!(byId.get(id).mapPlaced && byId.get(id).mapPos));
   list.forEach((p) => (p.hotspots = p.hotspots || []));
 
   // Positions : photos reliées d'après le plan (ou les liens), photos isolées dans la zone.
@@ -258,18 +259,20 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
             ${p.id === drawing.start ? '<div class="plan-start" title="Photo de départ du parcours">Départ ▼</div>' : ''}
             <div class="plan-pic" style="width:${w * zf(p.id)}px;height:${h * zf(p.id)}px;${thumbs.has(p.id) ? `background-image:url('${thumbs.get(p.id)}');` : ''}"></div>
             ${p.id === selected ? `<input class="plan-name-input" value="${escapeHtml(p.name)}" aria-label="Nom de la photo" title="Modifier le nom (Entrée pour valider)">` : `<span class="plan-name">${escapeHtml(p.name)}</span>`}
-            <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button><button class="btn small" data-act="start" title="Le parcours partagé (et la visite exportée) commence par cette photo">🚩 Départ</button></div>
+            <div class="plan-actions"><button class="btn small" data-act="view">👁 Voir</button><button class="btn small" data-act="edit">✏ Éditer</button><button class="btn small" data-act="link">🔗 Relier</button><button class="btn small" data-act="start" title="Le parcours partagé (et la visite exportée) commence par cette photo">🚩 Départ</button><button class="btn small" data-act="unplace" title="Remettre la photo dans la zone des photos non placées (ses liens sont gardés)">⤺ Retirer du plan</button></div>
           </div>`
         )
         .join('')}
       <svg class="plan-links over" width="1" height="1"></svg>
-      <svg class="plan-contacts" width="1" height="1"></svg>`;
+      <svg class="plan-contacts" width="1" height="1"></svg>
+      <svg class="plan-startdir" width="1" height="1"></svg>`;
     container.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
     world.querySelectorAll('.plan-node [data-act]').forEach((b) =>
       b.addEventListener('click', () => {
         const id = b.closest('.plan-node').dataset.id;
         if (b.dataset.act === 'link') startLink(id);
         else if (b.dataset.act === 'start') setStart(id);
+        else if (b.dataset.act === 'unplace') removeFromPlan(id);
         else onOpen(id, b.dataset.act);
       })
     );
@@ -278,6 +281,36 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     drawDrawing();
     drawRooms();
     bindNameInput();
+  }
+
+  // Retirer une photo du plan : elle retourne dans la zone des photos non placées (ses liens sont
+  // gardés, mais plus dessinés) et sort de sa pièce. « Placer les pièces » la laisse de côté.
+  async function removeFromPlan(id) {
+    const ph = byId.get(id);
+    delete ph.mapPos;
+    ph.mapPlaced = false;
+    ph.mapHidden = true;
+    await db.updatePhoto(id, (cur) => {
+      const { mapPos, ...rest } = cur;
+      return { ...rest, mapPlaced: false, mapHidden: true };
+    });
+    let roomsChanged = false;
+    for (const r of drawing.rooms) {
+      if ((r.ids || []).includes(id)) {
+        r.ids = r.ids.filter((x) => x !== id);
+        roomsChanged = true;
+      }
+    }
+    if (drawing.start === id) {
+      delete drawing.start;
+      delete drawing.startYaw;
+      roomsChanged = true;
+    }
+    if (roomsChanged) await saveDrawing();
+    selected = null;
+    await layout();
+    render();
+    toast(`« ${ph.name} » retirée du plan (ses liens sont conservés). Glissez-la sur le plan pour l’y remettre.`, false, 6000);
   }
 
   // Photo de départ du parcours (enregistrée avec le plan, reprise dans photosphere.json).
@@ -532,7 +565,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     const sel = selectedPair();
     list.forEach((p) =>
       p.hotspots.forEach((hs, k) => {
-        if (!byId.has(hs.target)) return;
+        if (!byId.has(hs.target) || pool.has(p.id) || pool.has(hs.target)) return;
         const q = byId.get(hs.target);
         const a = contact(p, hs);
         const back = q.hotspots.find((x) => x.target === p.id);
@@ -738,10 +771,15 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     }
     const scaleEnd = e.target.closest('[data-scale-end]'), rlabel = e.target.closest('[data-room-label]');
     // Poignées du plan : pas de sélection ni de glisser-déposer natif du texte (il annulerait le geste).
-    if (e.target.closest('.plan-roomsel')) e.preventDefault();
+    if (e.target.closest('.plan-roomsel, .plan-startdir')) e.preventDefault();
     if (scaleEnd) {
       view.setPointerCapture(e.pointerId);
       drag = scaleStart(e);
+      return;
+    }
+    if (e.target.closest('[data-start-dir]')) {
+      view.setPointerCapture(e.pointerId);
+      drag = { kind: 'startdir', sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     if (rlabel) {
@@ -826,6 +864,13 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       applyView();
     } else if (drag.kind === 'scale') {
       scaleDrag(e, drag);
+    } else if (drag.kind === 'startdir') {
+      const m = toWorld(e);
+      const c = disp(pos.get(drawing.start));
+      let th = (Math.atan2(m.x - c.x, -(m.y - c.y)) * 180) / Math.PI;
+      if (e.shiftKey) th = Math.round(th / 15) * 15;
+      drawing.startYaw = +((((th - planNorth()) % 360) + 540) % 360 - 180).toFixed(1);
+      drawRooms();
     } else if (drag.kind === 'label') {
       const r = roomOf(drag.key);
       r.label = { dx: +((drag.start[0] + dx / zoom / scale() - r.cx) / ppm()).toFixed(3), dy: +((drag.start[1] + dy / zoom / scale() - r.cy) / ppm()).toFixed(3) };
@@ -853,6 +898,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       pos.set(drag.id, { x: drag.start.x + dx / zoom / scale(), y: drag.start.y + dy / zoom / scale() });
       placeNodes();
       drawLinks();
+      if (drag.id === drawing.start) drawRooms();
     } else if (drag.kind === 'rotate') {
       // Faire glisser vers la droite fait tourner la vue vers la gauche, comme dans la visionneuse.
       const { w } = picSize(mode);
@@ -895,6 +941,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     if (d.kind.startsWith('room-')) return d.moved ? roomDrop(d) : undefined;
     if (d.kind.startsWith('compass-')) return d.moved ? compassDrop(d) : undefined;
     if (d.kind === 'scale') return d.moved ? scaleDrop(d) : undefined;
+    if (d.kind === 'startdir') {
+      if (!d.moved) return;
+      await saveDrawing();
+      return toast(`En entrant dans le parcours, le regard sera tourné vers ${Math.round(((drawing.startYaw % 360) + 360) % 360)}° (0° = nord).`);
+    }
     if (d.kind === 'label') return d.moved ? saveDrawing() : selectRoom(d.key);
     if (d.kind === 'node' && !d.moved) {
       const now = performance.now();
@@ -944,6 +995,10 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       const target = list.find((q) => q.id !== d.id && Math.hypot(pos.get(q.id).x - p.x, pos.get(q.id).y - p.y) < 60 / scale());
       if (target) {
         if (pool.has(d.id)) pos.set(d.id, d.start);
+        if (byId.get(d.id).mapHidden) {
+          byId.get(d.id).mapHidden = false;
+          await db.updatePhoto(d.id, (cur) => ({ ...cur, mapHidden: false }));
+        }
         await createLink(d.id, target.id);
         return;
       }
@@ -958,25 +1013,16 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
           return;
         }
         const mp = { x: Math.round(p.x), y: Math.round(p.y) };
-        Object.assign(byId.get(d.id), { mapPos: mp, mapPlaced: true });
-        await db.updatePhoto(d.id, (cur) => ({ ...cur, mapPos: mp, mapPlaced: true }));
-        await layout();
-        render();
-        return;
-      }
-      if (inPool && !isLinked(d.id)) {
-        // Photo placée sans lien ramenée dans la zone : elle n'est plus sur le plan.
-        const ph = byId.get(d.id);
-        delete ph.mapPos;
-        ph.mapPlaced = false;
+        Object.assign(byId.get(d.id), { mapPos: mp, mapPlaced: true, mapHidden: false });
         await db.updatePhoto(d.id, (cur) => {
-          const { mapPos, ...rest } = cur;
-          return { ...rest, mapPlaced: false };
+          const { mapHidden, ...rest } = cur;
+          return { ...rest, mapPos: mp, mapPlaced: true };
         });
         await layout();
         render();
         return;
       }
+      if (inPool) return removeFromPlan(d.id);
       byId.get(d.id).mapPos = { x: Math.round(p.x), y: Math.round(p.y) };
       const changed = retargetAutoLinks(list, pos, d.id);
       drawLinks();
@@ -1102,6 +1148,19 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       const h = [m[0] + (d[0] / n) * 30, m[1] + (d[1] / n) * 30];
       html += `<line class="room-rot-line" x1="${m[0] * k}" y1="${m[1] * k}" x2="${h[0] * k}" y2="${h[1] * k}"/><circle class="room-rot" data-room-rot="1" cx="${h[0] * k}" cy="${h[1] * k}" r="9"><title>Glisser : tourner la pièce (le nord de ses photos suit)</title></circle>`;
     }
+    // Sens d'arrivée dans la photo de départ : flèche autour d'elle, à faire tourner.
+    let sd = '';
+    if (drawing.start && pos.has(drawing.start) && !pool.has(drawing.start)) {
+      const c = disp(pos.get(drawing.start));
+      const { w, h } = picSize(mode);
+      const R = (Math.max(w, h) * zf(drawing.start)) / 2 + 14;
+      const th = (((drawing.startYaw || 0) + planNorth()) * Math.PI) / 180;
+      const u = [Math.sin(th), -Math.cos(th)], v = [-u[1], u[0]];
+      const P = (r, s2 = 0) => `${c.x + u[0] * r + v[0] * s2},${c.y + u[1] * r + v[1] * s2}`;
+      sd = `<g class="start-dir"><line x1="${c.x + u[0] * R}" y1="${c.y + u[1] * R}" x2="${c.x + u[0] * (R + 44)}" y2="${c.y + u[1] * (R + 44)}"/>
+        <polygon points="${P(R + 68)} ${P(R + 40, 15)} ${P(R + 40, -15)}"/>
+        <circle class="start-dir-handle" data-start-dir="1" cx="${c.x + u[0] * (R + 50)}" cy="${c.y + u[1] * (R + 50)}" r="20"><title>Glisser autour de la photo : direction du regard en entrant dans le parcours (Maj : pas de 15°)</title></circle></g>`;
+    }
     // Flèche nord-sud.
     const cp = compassPos();
     html += `<g class="compass" transform="translate(${cp.x * k},${cp.y * k}) rotate(${planNorth()})">
@@ -1120,6 +1179,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       <circle class="scale-end" data-scale-end="1" cx="${len}" cy="0" r="9"><title>Glisser : changer l'échelle (toutes les distances du plan suivent, pas la taille des photos)</title></circle>
     </g>`;
     svg.innerHTML = html;
+    const sdSvg = world.querySelector('.plan-startdir');
+    if (sdSvg) sdSvg.innerHTML = sd;
   }
   // Barre d'échelle : longueur « ronde » (en mètres) d'au moins 40 pixels du plan.
   function scaleBar(L) {
@@ -1394,7 +1455,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     const onPlanIds = list.filter((p) => !pool.has(p.id)).map((p) => p.id);
     const xs = [...onPlanIds.map((id) => pos.get(id).x), ...drawing.lines.flatMap((l) => [l.x1, l.x2])];
     const freeX = xs.length ? Math.max(...xs) + 150 : 0;
-    const res = placeRooms(list, {
+    const res = placeRooms(list.filter((p) => !p.mapHidden), {
       ceilingH: drawing.ceilingH || 2.8,
       pxPerM: ppm(),
       north: planNorth(),

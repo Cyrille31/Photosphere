@@ -331,6 +331,23 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     canvas.style.cursor = 'none';
   }
 
+  // Casque / visée au regard : direction, vue du centre de l'écran, du lien le plus proche du regard
+  // (pas de flèche quand le regard est déjà sur un lien).
+  function reticleDir(frame) {
+    const dirs = hotDirs();
+    if (!dirs.length || sel >= 0) return null;
+    const gaze = controller.gazeDir();
+    if (!gaze) return null;
+    let best = 0, bestAng = Infinity;
+    dirs.forEach((d, i) => {
+      const a = Math.acos(Math.max(-1, Math.min(1, vecDot(d, gaze))));
+      if (a < bestAng) (bestAng = a), (best = i);
+    });
+    const c = mat3Apply(mat3Transpose(frame.eyes[0].cam), dirs[best]);
+    const n = Math.hypot(c[0], c[1]);
+    root.dataset.retDir = n > 1e-6 ? ((Math.atan2(c[1], c[0]) * 180) / Math.PI).toFixed(1) : '';
+    return n > 1e-6 ? [c[0] / n, c[1] / n] : [1, 0];
+  }
   function updateGaze(now) {
     const useGaze = controller.stereo || controller.mode === 'gyro' || xrSession;
     if (!useGaze || !current) {
@@ -443,6 +460,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
       dwell,
       hotSize: controller.stereo ? 0.09 : 0.07,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
+      retDir: controller.stereo || controller.mode === 'gyro' ? reticleDir(frame) : null,
     });
     placeLabels(frame);
     updateCursor(frame);
