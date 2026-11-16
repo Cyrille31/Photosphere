@@ -765,6 +765,8 @@ const stale = (gen) => gen !== routeGen;
 async function photoSources(photos) {
   const urls = [];
   const list = [];
+  // Photos retirées du plan : on ne propose plus de liens vers elles dans la navigation.
+  const hidden = new Set(photos.filter((p) => p.mapHidden).map((p) => p.id));
   for (const p of photos) {
     const out = p.status === 'done' ? await db.getBlob(p.id + ':out') : null;
     const blob = out || (await db.getBlob(p.id + ':orig'));
@@ -784,7 +786,7 @@ async function photoSources(photos) {
       src: url,
       srcType: out ? 'equirect' : p.srcType,
       params: out ? {} : p.params,
-      hotspots: p.hotspots || [],
+      hotspots: (p.hotspots || []).filter((h) => !hidden.has(h.target)),
       relief: p.relief || null,
       reliefKey: reliefKey(p.params),
       depthSrc,
@@ -810,6 +812,7 @@ async function openViewer(id, gen = routeGen) {
       title: 'PhotoSphère',
       initialView: state.lastView,
       onExit: () => (location.hash = state.origin === 'plan' ? '#/plan' : '#/'),
+      onPlan: () => (location.hash = '#/plan'),
       onEdit: (photoId, view) => {
         state.lastView = view;
         state.returnToViewer = true;

@@ -37,11 +37,12 @@ function saveHeadsetSettings(h) {
 // photos : [{ id, name, src, srcType, params, hotspots: [{ target, yaw, pitch, label }] }]
 // photo.depthSrc : carte de profondeur (PNG, voir depth.js), photo.relief : { h, key }, photo.reliefKey :
 // redressement de l'image affichée (la carte n'est utilisée que si elle lui correspond).
+// onPlan(id) : ouvre le plan (bouton à côté de « Éditer »).
 // onEdit(id, vue) : ouvre l'éditeur sur la photo affichée ; initialView : { yaw, pitch } en radians.
 // photo.src (et depthSrc, depthBgSrc) : URL, Blob, ou fonction asynchrone qui les fournit (chargement à
 // la demande d'un parcours partagé). onShow(photo) : appelé quand une photo est affichée (préchargement
 // des photos liées). maxHalf : résolution maximale de chaque moitié d'image (haute définition).
-export function createPlayer(container, { photos, startId, onExit, onEdit, title, initialView, onShow, maxHalf }) {
+export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
@@ -56,6 +57,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     <div class="ps-top">
       ${onExit ? '<button class="ps-btn ps-back" title="Retour">←</button>' : ''}
       <div class="ps-title"></div>
+      ${onPlan ? '<button class="ps-btn ps-plan" title="Ouvrir le plan">🗺<span>Plan</span></button>' : ''}
       ${onEdit ? '<button class="ps-btn ps-edit" title="Redresser cette photo ou y ajouter des liens">✏<span>Éditer</span></button>' : ''}
       <button class="ps-btn ps-list-btn" title="Liste des photos">☰</button>
     </div>
@@ -587,6 +589,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, title
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   });
   if (onExit) $('.ps-back').addEventListener('click', () => onExit(current && current.id));
+  if (onPlan) $('.ps-plan').addEventListener('click', () => onPlan(current && current.id));
   if (onEdit) {
     $('.ps-edit').addEventListener('click', () => {
       if (!current) return;

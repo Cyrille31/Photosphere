@@ -77,7 +77,7 @@ const MANUAL = `
 <ul>
   <li><b>👆 Tactile</b> : doigt ou souris (molette : zoom). <b>📱 Bout de bras</b> : bougez le téléphone. <b>🥽 Casque</b> : écran partagé pour casque type Cardboard ; fixez un lien 1,5 s pour y aller, ou appuyez sur le bouton du casque. Une petite flèche accolée au rond de visée montre où se trouve le lien le plus proche. <b>WebXR</b> si le navigateur le permet.</li>
   <li><b>Réglages du casque</b> (⚙) : champ de vision ; correction des lentilles k1 / k2 (préréglages Cardboard v1 / v2, RAZ) — les lignes droites doivent rester droites jusqu’au bord ; écartement des centres des deux images — chaque œil doit voir le point de visée au centre de sa lentille ; intensité du relief.</li>
-  <li>« ✏ Éditer » ouvre l’éditeur sur la photo affichée ; ☰ : liste des photos avec recherche.</li>
+  <li>« ✏ Éditer » ouvre l’éditeur sur la photo affichée ; « 🗺 Plan » revient directement au plan ; ☰ : liste des photos avec recherche.</li>
 </ul></section>
 
 <section id="man-plan"><h3>Plan</h3>
@@ -106,8 +106,8 @@ const MANUAL = `
   <li><b>Retoucher une pièce</b> : cliquez un de ses murs (outil ✋ Photos). Glissez son contour pour la déplacer (ses photos suivent), une poignée carrée pour changer sa taille, la poignée ronde pour la tourner (Maj : ses côtés se calent tous les 15° par rapport à la grille). Une poignée carrée avec Maj garde les proportions. Une fenêtre (en bas à gauche) montre son nom, sa largeur et sa longueur : modifiez-les directement ; un nouveau nom passe aussi dans ses photos. Son nom, écrit en petit en bas à gauche de la pièce, se glisse où l’on veut. <b>Tourner une pièce corrige le nord de ses photos</b> (utile quand le nord indiqué dans les photos n’était pas fiable) ; elles sont ensuite reconverties.</li>
   <li><b>Flèche nord-sud</b> : sur le plan, glissez son centre pour la déplacer et sa pointe N pour l’orienter (Maj : pas de 15°). Les directions des liens automatiques se calculent par rapport à elle.</li>
   <li><b>Échelle</b> : la barre sous la flèche indique une longueur en mètres. Glissez sa poignée ronde pour changer l’échelle : photos, murs, textes et pièces s’écartent ou se rapprochent (les pièces gardent leurs dimensions en mètres), mais les photos gardent leur taille. Pratique quand les photos sont trop grosses pour leurs pièces.</li>
-  <li><b>Photo de départ</b> : cliquez une photo du plan, puis « 🚩 Départ ». Elle porte alors le repère vert « Départ ▼ » ; le parcours partagé et la visite exportée commencent par elle. Une <b>flèche verte</b> autour d’elle indique le sens du regard en entrant : faites-la glisser autour de la photo pour le choisir (Maj : pas de 15°).</li>
-  <li><b>Retirer une photo du plan</b> : cliquez-la, puis « ⤺ Retirer du plan », ou glissez-la dans la zone des photos non placées. Elle quitte sa pièce, ses liens sont gardés (mais plus dessinés), et « Placer les pièces » la laisse de côté. Glissez-la sur le plan pour l’y remettre.</li>
+  <li><b>Photo de départ</b> : cliquez une photo du plan, puis « 🚩 Départ ». Elle porte alors le repère vert « Départ ▼ » ; le parcours partagé et la visite exportée commencent par elle. Une petite <b>flèche verte</b>, placée derrière elle et pointée vers elle, indique le sens dans lequel on « entre » (le sens du regard) : faites-la glisser autour de la photo pour le choisir (Maj : pas de 15°).</li>
+  <li><b>Retirer une photo du plan</b> : cliquez-la, puis « ⤺ Retirer du plan », ou glissez-la dans la zone des photos non placées. Elle quitte sa pièce, et « Placer les pièces » la laisse de côté. Ses liens sont gardés, mais ni dessinés sur le plan ni proposés pendant la visite (visionneuse, parcours partagé, visite exportée) ; ils reviennent quand on la remet sur le plan. Glissez-la sur le plan pour l’y remettre.</li>
 </ul></section>
 
 <section id="man-parcours"><h3>Parcours partagé</h3>

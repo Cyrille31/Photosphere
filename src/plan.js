@@ -867,7 +867,8 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     } else if (drag.kind === 'startdir') {
       const m = toWorld(e);
       const c = disp(pos.get(drawing.start));
-      let th = (Math.atan2(m.x - c.x, -(m.y - c.y)) * 180) / Math.PI;
+      // La flèche est derrière la photo : le regard part à l'opposé de la souris.
+      let th = (Math.atan2(m.x - c.x, -(m.y - c.y)) * 180) / Math.PI + 180;
       if (e.shiftKey) th = Math.round(th / 15) * 15;
       drawing.startYaw = +((((th - planNorth()) % 360) + 540) % 360 - 180).toFixed(1);
       drawRooms();
@@ -1153,13 +1154,14 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     if (drawing.start && pos.has(drawing.start) && !pool.has(drawing.start)) {
       const c = disp(pos.get(drawing.start));
       const { w, h } = picSize(mode);
-      const R = (Math.max(w, h) * zf(drawing.start)) / 2 + 14;
+      const R = (Math.max(w, h) * zf(drawing.start)) / 2 + 6;
       const th = (((drawing.startYaw || 0) + planNorth()) * Math.PI) / 180;
       const u = [Math.sin(th), -Math.cos(th)], v = [-u[1], u[0]];
       const P = (r, s2 = 0) => `${c.x + u[0] * r + v[0] * s2},${c.y + u[1] * r + v[1] * s2}`;
-      sd = `<g class="start-dir"><line x1="${c.x + u[0] * R}" y1="${c.y + u[1] * R}" x2="${c.x + u[0] * (R + 44)}" y2="${c.y + u[1] * (R + 44)}"/>
-        <polygon points="${P(R + 68)} ${P(R + 40, 15)} ${P(R + 40, -15)}"/>
-        <circle class="start-dir-handle" data-start-dir="1" cx="${c.x + u[0] * (R + 50)}" cy="${c.y + u[1] * (R + 50)}" r="20"><title>Glisser autour de la photo : direction du regard en entrant dans le parcours (Maj : pas de 15°)</title></circle></g>`;
+      // Flèche d'entrée : derrière la photo, pointée vers elle dans le sens du regard (u).
+      sd = `<g class="start-dir"><line x1="${c.x - u[0] * (R + 30)}" y1="${c.y - u[1] * (R + 30)}" x2="${c.x - u[0] * (R + 12)}" y2="${c.y - u[1] * (R + 12)}"/>
+        <polygon points="${P(-(R + 2))} ${P(-(R + 14), 7)} ${P(-(R + 14), -7)}"/>
+        <circle class="start-dir-handle" data-start-dir="1" cx="${c.x - u[0] * (R + 20)}" cy="${c.y - u[1] * (R + 20)}" r="14"><title>Glisser autour de la photo : direction du regard en entrant dans le parcours (Maj : pas de 15°)</title></circle></g>`;
     }
     // Flèche nord-sud.
     const cp = compassPos();
