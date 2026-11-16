@@ -113,6 +113,7 @@ uniform int uHotSel;
 uniform float uHotSize;
 uniform float uDwell;
 uniform float uReticle;
+uniform vec2 uRetDir; // direction (écran, y vers le haut) du lien le plus proche ; (0, 0) : aucune flèche
 uniform float uGrid;
 // Relief : carte de profondeur équirectangulaire (R : distance, G : distance du fond caché derrière les
 // objets proches, en hauteurs d'objectif), couleurs de ce fond, position de l'œil.
@@ -288,6 +289,19 @@ void main() {
     float rr = uReticle;
     float ring = smoothstep(rr * 0.55, rr * 0.7, d) * (1.0 - smoothstep(rr * 0.85, rr, d));
     col = mix(col, vec3(1.0), ring * 0.9);
+    // Flèche accolée au rond de visée, tournée vers le lien le plus proche (comme le curseur sur PC).
+    if (dot(uRetDir, uRetDir) > 0.0) {
+      vec2 u = normalize(uRetDir);
+      vec2 v = vec2(-u.y, u.x);
+      float a = dot(px, u), b = abs(dot(px, v));
+      float r0 = rr * 1.2, r1 = rr * 3.1;
+      float wd = (r1 - a) * 0.6;
+      float tri = smoothstep(r0 - 1.0, r0, a) * (1.0 - smoothstep(r1 - 1.0, r1, a)) * (1.0 - smoothstep(wd - 1.0, wd, b));
+      float wo = wd + 2.0;
+      float edge = smoothstep(r0 - 3.0, r0 - 2.0, a) * (1.0 - smoothstep(r1 + 1.5, r1 + 2.5, a)) * (1.0 - smoothstep(wo - 1.0, wo, b));
+      col = mix(col, vec3(0.0), edge * 0.55);
+      col = mix(col, vec3(1.0), tri);
+    }
   }
 
   outColor = vec4(col * inside + vec3(0.06, 0.07, 0.1) * (1.0 - inside), 1.0);

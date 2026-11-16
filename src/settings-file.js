@@ -11,7 +11,7 @@ export function isSettingsFile(file) {
   return /\.json$/i.test(file.name);
 }
 
-const withoutStart = ({ start, ...rest }) => rest;
+const withoutStart = ({ start, startYaw, ...rest }) => rest;
 
 export function buildSettings(photos, plan = null) {
   const byId = new Map(photos.map((p) => [p.id, p]));
@@ -20,7 +20,7 @@ export function buildSettings(photos, plan = null) {
     version: 1,
     exportedAt: new Date().toISOString(),
     // Photo de départ du parcours (choisie sur le plan), désignée par son nom de fichier.
-    ...(plan && plan.start && byId.has(plan.start) ? { start: byId.get(plan.start).fileName } : {}),
+    ...(plan && plan.start && byId.has(plan.start) ? { start: byId.get(plan.start).fileName, ...(plan.startYaw != null ? { startYaw: plan.startYaw } : {}) } : {}),
     ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH || (plan.rooms || []).length || plan.north || plan.pxPerM) ? { plan: withoutStart(plan) } : {}),
     // Ordre de prise de vue (puis nom) : un parcours partagé commence par la première photo prise.
     photos: [...photos].sort((a, b) => (a.takenAt || 0) - (b.takenAt || 0) || String(a.name).localeCompare(String(b.name))).map((p) => ({
@@ -33,6 +33,7 @@ export function buildSettings(photos, plan = null) {
       ...(p.mapPos ? { mapPos: p.mapPos } : {}),
       ...(p.mapRot ? { mapRot: p.mapRot } : {}),
       ...(p.mapPlaced ? { mapPlaced: true } : {}),
+      ...(p.mapHidden ? { mapHidden: true } : {}),
       ...(p.room && (p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       ...(p.relief ? { relief: p.relief } : {}),
       hotspots: (p.hotspots || [])
@@ -66,7 +67,7 @@ export async function applySettings(data) {
   if (data.plan && (Array.isArray(data.plan.lines) || Array.isArray(data.plan.texts))) await db.putPlanDrawing(data.plan);
   if (data.start && idOf.has(key(data.start))) {
     const d = await db.getPlanDrawing();
-    await db.putPlanDrawing({ ...d, start: idOf.get(key(data.start)) });
+    await db.putPlanDrawing({ ...d, start: idOf.get(key(data.start)), ...(data.startYaw != null ? { startYaw: data.startYaw } : {}) });
   }
   let applied = 0;
   const unmatched = [];
@@ -88,6 +89,7 @@ export async function applySettings(data) {
       ...(e.mapPos ? { mapPos: e.mapPos } : {}),
       ...(e.mapRot != null ? { mapRot: e.mapRot } : {}),
       ...(e.mapPlaced ? { mapPlaced: true } : {}),
+      ...(e.mapHidden ? { mapHidden: true } : {}),
       ...(e.room ? { room: e.room } : {}),
       ...(e.relief ? { relief: e.relief } : {}),
       srcType,

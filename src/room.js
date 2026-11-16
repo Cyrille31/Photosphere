@@ -224,22 +224,69 @@ function lineScore(em, latOf, latMin, latMax, ceiling = false) {
   return s;
 }
 
+// lineScore(…, ceiling = true) pour un rectangle, d'après les tables d'orientation (même résultat, en
+// évitant les calculs trigonométriques par colonne).
+function ceilScore(em, inv, d, latMin, latMax) {
+  let s = 0;
+  const W = em.w, H = em.h, e = em.e, cum = em.cum;
+  const band = Math.max(3, Math.round(H * (10 / 180)));
+  for (let c = 0; c < W; c++) {
+    let range = Infinity;
+    for (let k = 0; k < 4; k++) {
+      const iv = inv[k * W + c];
+      if (iv > 0) {
+        const r = d[k] * iv;
+        if (r < range) range = r;
+      }
+    }
+    const lat = Math.atan(1 / range);
+    if (!(lat > latMin && lat < latMax)) continue;
+    const r = Math.round((0.5 - lat / Math.PI) * H - 0.5);
+    let m = 0;
+    for (let k = -1; k <= 1; k++) if (r + k > 0 && r + k < H - 1) m = Math.max(m, e[(r + k) * W + c]);
+    if (cum) {
+      const r0 = Math.max(0, r - band), r1 = Math.min(H, r + band);
+      const above = (cum[r * W + c] - cum[r0 * W + c]) / Math.max(1, r - r0);
+      const below = (cum[r1 * W + c] - cum[(r + 1) * W + c]) / Math.max(1, r1 - r - 1);
+      s += 0.35 * m + 3 * (above - below);
+    } else s += m;
+  }
+  return s;
+}
+
 // Rectangle de la pièce d'après la ligne plafond / mur. Renvoie { phi, d: [4], score } (d en unités de
 // distance objectif-plafond).
 export function fitCeilingRect(em, { phiInit = null } = {}) {
   const grid = [];
   for (let k = 0; k < 64; k++) grid.push(0.25 * Math.pow(60, k / 63)); // 0,25 à 15 fois Hc
-  const ceilLat = (phi, d) => (a) => Math.atan(1 / rectRange(a, phi, d));
   const lo = 4 * DEG, hi = 75 * DEG;
-  const optimise = (phi) => {
-    let d = [2, 2, 2, 2];
-    let best = lineScore(em, ceilLat(phi, d), lo, hi, true);
-    for (let it = 0; it < 4; it++) {
+  // Pour une orientation phi, 1 / (composante de chaque colonne vers la normale de chaque mur) : la
+  // distance au mur k dans la colonne c vaut d[k] · inv[k][c] (calculé une fois par orientation).
+  const tables = (phi) => {
+    const inv = new Float32Array(4 * em.w);
+    for (let c = 0; c < em.w; c++) {
+      const a = ((c + 0.5) / em.w - 0.5) * 2 * Math.PI, dx = Math.sin(a), dz = Math.cos(a);
       for (let k = 0; k < 4; k++) {
-        for (const v of grid) {
+        const t = phi + (k * Math.PI) / 2;
+        const proj = dx * Math.cos(t) + dz * Math.sin(t);
+        inv[k * em.w + c] = proj > 1e-6 ? 1 / proj : 0;
+      }
+    }
+    return inv;
+  };
+  // Recherche des 4 distances, mur par mur ; `step` > 1 : grille allégée (recherche grossière).
+  const optimise = (phi, { d0 = [2, 2, 2, 2], iters = 4, step = 1 } = {}) => {
+    const inv = tables(phi);
+    const score = (d) => ceilScore(em, inv, d, lo, hi);
+    let d = d0.slice();
+    let best = score(d);
+    const g = grid.filter((v, i) => i % step === 0);
+    for (let it = 0; it < iters; it++) {
+      for (let k = 0; k < 4; k++) {
+        for (const v of g) {
           const t = d.slice();
           t[k] = v;
-          const s = lineScore(em, ceilLat(phi, t), lo, hi, true);
+          const s = score(t);
           if (s > best) (best = s), (d = t);
         }
       }
@@ -250,13 +297,16 @@ export function fitCeilingRect(em, { phiInit = null } = {}) {
   const phis = [];
   if (phiInit != null) for (let k = -12; k <= 12; k += 2) phis.push(phiInit + k * DEG);
   else for (let k = 0; k < 90; k += 3) phis.push(k * DEG);
-  for (const phi of phis) {
-    const r = optimise(phi);
+  // Recherche grossière sur toutes les orientations, puis complète sur les 3 meilleures.
+  const coarse = phis.map((phi) => optimise(phi, { iters: 2, step: 2 })).sort((u, v) => v.score - u.score);
+  for (const c of coarse.slice(0, 3)) {
+    const r = optimise(c.phi, { d0: c.d });
     if (!res || r.score > res.score) res = r;
   }
-  // Affinage de l'orientation.
+  // Affinage de l'orientation (en partant des distances trouvées).
   for (let k = -2; k <= 2; k += 0.5) {
-    const r = optimise(res.phi + k * DEG);
+    if (!k) continue;
+    const r = optimise(res.phi + k * DEG, { d0: res.d, iters: 2 });
     if (r.score > res.score) res = r;
   }
   return res;
@@ -351,12 +401,22 @@ export function photoRoom(room, ceilingH, defaultCamH = 1.6) {
   return { rect: { cx: unit.cx * Hc, cz: unit.cz * Hc, phi: unit.phi, w: unit.w * Hc, l: unit.l * Hc }, camH, Hc };
 }
 
-// Nom de pièce proposé d'après le nom de la photo (« 360_0887 entrée 1-1 » → « entrée »).
-export function guessRoomName(name) {
-  return String(name || '')
-    .replace(/^\s*(360_)?\d+\s*/i, '')
-    .replace(/[\s_-]*\d+([-_.]\d+)*\s*$/, '')
-    .trim();
+// Nom de pièce proposé d'après le nom de la photo : les mots à partir du n° `word` (réglage, 2 par
+// défaut ; 0 : aucun), jusqu'au premier qui contient un chiffre.
+// « 360_0887 entrée 1-1 » → « entrée » ; « 360_0884 salle à manger 1 » → « salle à manger ».
+let ROOM_WORD = 2;
+export function setRoomWord(n) {
+  ROOM_WORD = Number.isFinite(+n) ? Math.max(0, Math.round(+n)) : 2;
+}
+export function guessRoomName(name, word = ROOM_WORD) {
+  if (!word) return '';
+  const words = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim().split(/\s+/).slice(word - 1);
+  const out = [];
+  for (const w of words) {
+    if (/\d/.test(w)) break;
+    out.push(w);
+  }
+  return out.join(' ').replace(/[_-]+$/, '').trim();
 }
 
 // Vecteur (x : est, z : nord) de la photo → vecteur du plan (x à droite, y vers le bas), le nord du plan
@@ -375,8 +435,10 @@ export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 
   for (const p of photos) {
     const pr = photoRoom(p.room, ceilingH, p.cameraH || defaultCamH);
     if (!pr) continue;
-    const key = String((p.room && p.room.name) || p.id).trim().toLowerCase();
-    if (!groups.has(key)) groups.set(key, { key, name: (p.room && p.room.name) || p.name, items: [] });
+    // Sans nom de pièce : celui que propose le nom de la photo, sinon la photo forme sa propre pièce.
+    const name = ((p.room && p.room.name) || guessRoomName(p.name)).trim();
+    const key = (name || p.id).toLowerCase();
+    if (!groups.has(key)) groups.set(key, { key, name: name || 'Pièce sans nom', items: [] });
     groups.get(key).items.push({ p, ...pr });
   }
   const positions = new Map(), rooms = [], pairs = [];

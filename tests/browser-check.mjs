@@ -361,6 +361,11 @@ try {
   await page.click('.ps-mode[data-mode=cardboard]');
   await page.waitForTimeout(1200);
   check(await page.locator('.ps-player.stereo').count() === 1, 'mode casque VR (écran partagé) activé');
+  {
+    const rd = await page.evaluate(() => document.querySelector('.ps-player').dataset.retDir);
+    check(rd !== undefined && rd !== '', `casque : flèche du rond de visée tournée vers le lien le plus proche (${rd}°)`);
+    await page.screenshot({ path: path.join(shots, '06b-casque-fleche.png') });
+  }
   // Réglages du casque : écartement des centres puis RAZ.
   await page.click('.ps-vr-settings');
   await page.$eval('.ps-headset [name=sep]', (i) => {

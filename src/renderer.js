@@ -96,6 +96,8 @@ export class PanoRenderer {
     gl.uniform1f(u.uHotSize, frame.hotSize || 0.07);
     gl.uniform1f(u.uDwell, frame.dwell || 0);
     gl.uniform1f(u.uReticle, frame.reticle || 0);
+    const rd = frame.retDir || [0, 0];
+    gl.uniform2f(u.uRetDir, rd[0], rd[1]);
     gl.uniform1f(u.uGrid, frame.grid ? 1 : 0);
     this.bindRelief();
     gl.uniform1f(u.uDepthView, frame.depthView ? 1 : 0);

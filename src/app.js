@@ -16,6 +16,7 @@ import { driveSource, driveFolderId, parcoursLink } from './drive.js';
 import { RELIEF_DIR, reliefNames } from './relief-files.js';
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
+import { setRoomWord } from './room.js';
 
 const app = document.getElementById('app');
 const state = {
@@ -673,7 +674,8 @@ document.addEventListener('click', (e) => {
 async function exportTourDialog() {
   const ready = state.photos.filter((p) => p.status === 'done');
   if (!ready.length) return toast('Aucune photo convertie pour le moment.', true);
-  const startId = (await db.getPlanDrawing()).start;
+  const planD = await db.getPlanDrawing();
+  const startId = planD.start;
   dialog(
     `<h2>Visite autonome</h2>
     <p>Crée un fichier <b>.html</b> unique contenant toutes les photos converties et leurs liens. Il s’ouvre dans n’importe quel navigateur (smartphone à bout de bras, casque VR, ordinateur), même sans connexion.</p>
@@ -693,7 +695,7 @@ async function exportTourDialog() {
         d.close();
         const b = busy('Création de la visite');
         try {
-          const blob = await exportTourHtml(ready, { title, startId, maxWidth, onProgress: b.update });
+          const blob = await exportTourHtml(ready, { title, startId, startYaw: startId === planD.start && planD.startYaw != null ? planD.startYaw : null, maxWidth, onProgress: b.update });
           download(blob, title.replace(/[\\/:*?"<>|]+/g, '_') + '.html');
         } catch (e) {
           toast(e.message, true);
@@ -726,6 +728,9 @@ async function showSettings() {
     <label class="field">Qualité JPEG : <output>${state.settings.quality}</output><input type="range" name="quality" min="75" max="100" value="${state.settings.quality}"></label>
     ${est ? `<p class="note">Stockage utilisé : ${mb(est.usage || 0)} sur ${mb(est.quota || 0)} disponibles.</p>` : ''}
     ${ws.isSupported() ? `<label class="check"><input type="checkbox" name="renameFiles" ${state.settings.renameFiles ? 'checked' : ''}> Quand je renomme une photo, renommer aussi son fichier dans le dossier de travail</label>` : ''}
+    <label class="field">Nom de pièce proposé (onglet Pièce, plan des pièces) d’après le nom de la photo<select name="roomWord">
+      ${[[1, 'à partir du 1er mot'], [2, 'à partir du 2e mot (« 360_0884 salon 1 » → « salon »)'], [3, 'à partir du 3e mot'], [4, 'à partir du 4e mot'], [0, 'aucun']].map(([v, t]) => `<option value="${v}" ${v === (state.settings.roomWord ?? 2) ? 'selected' : ''}>${t}</option>`).join('')}
+    </select><small class="note">Les mots sont pris jusqu’au premier qui contient un chiffre.</small></label>
     <label class="check"><input type="checkbox" name="reconvert"> Reconvertir toutes les photos avec ces réglages</label>
     <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-save>Enregistrer</button></div>`,
     (d) => {
@@ -733,7 +738,8 @@ async function showSettings() {
       q.addEventListener('input', () => (q.previousElementSibling.textContent = q.value));
       d.querySelector('[data-save]').addEventListener('click', async () => {
         const rf = d.querySelector('[name=renameFiles]');
-        state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles };
+        state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles, roomWord: +d.querySelector('[name=roomWord]').value };
+        setRoomWord(state.settings.roomWord);
         await db.putSetting('app', state.settings);
         if (d.querySelector('[name=reconvert]').checked) {
           for (const p of await db.listPhotos()) await db.putPhoto({ ...p, status: 'pending' });
@@ -1035,6 +1041,7 @@ async function migratePhotos() {
 
 (async function start() {
   state.settings = { ...state.settings, ...((await db.getSetting('app')) || {}) };
+  setRoomWord(state.settings.roomWord ?? 2);
   await migratePhotos();
   await ws.init();
   ws.onStatus(refreshWorkspaceButton);

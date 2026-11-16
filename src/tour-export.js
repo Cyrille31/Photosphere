@@ -54,7 +54,7 @@ async function depthItem(p) {
 }
 
 // Visite autonome : un seul fichier .html qui s'ouvre sur n'importe quel smartphone ou ordinateur.
-export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, onProgress }) {
+export async function exportTourHtml(photos, { title, startId, startYaw = null, maxWidth = 4096, onProgress }) {
   const { code, css } = await bundlePlayer();
   const items = [];
   for (let i = 0; i < photos.length; i++) {
@@ -73,7 +73,7 @@ export async function exportTourHtml(photos, { title, startId, maxWidth = 4096, 
   }
   const ids = new Set(items.map((p) => p.id));
   items.forEach((p) => (p.hotspots = p.hotspots.filter((h) => ids.has(h.target))));
-  const data = JSON.stringify({ title, startId, photos: items }).replace(/</g, '\\u003c');
+  const data = JSON.stringify({ title, startId, startYaw, photos: items }).replace(/</g, '\\u003c');
   const html = `<!doctype html>
 <html lang="fr">
 <head>
@@ -91,7 +91,7 @@ ${css}</style>
 'use strict';
 ${code}
 const data = JSON.parse(document.getElementById('tour-data').textContent);
-createPlayer(document.body, { photos: data.photos, startId: data.startId, title: data.title });
+createPlayer(document.body, { photos: data.photos, startId: data.startId, title: data.title, initialView: data.startYaw != null ? { yaw: (data.startYaw * Math.PI) / 180, pitch: 0 } : undefined });
 })();
 </script>
 </body>
