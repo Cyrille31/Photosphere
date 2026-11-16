@@ -423,6 +423,29 @@ try {
     await page.waitForTimeout(1200);
     const still = await db(async (db, id) => (await db.getPhoto(id)).mapHidden, ids['salon-a.jpg']);
     check(still === true, 'plan : « Placer les pièces » laisse de côté la photo retirée');
+
+    // Navigation : plus de lien vers la photo retirée (visionneuse et parcours partagé) ; bouton Plan.
+    const labels = async () => {
+      await page.goto(base + '#/');
+      await page.goto(base + '#/view/' + ids['salon-b.jpg']);
+      await page.waitForSelector('.ps-player canvas');
+      await page.waitForTimeout(800);
+      return page.locator('.ps-labels > *').count();
+    };
+    const nHidden = await labels();
+    const tour = await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const { buildSettings } = await import('./src/settings-file.js');
+      const { tourFromSettings } = await import('./src/parcours.js');
+      const t = tourFromSettings(buildSettings(await db.listPhotos(), await db.getPlanDrawing()), () => true);
+      return t.find((p) => p.id === 'salon-b.jpg').hotspots.length;
+    });
+    await page.click('.ps-plan');
+    await page.waitForSelector('.plan-node');
+    const toPlan = page.url().endsWith('#/plan');
+    await db(async (db, id) => db.updatePhoto(id, (cur) => ({ ...cur, mapHidden: false, mapPlaced: true, mapPos: { x: 0, y: 0 } })), ids['salon-a.jpg']);
+    const nBack = await labels();
+    check(nHidden === 0 && tour === 0 && nBack === 1 && toPlan, `navigation : lien vers la photo retirée masqué (visionneuse ${nHidden}, parcours ${tour}), revenu une fois remise (${nBack}) ; bouton « Plan » de la visionneuse → plan (${toPlan})`);
   }
 } catch (e) {
   failures++;

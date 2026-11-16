@@ -290,7 +290,7 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .plan-roomsel .compass-rot { fill: transparent; pointer-events: all; cursor: grab; }
 .plan-startdir { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 8; user-select: none; -webkit-user-select: none; }
 .plan-view.drawing .plan-startdir * { pointer-events: none !important; }
-.plan-startdir .start-dir line { stroke: #16a34a; stroke-width: 6; stroke-linecap: round; }
+.plan-startdir .start-dir line { stroke: #16a34a; stroke-width: 3.5; stroke-linecap: round; }
 .plan-startdir .start-dir polygon { fill: #16a34a; }
 .plan-startdir .start-dir-handle { fill: transparent; pointer-events: all; cursor: grab; }
 .plan-startdir .start-dir-handle:hover { fill: rgba(22,163,74,.18); }

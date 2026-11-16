@@ -71,7 +71,8 @@ export async function exportTourHtml(photos, { title, startId, startYaw = null, 
       ...(await depthItem(p)),
     });
   }
-  const ids = new Set(items.map((p) => p.id));
+  // Liens vers les photos retirées du plan : plus proposés dans la navigation.
+  const ids = new Set(photos.filter((p) => !p.mapHidden).map((p) => p.id).filter((id) => items.some((x) => x.id === id)));
   items.forEach((p) => (p.hotspots = p.hotspots.filter((h) => ids.has(h.target))));
   const data = JSON.stringify({ title, startId, startYaw, photos: items }).replace(/</g, '\\u003c');
   const html = `<!doctype html>

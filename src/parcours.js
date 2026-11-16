@@ -62,7 +62,8 @@ export function sessionCache(source, max = 24) {
 export function tourFromSettings(data, has) {
   if (!data || !Array.isArray(data.photos)) throw new Error('Ce fichier n’est pas un fichier de réglages PhotoSphère.');
   const entries = data.photos.filter((e) => e.file && has(e.file));
-  const ids = new Set(entries.map((e) => key(e.file)));
+  // Liens vers les photos retirées du plan : plus proposés dans la navigation.
+  const ids = new Set(entries.filter((e) => !e.mapHidden).map((e) => key(e.file)));
   return entries.map((e) => {
     const params = { yaw: 0, pitch: 0, roll: 0, ...JSON.parse(JSON.stringify(DEFAULT_LENS_PARAMS)), ...(e.params || {}) };
     const rn = reliefNames(e.file);
