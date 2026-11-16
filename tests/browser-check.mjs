@@ -348,6 +348,24 @@ try {
   await page.click('.ed-nav.prev');
   await page.waitForFunction((id) => location.hash.endsWith(id), result.id);
   check(true, 'éditeur, bouton ‹ : retour à la photo précédente');
+  // Double-clic sur un lien : dans la liste, puis sur l'image (photo liée ouverte dans l'éditeur).
+  await page.waitForSelector('.editor canvas');
+  await page.waitForTimeout(800);
+  await page.click('[data-tab=links]');
+  await page.dblclick('.link-item .note');
+  await page.waitForFunction((id) => location.hash.startsWith('#/edit/') && !location.hash.endsWith(id), result.id);
+  await page.waitForSelector('.editor canvas');
+  await page.waitForFunction(() => document.querySelector('.ed-hint').hidden, null, { timeout: 30000 });
+  const onLinks = await page.evaluate(() => document.querySelector('[data-tab=links]').classList.contains('active'));
+  await page.click('.link-item [data-look]');
+  await page.waitForTimeout(400);
+  const cb = await page.locator('.editor canvas').boundingBox();
+  await page.mouse.dblclick(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  await page.waitForFunction((id) => location.hash.endsWith(id), result.id, { timeout: 10000 });
+  await page.waitForSelector('.editor canvas');
+  await page.waitForFunction(() => document.querySelector('.ed-hint').hidden, null, { timeout: 30000 });
+  check(onLinks, 'éditeur : double-clic sur un lien de la liste → photo liée (onglet Liens conservé), double-clic sur le lien de l’image → retour');
+  await page.click('[data-tab=level]');
   // Annule la bascule de test pour la suite.
   await page.waitForSelector('[data-reset-level]');
   await page.click('[data-reset-level]');

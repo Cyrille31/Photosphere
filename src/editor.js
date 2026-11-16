@@ -427,6 +427,27 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     redraw();
   }
 
+  // Double-clic sur un lien (sur l'image ou dans la liste) : la photo liée s'ouvre dans l'éditeur, vue
+  // orientée comme à l'arrivée dans la visite, sur le même onglet.
+  function openLinked(i) {
+    const h = p.hotspots[i];
+    if (!h || !photos.some((x) => x.id === h.target)) return;
+    const t = photos.find((x) => x.id === h.target);
+    const back = (t.hotspots || []).find((x) => x.target === p.id);
+    const v = h.arrive || (back ? { yaw: wrapDeg(back.yaw + 180), pitch: 0 } : { yaw: h.yaw, pitch: 0 });
+    openOther(h.target, null, { ...currentView(), yaw: v.yaw * DEG, pitch: (v.pitch || 0) * DEG });
+  }
+  canvas.addEventListener('dblclick', (e) => {
+    if (tool || placing || roomPick) return;
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width;
+    const d = renderer.pick((e.clientX - r.left) * sx, (e.clientY - r.top) * sx, controller.frame());
+    const k = d ? hotspotAt(d) : -1;
+    if (k < 0) return;
+    e.preventDefault();
+    openLinked(k);
+  });
+
   // Ctrl + clic gauche sur un lien de l'image : on le fait glisser à sa nouvelle place.
   stage.addEventListener(
     'pointerdown',
@@ -588,6 +609,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       item.addEventListener('click', (ev) => {
         if (ev.target.closest('button, input, label')) return;
         selectLink(i, false);
+      });
+      item.addEventListener('dblclick', (ev) => {
+        if (ev.target.closest('button, input, label')) return;
+        openLinked(i);
       });
       item.querySelector('[data-del]').addEventListener('click', () => {
         snapshot();
@@ -1177,10 +1202,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   });
 
   // Ouvre une autre photo dans l'éditeur, après avoir enregistré celle-ci.
-  async function openOther(id, focusOpt) {
+  async function openOther(id, focusOpt, view = null) {
     if (!onOpenPhoto) return;
     if (dirty) await save();
-    onOpenPhoto(id, currentView(), focusOpt);
+    onOpenPhoto(id, view || currentView(), focusOpt);
   }
 
   // Photo précédente / suivante : les modifications en cours sont enregistrées automatiquement.

@@ -58,6 +58,7 @@ const MANUAL = `
   <li>Un lien est une pastille que l’on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo. Dans la visionneuse, elle n’apparaît qu’à l’approche de la souris ou du regard ; la souris devient une flèche qui montre le lien le plus proche.</li>
   <li><b>➕ Ajouter un lien</b>, touchez l’endroit (porte, couloir…), choisissez la photo dans les vignettes (Ctrl + molette : taille ; recherche par nom). Le lien retour peut être créé dans l’autre photo.</li>
   <li><b>Cliquez un lien sur l’image</b> : il est sélectionné (orange) et la liste défile pour l’afficher en haut.</li>
+  <li><b>Double-cliquez un lien</b> (sur l’image, ou sur son pavé dans la liste) : la photo liée s’ouvre dans l’éditeur, orientée comme à l’arrivée dans la visite (les modifications en cours sont enregistrées).</li>
   <li><b>Ctrl + glisser</b> un lien sur l’image le déplace. Sur smartphone : « ✥ Déplacer » puis touchez le nouvel endroit.</li>
   <li><b>🎯 Vue d’arrivée</b> : orientation de la photo d’arrivée. Par défaut, on arrive dos au lien qui ramène d’où l’on vient (comme en franchissant une porte).</li>
   <li><b>↩ Lien retour</b> : ouvre la photo de destination pour placer le lien qui revient ici (par exemple sur la porte vue depuis la pièce).</li>
@@ -134,6 +135,7 @@ const MANUAL = `
   <tr><td>← / →</td><td>Photo précédente / suivante (visionneuse et éditeur)</td></tr>
   <tr><td>Ctrl + Z</td><td>Défaire (éditeur, dessin du plan)</td></tr>
   <tr><td>Ctrl + glisser</td><td>Éditeur : déplacer un lien. Plan : faire tourner une photo</td></tr>
+  <tr><td>Double-clic</td><td>Éditeur : ouvrir la photo liée (sur un lien de l’image ou de la liste). Plan : voir la photo</td></tr>
   <tr><td>Ctrl + molette</td><td>Taille des vignettes dans le choix d’une photo</td></tr>
   <tr><td>Maj + clic</td><td>Bibliothèque : sélectionner toutes les photos entre deux</td></tr>
   <tr><td>Échap</td><td>Finir un trait, annuler une liaison, réduire la photo agrandie, oublier le lien sélectionné (plan)</td></tr>
