@@ -308,3 +308,8 @@ dialog.manual-dialog { width: min(96vw, 860px); max-height: 90vh; padding: 0; }
 .plan-roomsel .scale-label { font: 600 12px system-ui, sans-serif; text-anchor: middle; fill: #111; pointer-events: none; }
 .plan-roomsel .scale-end { fill: #0b98d0; stroke: #fff; stroke-width: 2; pointer-events: all; cursor: ew-resize; }
 .plan-view.drawing .plan-roomsel * { pointer-events: none !important; }
+
+table.cmp { border-collapse: collapse; margin: 8px 0; width: 100%; }
+table.cmp th, table.cmp td { padding: 4px 8px; border-bottom: 1px solid rgba(127,127,127,.3); text-align: left; }
+ul.backups { list-style: none; padding: 0; max-height: 50vh; overflow: auto; }
+ul.backups li { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.3); }

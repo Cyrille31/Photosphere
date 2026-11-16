@@ -43,6 +43,48 @@ export function buildSettings(photos, plan = null) {
   };
 }
 
+// Empreinte d'un fichier de réglages (sans sa date d'export) : deux fichiers de même empreinte
+// décrivent le même travail.
+export function settingsSignature(data) {
+  const photos = [...((data && data.photos) || [])].sort((a, b) => String(a.file).localeCompare(String(b.file)));
+  return JSON.stringify({ photos, plan: (data && data.plan) || null, start: (data && data.start) || null, startYaw: data && data.startYaw != null ? data.startYaw : null });
+}
+
+// Résumé lisible d'un fichier de réglages : nombre de photos, de liens, de photos redressées, de pièces.
+export function settingsSummary(data) {
+  const photos = (data && data.photos) || [];
+  const leveled = photos.filter((e) => e.params && (Math.abs(e.params.pitch || 0) + Math.abs(e.params.roll || 0) > 0.05 || Math.abs(e.params.yaw || 0) > 0.05)).length;
+  return {
+    photos: photos.length,
+    links: photos.reduce((n, e) => n + ((e.hotspots || []).length), 0),
+    leveled,
+    rooms: ((data && data.plan && data.plan.rooms) || []).length,
+  };
+}
+
+// Sauvegardes automatiques du travail (dans le navigateur) : une avant chaque chargement d'un fichier
+// de réglages, et une à chaque ouverture de l'application. Les 12 plus récentes sont gardées.
+const BACKUP_KEY = 'backups';
+export async function backupNow(reason) {
+  const photos = await db.listPhotos();
+  if (!photos.length) return false;
+  const data = buildSettings(photos, await db.getPlanDrawing());
+  const list = (await db.getSetting(BACKUP_KEY)) || [];
+  if (list[0] && settingsSignature(list[0].data) === settingsSignature(data)) return false;
+  list.unshift({ at: Date.now(), reason, data });
+  await db.putSetting(BACKUP_KEY, list.slice(0, 12));
+  return true;
+}
+// Garde aussi un fichier qu'on a choisi de ne pas charger (pour pouvoir y revenir).
+export async function backupData(data, reason) {
+  const list = (await db.getSetting(BACKUP_KEY)) || [];
+  list.unshift({ at: Date.now(), reason, data });
+  await db.putSetting(BACKUP_KEY, list.slice(0, 12));
+}
+export async function listBackups() {
+  return (await db.getSetting(BACKUP_KEY)) || [];
+}
+
 export function settingsBlob(photos, plan = null) {
   return new Blob([JSON.stringify(buildSettings(photos, plan), null, 1)], { type: 'application/json' });
 }

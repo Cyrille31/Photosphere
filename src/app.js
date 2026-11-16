@@ -15,7 +15,7 @@ import { openParcours, filesSource } from './parcours.js';
 import { driveSource, driveFolderId, parcoursLink } from './drive.js';
 import { RELIEF_DIR, reliefNames } from './relief-files.js';
 import { createZip } from './zip.js';
-import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
+import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
 import { setRoomWord } from './room.js';
 
 const app = document.getElementById('app');
@@ -115,6 +115,94 @@ export async function requeue(photo) {
   processQueue();
 }
 
+// Un fichier de réglages différent du travail en cours va le remplacer : on demande. Renvoie 'load',
+// 'keep' (garder le travail en cours) ou 'cancel'.
+async function confirmSettingsLoad(data, file) {
+  const photos = await db.listPhotos();
+  if (!photos.length) return 'load';
+  const names = new Set(photos.map((p) => String(p.fileName || '').toLowerCase()));
+  if (!(data.photos || []).some((e) => names.has(String(e.file || '').toLowerCase()))) return 'load';
+  const current = buildSettings(photos, await db.getPlanDrawing());
+  // Comparaison limitée aux photos du fichier présentes dans la bibliothèque.
+  const inFile = new Set((data.photos || []).map((e) => String(e.file || '').toLowerCase()));
+  const mine = { ...current, photos: current.photos.filter((e) => inFile.has(String(e.file || '').toLowerCase())) };
+  const theirs = { ...data, photos: (data.photos || []).filter((e) => names.has(String(e.file || '').toLowerCase())) };
+  if (settingsSignature(mine) === settingsSignature(theirs)) return 'load';
+  let localAt = 0;
+  try {
+    localAt = +localStorage.getItem('ps-last-change') || 0;
+  } catch (e) {
+    // inconnue
+  }
+  const fileAt = file && file.lastModified ? file.lastModified : Date.parse(data.exportedAt || '') || 0;
+  const when = (t) => (t ? new Date(t).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : 'inconnue');
+  const a = settingsSummary(mine), b = settingsSummary(theirs);
+  const newer = localAt > fileAt + 60000 ? 'mine' : fileAt > localAt + 60000 ? 'file' : '';
+  return new Promise((resolve) => {
+    let answer = 'cancel';
+    const d = dialog(
+      `<h2>⚠ Le fichier « ${escapeHtml(file ? file.name : SETTINGS_FILE_NAME)} » est différent de votre travail</h2>
+      <p>Le charger <b>remplacera</b> le travail en cours dans PhotoSphère (redressements, liens, pièces, plan…).</p>
+      <table class="cmp">
+        <tr><th></th><th>Travail en cours</th><th>Fichier</th></tr>
+        <tr><td>Dernière modification</td><td>${when(localAt)}${newer === 'mine' ? ' <b>(plus récent)</b>' : ''}</td><td>${when(fileAt)}${newer === 'file' ? ' <b>(plus récent)</b>' : ''}</td></tr>
+        <tr><td>Liens</td><td>${a.links}</td><td>${b.links}</td></tr>
+        <tr><td>Photos redressées</td><td>${a.leveled}</td><td>${b.leveled}</td></tr>
+        <tr><td>Pièces sur le plan</td><td>${a.rooms}</td><td>${b.rooms}</td></tr>
+      </table>
+      <p class="note">Dans les deux cas, la version écartée est gardée et peut être restaurée (⚙ Réglages → Sauvegardes automatiques).</p>
+      <div class="row">
+        <button class="btn${newer !== 'file' ? ' primary' : ''}" data-choice="keep">Garder mon travail</button>
+        <button class="btn${newer === 'file' ? ' primary' : ''}" data-choice="load">Charger le fichier</button>
+      </div>`,
+      (dd) => {
+        dd.querySelectorAll('[data-choice]').forEach((btn) =>
+          btn.addEventListener('click', () => {
+            answer = btn.dataset.choice;
+            dd.close();
+          })
+        );
+      }
+    );
+    d.addEventListener('close', () => resolve(answer === 'cancel' ? 'keep' : answer));
+  });
+}
+
+// Sauvegardes automatiques : liste, et restauration (le travail en cours est sauvegardé d'abord).
+async function showBackups() {
+  const list = await listBackups();
+  const when = (t) => new Date(t).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+  dialog(
+    `<h2>Sauvegardes automatiques</h2>
+    <p class="note">PhotoSphère garde dans le navigateur une copie de votre travail à chaque ouverture et avant chaque chargement d’un fichier photosphere.json (les 12 plus récentes).</p>
+    ${
+      list.length
+        ? `<ul class="backups">${list
+            .map((b, i) => {
+              const s = settingsSummary(b.data);
+              return `<li><b>${when(b.at)}</b> — ${escapeHtml(b.reason || '')}<br><small>${s.photos} photo(s), ${s.links} lien(s), ${s.leveled} redressée(s), ${s.rooms} pièce(s)</small> <button class="btn small" data-restore="${i}">Restaurer</button></li>`;
+            })
+            .join('')}</ul>`
+        : '<p>Aucune sauvegarde pour l’instant.</p>'
+    }
+    <div class="row"><button class="btn" data-close>Fermer</button></div>`,
+    (d) => {
+      d.querySelectorAll('[data-restore]').forEach((btn) =>
+        btn.addEventListener('click', async () => {
+          const b = list[+btn.dataset.restore];
+          await backupNow('avant une restauration');
+          const r = await applySettings(b.data);
+          d.close();
+          await refresh();
+          processQueue();
+          await ws.saveNow();
+          toast(`Sauvegarde du ${when(b.at)} restaurée (${r.applied} photo(s)).`, false, 6000);
+        })
+      );
+    }
+  );
+}
+
 // ---------- import ----------
 async function handleFiles(files) {
   if (!files || !files.length) return;
@@ -126,7 +214,15 @@ async function handleFiles(files) {
     const { added, skipped } = images.length ? await importFiles(images, b.update) : { added: [], skipped: [] };
     let settingsMsg = '';
     for (const f of settingsFiles) {
-      const r = await applySettings(await readSettingsFile(f));
+      const data = await readSettingsFile(f);
+      const choice = await confirmSettingsLoad(data, f);
+      if (choice !== 'load') {
+        if (choice === 'keep') await backupData(data, `fichier « ${f.name} » non chargé (version du dossier)`);
+        settingsMsg += choice === 'keep' ? `« ${f.name} » non chargé : votre travail est conservé${ws.getStatus().granted ? ' et sera écrit dans le dossier' : ''}. ` : '';
+        continue;
+      }
+      await backupNow(`avant le chargement de « ${f.name} »`);
+      const r = await applySettings(data);
       settingsMsg += `Réglages de « ${f.name} » appliqués à ${r.applied} photo(s).`;
       if (r.unmatched.length) settingsMsg += ` ${r.unmatched.length} photo(s) du fichier absente(s) de la bibliothèque (${r.unmatched.slice(0, 3).join(', ')}${r.unmatched.length > 3 ? '…' : ''}).`;
     }
@@ -731,11 +827,16 @@ async function showSettings() {
     <label class="field">Nom de pièce proposé (onglet Pièce, plan des pièces) d’après le nom de la photo<select name="roomWord">
       ${[[1, 'à partir du 1er mot'], [2, 'à partir du 2e mot (« 360_0884 salon 1 » → « salon »)'], [3, 'à partir du 3e mot'], [4, 'à partir du 4e mot'], [0, 'aucun']].map(([v, t]) => `<option value="${v}" ${v === (state.settings.roomWord ?? 2) ? 'selected' : ''}>${t}</option>`).join('')}
     </select><small class="note">Les mots sont pris jusqu’au premier qui contient un chiffre.</small></label>
+    <div class="row" style="justify-content:flex-start"><button class="btn small" data-backups>🕘 Sauvegardes automatiques…</button></div>
     <label class="check"><input type="checkbox" name="reconvert"> Reconvertir toutes les photos avec ces réglages</label>
     <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-save>Enregistrer</button></div>`,
     (d) => {
       const q = d.querySelector('[name=quality]');
       q.addEventListener('input', () => (q.previousElementSibling.textContent = q.value));
+      d.querySelector('[data-backups]').addEventListener('click', () => {
+        d.close();
+        showBackups();
+      });
       d.querySelector('[data-save]').addEventListener('click', async () => {
         const rf = d.querySelector('[name=renameFiles]');
         state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles, roomWord: +d.querySelector('[name=roomWord]').value };
@@ -1048,6 +1149,15 @@ async function migratePhotos() {
   await migratePhotos();
   await ws.init();
   ws.onStatus(refreshWorkspaceButton);
+  // Dossier lié dont l'accès est à reconfirmer : prévenir (une fois) que rien n'y est enregistré.
+  let warnedUnsaved = false;
+  ws.onUnsaved(() => {
+    if (warnedUnsaved) return;
+    warnedUnsaved = true;
+    toast(`⚠ Le dossier « ${ws.getStatus().name} » n’est pas reconnecté : vos modifications ne sont pas enregistrées dans photosphere.json. Cliquez « 📁 Reconnecter » (vous pourrez garder votre travail).`, true, 12000);
+  });
+  // Copie du travail à chaque ouverture (filet de sécurité).
+  backupNow('ouverture de PhotoSphère').catch(() => {});
   // Une conversion interrompue (fermeture de l'onglet) est relancée.
   await route();
   processQueue();

@@ -24,6 +24,12 @@ function emit() {
   listeners.forEach((fn) => fn(getStatus()));
 }
 
+const unsavedListeners = new Set();
+export function onUnsaved(fn) {
+  unsavedListeners.add(fn);
+  return () => unsavedListeners.delete(fn);
+}
+
 export function onStatus(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -51,7 +57,11 @@ export async function init() {
     handle = null;
     granted = false;
   }
-  db.onPhotosChanged(() => scheduleSave());
+  db.onPhotosChanged(() => {
+    // Dossier lié mais accès à reconfirmer : les modifications ne vont pas dans photosphere.json.
+    if (handle && !granted) unsavedListeners.forEach((fn) => fn());
+    scheduleSave();
+  });
   emit();
   return getStatus();
 }
