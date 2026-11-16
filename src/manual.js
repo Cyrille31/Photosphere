@@ -23,6 +23,8 @@ const MANUAL = `
   <li><b>Importer</b> : bouton « Importer » (photos), « Dossier » (tout un dossier, par exemple <code>DCIM</code> de la carte micro SD de la Gear 360) ou glisser-déposer. Les doubles fisheye de la Gear 360 sont détectés et assemblés automatiquement en équirectangulaire (7776 × 3888 par défaut, 7200 × 3600 comme Samsung dans ⚙ Réglages), avec les métadonnées « photosphère » lues par Google Photos, Facebook ou les visionneuses VR.</li>
   <li>La caméra ne transfère pas ses photos en Bluetooth : passez par la carte micro SD (lecteur USB-C sur le téléphone, ou PC).</li>
   <li><b>Dossier de travail</b> (Chrome / Edge sur PC) : PhotoSphère lit vos photos d’origine dans un dossier, sans jamais les modifier, et y enregistre automatiquement le fichier de réglages <code>photosphere.json</code>.</li>
+  <li><b>Sécurité du travail</b> : à la réouverture, l’accès au dossier doit souvent être reconfirmé (« 📁 Reconnecter ») ; tant qu’il ne l’est pas, rien n’est écrit dans le dossier (un message le signale). Si le <code>photosphere.json</code> du dossier est différent du travail en cours (dossier pas encore synchronisé, version plus ancienne…), PhotoSphère <b>demande</b> avant de le charger : « Garder mon travail » (il est alors réécrit dans le dossier) ou « Charger le fichier ». La version écartée est toujours gardée.</li>
+  <li><b>Sauvegardes automatiques</b> (⚙ Réglages) : une copie du travail est faite à chaque ouverture et avant chaque chargement d’un fichier de réglages (les 12 dernières) ; « Restaurer » y revient.</li>
   <li>Sur smartphone, ajoutez PhotoSphère à l’écran d’accueil : plein écran et utilisation hors connexion. Les photos restent sur l’appareil.</li>
 </ul></section>
 

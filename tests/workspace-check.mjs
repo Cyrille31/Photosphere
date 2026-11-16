@@ -221,6 +221,50 @@ try {
   }, ids.b);
   check(rectOk, 'affichage rectangulaire : le lien aboutit dans l’image de la photo');
   await page.screenshot({ path: path.join(shots, 'plan-rectangles.png') });
+
+  // ---------- fichier du dossier plus ancien que le travail en cours : alerte, rien n'est perdu ----------
+  const countLinks = () => page.evaluate(async () => (await (await import('./src/db.js')).listPhotos()).reduce((n, p) => n + p.hotspots.length, 0));
+  const writeStale = () =>
+    page.evaluate(async () => {
+      const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('photos');
+      const fh = await dir.getFileHandle('photosphere.json');
+      const data = JSON.parse(await (await fh.getFile()).text());
+      data.photos.forEach((e) => (e.hotspots = []));
+      const w = await fh.createWritable();
+      await w.write(JSON.stringify(data));
+      await w.close();
+    });
+  const reimport = async () => {
+    await page.goto(base + '#/');
+    await page.waitForSelector('[data-act=workspace]');
+    await page.click('[data-act=workspace]');
+    await page.click('[data-ws=import]');
+    await page.waitForSelector('dialog [data-choice]', { timeout: 20000 });
+  };
+  const n0 = await countLinks();
+  await writeStale();
+  await reimport();
+  await page.screenshot({ path: path.join(shots, 'alerte-ecrasement.png') });
+  await page.click('dialog [data-choice=keep]');
+  await page.waitForTimeout(2500);
+  const kept = await countLinks();
+  const folderLinks = (await readFolder()).json.photos.reduce((n, e) => n + e.hotspots.length, 0);
+  check(n0 > 0 && kept === n0 && folderLinks === n0, `fichier du dossier plus ancien : alerte, « Garder mon travail » → ${kept} lien(s) gardé(s), réécrits dans photosphere.json (${folderLinks})`);
+  await writeStale();
+  await reimport();
+  await page.click('dialog [data-choice=load]');
+  await page.waitForTimeout(2500);
+  const loaded = await countLinks();
+  // Restauration de la sauvegarde faite juste avant le chargement.
+  await page.click('#btn-settings');
+  await page.click('[data-backups]');
+  await page.waitForSelector('[data-restore]');
+  const reasons = await page.$$eval('ul.backups li', (li) => li.map((x) => x.textContent));
+  const idx = reasons.findIndex((t) => t.includes('avant le chargement'));
+  await page.click(`[data-restore="${idx}"]`);
+  await page.waitForTimeout(2500);
+  const restored = await countLinks();
+  check(loaded === 0 && idx >= 0 && restored === n0, `« Charger le fichier » puis restauration de la sauvegarde automatique : ${loaded} → ${restored} lien(s)`);
 } catch (e) {
   failures++;
   console.error(e);

@@ -295,6 +295,10 @@ try {
   fs.writeFileSync(settingsPath, settingsJson);
   check(settingsJson.length < 50000, `fichier de réglages léger (${(settingsJson.length / 1024).toFixed(1)} ko pour 2 photos)`);
   await page.locator('input[type=file][accept^=".json"]').setInputFiles(settingsPath);
+  // Le fichier diffère du travail en cours : PhotoSphère demande avant de le charger.
+  await page.waitForSelector('dialog [data-choice=load]', { timeout: 30000 });
+  check(true, 'fichier de réglages différent du travail en cours : confirmation demandée avant de le charger');
+  await page.click('dialog [data-choice=load]');
   // On attend la fin de l'application des réglages (message de confirmation).
   await page.waitForSelector('.toast:has-text("appliqués à 2 photo")', { timeout: 30000 });
   const restored = await page.evaluate(async () => {

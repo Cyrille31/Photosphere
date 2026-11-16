@@ -73,6 +73,12 @@ export function onPhotosChanged(fn) {
   return () => listeners.delete(fn);
 }
 function notify() {
+  // Date de la dernière modification (affichée si un fichier de réglages risque d'écraser le travail).
+  try {
+    localStorage.setItem('ps-last-change', String(Date.now()));
+  } catch (e) {
+    // non mémorisée
+  }
   listeners.forEach((fn) => {
     try {
       fn();
