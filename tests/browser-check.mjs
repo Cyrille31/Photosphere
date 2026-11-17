@@ -410,6 +410,16 @@ try {
     i.dispatchEvent(new Event('input'));
   });
   const sepSaved = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')).sep);
+  await page.$eval('.ps-headset [name=targetSize]', (i) => {
+    i.value = 1.5;
+    i.dispatchEvent(new Event('input'));
+  });
+  await page.$eval('.ps-headset [name=targetAppear]', (i) => {
+    i.value = 8;
+    i.dispatchEvent(new Event('input'));
+  });
+  const tgt = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));
+  check(tgt.targetSize === 1.5 && tgt.targetAppear === 8, `casque : taille des cibles (${tgt.targetSize}°) et distance d’apparition (${tgt.targetAppear}°) réglables`);
   await page.click('.ps-headset [data-preset=v2]');
   const v2 = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));
   await page.click('.ps-headset [data-preset=reset]');
