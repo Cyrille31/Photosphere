@@ -26,22 +26,43 @@ export function filesSource(files, name = 'Fichiers choisis') {
 
 // Mémoire de la visite : les fichiers déjà lus (au plus `max`, les plus anciens oubliés), effacée en
 // sortant. Les préchargements passent l'un après l'autre, sans gêner la photo demandée.
-export function sessionCache(source, max = 16) {
-  const entries = new Map(); // nom → { p: Promise<Blob>, t }
+// Mémoire limitée en octets (et non en nombre de fichiers) : une photo n'est téléchargée qu'une fois
+// par visite tant que la place le permet — retélécharger sans cesse les mêmes photos de 10 Mo finit par
+// faire freiner (voire refuser) les téléchargements par Google Drive.
+const defaultCacheBytes = () => {
+  const mobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
+  return (mobile ? 350 : 700) * 1048576;
+};
+export function sessionCache(source, maxBytes = defaultCacheBytes()) {
+  const entries = new Map(); // nom → { p: Promise<Blob>, t, size }
   let queue = Promise.resolve();
+  const trim = () => {
+    let total = 0;
+    for (const e of entries.values()) total += e.size || 0;
+    if (total <= maxBytes) return;
+    // Les plus anciennes d'abord, en gardant toujours les 6 dernières utilisées.
+    const old = [...entries.entries()].filter(([, e]) => e.size).sort((a, b) => a[1].t - b[1].t).slice(0, -6);
+    for (const [k, e] of old) {
+      if (total <= maxBytes) break;
+      entries.delete(k);
+      total -= e.size;
+    }
+  };
   const get = (n) => {
     const k = key(n);
     let e = entries.get(k);
     if (!e) {
       e = { p: source.get(n) };
-      e.p.catch(() => entries.delete(k));
+      e.p.then(
+        (b) => {
+          e.size = (b && b.size) || 1;
+          trim();
+        },
+        () => entries.delete(k)
+      );
       entries.set(k, e);
     }
     e.t = performance.now();
-    if (entries.size > max) {
-      const old = [...entries.entries()].sort((a, b) => a[1].t - b[1].t).slice(0, entries.size - max);
-      old.forEach(([k2]) => entries.delete(k2));
-    }
     return e.p;
   };
   return {
@@ -102,7 +123,9 @@ export async function openParcours(container, source, { onExit, title } = {}) {
       if (p.reliefFiles.bg) p.depthBgSrc = () => cache.get(p.reliefFiles.bg);
     }
   }
-  const filesOf = (p) => [p.file, ...(p.reliefFiles ? [p.reliefFiles.depth, p.reliefFiles.bg].filter(Boolean) : [])];
+  // Préchargé pour une photo liée : la photo et sa carte de profondeur (légère) ; le fond reconstitué
+  // du relief (plus lourd) n'est chargé qu'en entrant dans la photo.
+  const filesOf = (p) => [p.file, ...(p.reliefFiles ? [p.reliefFiles.depth] : [])];
   // Photo de départ : celle indiquée dans le fichier, sinon la première prise qui a des liens (le début
   // du parcours ; les photos y sont rangées dans l'ordre de prise de vue), sinon la première.
   const start = (data.start && byId.get(key(data.start))) || photos.find((p) => p.hotspots.length) || photos[0];

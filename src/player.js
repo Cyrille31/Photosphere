@@ -42,10 +42,14 @@ function saveHeadsetSettings(h) {
 // photo.src (et depthSrc, depthBgSrc) : URL, Blob, ou fonction asynchrone qui les fournit (chargement à
 // la demande d'un parcours partagé). onShow(photo) : appelé quand une photo est affichée (préchargement
 // des photos liées). maxHalf : résolution maximale de chaque moitié d'image (haute définition).
-// Nom affiché d'une photo : sans le numéro de prise de vue du début (« 360_0884 salon 1 » → « salon 1 »).
+// Nom affiché d'une photo : sans le numéro de prise de vue du début ni le numéro de la photo à la fin,
+// « _ » remplacés par des espaces (« 360_0896 salle_à_manger_2 1 » → « salle à manger 2 »).
 export function displayName(name) {
-  const n = String(name || '').replace(/^\s*(?:360_)?\d+(?![\d_])[\s_-]+/i, '').trim();
-  return n || String(name || '');
+  const words = String(name || '').trim().split(/\s+/);
+  if (words.length > 1 && /^(?:360_)?\d+$/i.test(words[0])) words.shift();
+  while (words.length > 1 && /^\d+(?:[-_.]\d+)*$/.test(words[words.length - 1])) words.pop();
+  const n = words.join(' ').replace(/_+/g, ' ').trim();
+  return n && !/^(?:360 )?\d+$/.test(n) ? n : String(name || '');
 }
 
 export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf }) {
@@ -189,6 +193,13 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       controller.pitch = 0;
     }
     current = photo;
+    // Mémoire : les cartes de relief décodées ne sont gardées que pour la photo affichée.
+    for (const q of photos) {
+      if (q === photo) continue;
+      if (q.depthBgImage && q.depthBgImage.close) q.depthBgImage.close();
+      delete q.depthMaps;
+      delete q.depthBgImage;
+    }
     renderer.setHotspots(hotspotsOf(photo));
     hotAlpha = [];
     sel = -1;
