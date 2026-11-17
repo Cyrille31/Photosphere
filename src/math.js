@@ -157,6 +157,13 @@ export function deviceOrientationMatrix(alpha, beta, gamma, screenAngle) {
   return [right[0], up[0], fwd[0], right[1], up[1], fwd[1], right[2], up[2], fwd[2]];
 }
 
+// Inclinaison de l'écran (radians, sens horaire) : angle dont il faut tourner un texte pour qu'il reste
+// aligné sur l'horizon (0 : téléphone droit, ±π : à l'envers). null si l'on regarde à la verticale.
+export function screenRoll(cam) {
+  const x = cam[3], y = cam[4]; // composantes de la verticale du monde vers la droite et le haut de l'écran
+  return Math.hypot(x, y) > 0.3 ? Math.atan2(x, y) : null;
+}
+
 export function headingOf(m) {
   return Math.atan2(m[2], m[8]);
 }

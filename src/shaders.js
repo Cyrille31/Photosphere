@@ -113,6 +113,7 @@ uniform int uHotSel;
 uniform float uHotSize;
 uniform float uDwell;
 uniform float uReticle;
+uniform float uHotRing; // rayon intérieur du cercle des cibles (fraction de leur taille)
 uniform vec2 uRetDir; // direction (écran, y vers le haut) du lien le plus proche ; (0, 0) : aucune flèche
 uniform float uGrid;
 // Relief : carte de profondeur équirectangulaire (R : distance, G : distance du fond caché derrière les
@@ -268,7 +269,7 @@ void main() {
     if (alpha > 0.003 && ang < s * 1.45) {
       float aa = max(pixAng * 1.5, 1e-5);
       float disc = 1.0 - smoothstep(s - aa, s, ang);
-      float ring = disc * smoothstep(s * 0.72 - aa, s * 0.72, ang);
+      float ring = disc * smoothstep(s * uHotRing - aa, s * uHotRing, ang);
       float dot0 = 1.0 - smoothstep(s * 0.22 - aa, s * 0.22, ang);
       vec3 accent = i == uHotSel ? vec3(1.0, 0.62, 0.15) : vec3(0.25, 0.8, 1.0);
       col = mix(col, accent * 0.35, disc * 0.45 * alpha);
@@ -287,15 +288,15 @@ void main() {
     vec2 px = (t0 / uProj.xz) * uVp.zw * 0.5;
     float d = length(px);
     float rr = uReticle;
-    float ring = smoothstep(rr * 0.55, rr * 0.7, d) * (1.0 - smoothstep(rr * 0.85, rr, d));
+    float ring = smoothstep(rr * 0.74, rr * 0.82, d) * (1.0 - smoothstep(rr * 0.9, rr, d));
     col = mix(col, vec3(1.0), ring * 0.9);
     // Flèche accolée au rond de visée, tournée vers le lien le plus proche (comme le curseur sur PC).
     if (dot(uRetDir, uRetDir) > 0.0) {
       vec2 u = normalize(uRetDir);
       vec2 v = vec2(-u.y, u.x);
       float a = dot(px, u), b = abs(dot(px, v));
-      float r0 = rr * 1.2, r1 = rr * 3.1;
-      float wd = (r1 - a) * 0.6;
+      float r0 = rr * 1.15, r1 = rr * 1.75;
+      float wd = (r1 - a) * 0.55;
       float tri = smoothstep(r0 - 1.0, r0, a) * (1.0 - smoothstep(r1 - 1.0, r1, a)) * (1.0 - smoothstep(wd - 1.0, wd, b));
       float wo = wd + 2.0;
       float edge = smoothstep(r0 - 3.0, r0 - 2.0, a) * (1.0 - smoothstep(r1 + 1.5, r1 + 2.5, a)) * (1.0 - smoothstep(wo - 1.0, wo, b));

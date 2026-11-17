@@ -165,6 +165,9 @@ try {
   const top = entries.filter((e) => !e.full.includes('photosphere-relief'));
   const sub = entries.filter((e) => e.full.includes('photosphere-relief'));
   let mediaCalls = 0;
+  // Réseau capricieux : l'entrée échoue deux fois (503) avant de passer ; la cuisine ne passe jamais.
+  const fails = { 'entree.jpg': 2 };
+  let cuisineBroken = false;
   await page.route(/www\.googleapis\.com\/drive\/v3\/files/, async (route) => {
     const u = new URL(route.request().url());
     const cors = { 'access-control-allow-origin': '*' };
@@ -173,6 +176,11 @@ try {
     if (m && u.searchParams.get('alt') === 'media') {
       const e = entries.find((x) => x.id === m[1]);
       mediaCalls++;
+      if (fails[e.name] > 0) {
+        fails[e.name]--;
+        return route.fulfill({ status: 503, headers: cors, body: '{}' });
+      }
+      if (cuisineBroken && e.name === 'cuisine.jpg') return route.abort('failed');
       return route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(e.full) });
     }
     const q = u.searchParams.get('q') || '';
@@ -193,8 +201,21 @@ try {
   await page.waitForTimeout(1500);
   const dTitle = await page.textContent('.ps-title');
   const dPre = await page.evaluate(() => window.photosphereParcours.cache.has('salon.jpg') && !window.photosphereParcours.cache.has('cuisine.jpg'));
-  check(dTitle === 'Entrée' && dPre, `Google Drive : lien de visite ouvert directement (« ${dTitle} »), photo liée préchargée, ${mediaCalls} fichier(s) téléchargé(s)`);
+  check(dTitle === 'Entrée' && dPre && fails['entree.jpg'] === 0, `Google Drive : lien de visite ouvert directement malgré deux erreurs réseau (« ${dTitle} »), photo liée préchargée, ${mediaCalls} fichier(s) téléchargé(s)`);
   await page.screenshot({ path: path.join(shots, '03-parcours-drive.png') });
+  // Photo qui ne se charge pas : on reste sur la photo affichée, avec ses propres liens.
+  cuisineBroken = true;
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.querySelector('.ps-title').textContent === 'Salon', null, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const salonLabels = await page.$$eval('.ps-labels > *', (l) => l.map((x) => x.textContent));
+  await page.keyboard.press('ArrowRight');
+  await page.waitForSelector('.ps-toast:has-text("n’a pas pu être chargée")', { timeout: 30000 });
+  await page.waitForTimeout(500);
+  const stay = await page.textContent('.ps-title');
+  const labelsAfter = await page.$$eval('.ps-labels > *', (l) => l.map((x) => x.textContent));
+  check(stay === 'Salon' && JSON.stringify(labelsAfter) === JSON.stringify(salonLabels), `photo injoignable (cuisine) : on reste sur « ${stay} » avec ses liens (${labelsAfter.join(', ')}), message affiché`);
+  cuisineBroken = false;
   await page.click('.ps-back');
   await page.waitForSelector('.parcours-page');
   // Dossier non partagé (ou lien faux) : message clair.

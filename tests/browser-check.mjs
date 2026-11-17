@@ -407,6 +407,15 @@ try {
   await page.click('.ps-mode[data-mode=gyro]');
   await page.waitForTimeout(800);
   await page.screenshot({ path: path.join(shots, '07-bout-de-bras.png') });
+  {
+    // Noms affichés sans le numéro de prise de vue du début.
+    const names = await page.evaluate(async () => {
+      const { displayName } = await import('./src/player.js');
+      return [displayName('360_0884 salle à manger 1'), displayName('360_0881'), displayName('Entrée du jardin')];
+    });
+    check(names[0] === 'salle à manger 1' && names[1] === '360_0881' && names[2] === 'Entrée du jardin', `visionneuse : noms des photos sans le numéro du début (${names.join(' | ')})`);
+    await page.screenshot({ path: path.join(shots, '07b-bout-de-bras-penche.png') });
+  }
 
   console.log('Visite autonome');
   // Sans vue d'arrivée réglée, on doit arriver dos au lien qui ramène à la photo de départ.
