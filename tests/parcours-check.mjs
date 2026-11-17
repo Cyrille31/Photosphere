@@ -169,22 +169,30 @@ try {
   // Réseau capricieux : l'entrée échoue deux fois (503) avant de passer ; la cuisine ne passe jamais.
   const fails = { 'entree.jpg': 2 };
   let cuisineBroken = false;
+  const cors = { 'access-control-allow-origin': '*' };
+  const apiMedia = {};
+  const serveMedia = (route, id, via) => {
+    const e = entries.find((x) => x.id === id);
+    mediaCalls++;
+    if (via === 'api') apiMedia[e.name] = (apiMedia[e.name] || 0) + 1;
+    if (fails[e.name] > 0) {
+      fails[e.name]--;
+      return route.fulfill({ status: 503, headers: cors, body: '{}' });
+    }
+    if (cuisineBroken && e.name === 'cuisine.jpg') return route.abort('failed');
+    perFile[e.name] = (perFile[e.name] || 0) + 1; // téléchargements réussis
+    return route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(e.full) });
+  };
+  // Réseau d'images de Google (fichier d'origine : « =d ») : la voie normale des photos.
+  await page.route(/lh3\.googleusercontent\.com\/d\//, async (route) => {
+    const m = new URL(route.request().url()).pathname.match(/\/d\/([^=/]+)=d$/);
+    return serveMedia(route, m && decodeURIComponent(m[1]), 'lh3');
+  });
   await page.route(/www\.googleapis\.com\/drive\/v3\/files/, async (route) => {
     const u = new URL(route.request().url());
-    const cors = { 'access-control-allow-origin': '*' };
     if (u.searchParams.get('key') !== 'cle-de-test') return route.fulfill({ status: 403, headers: cors, body: JSON.stringify({ error: { message: 'clé invalide' } }) });
     const m = u.pathname.match(/files\/([^/]+)$/);
-    if (m && u.searchParams.get('alt') === 'media') {
-      const e = entries.find((x) => x.id === m[1]);
-      mediaCalls++;
-      if (fails[e.name] > 0) {
-        fails[e.name]--;
-        return route.fulfill({ status: 503, headers: cors, body: '{}' });
-      }
-      if (cuisineBroken && e.name === 'cuisine.jpg') return route.abort('failed');
-      perFile[e.name] = (perFile[e.name] || 0) + 1; // téléchargements réussis
-      return route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(e.full) });
-    }
+    if (m && u.searchParams.get('alt') === 'media') return serveMedia(route, m[1], 'api');
     const q = u.searchParams.get('q') || '';
     const list = q.includes(FOLDER) ? [...top, { id: RELIEF, name: 'photosphere-relief', mimeType: 'application/vnd.google-apps.folder' }] : q.includes(RELIEF) ? sub : null;
     if (!list) return route.fulfill({ status: 404, headers: cors, body: '{}' });
@@ -203,7 +211,7 @@ try {
   await page.waitForTimeout(1500);
   const dTitle = await page.textContent('.ps-title');
   const dPre = await page.evaluate(() => window.photosphereParcours.cache.has('salon.jpg') && !window.photosphereParcours.cache.has('cuisine.jpg'));
-  check(dTitle === 'Entrée' && dPre && fails['entree.jpg'] === 0, `Google Drive : lien de visite ouvert directement malgré deux erreurs réseau (« ${dTitle} »), photo liée préchargée, ${mediaCalls} fichier(s) téléchargé(s)`);
+  check(dTitle === 'Entrée' && dPre && fails['entree.jpg'] === 0 && !apiMedia['entree.jpg'] && !apiMedia['salon.jpg'], `Google Drive : lien de visite ouvert directement malgré deux erreurs réseau (« ${dTitle} »), photos lues par le réseau d’images de Google (API sollicitée pour : ${Object.keys(apiMedia).join(', ') || 'aucune'}), photo liée préchargée`);
   await page.screenshot({ path: path.join(shots, '03-parcours-drive.png') });
   // Photo qui ne se charge pas : on reste sur la photo affichée, avec ses propres liens.
   cuisineBroken = true;
