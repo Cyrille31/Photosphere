@@ -43,7 +43,7 @@ async function listFolder(id, key) {
   let page = '';
   do {
     const q = encodeURIComponent(`'${id}' in parents and trashed = false`);
-    const url = `${API}?q=${q}&fields=nextPageToken,files(id,name,size,mimeType)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${page ? '&pageToken=' + page : ''}`;
+    const url = `${API}?q=${q}&fields=nextPageToken,files(id,name,size,mimeType,modifiedTime)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${page ? '&pageToken=' + page : ''}`;
     const j = await (await call(url, key)).json();
     out.push(...(j.files || []));
     page = j.nextPageToken || '';
@@ -67,9 +67,14 @@ export async function driveSource(link, key = storedKey() || GOOGLE_API_KEY) {
   if (!id) throw new Error('Lien de dossier Google Drive non reconnu.');
   const files = await listFolder(id, key);
   const byName = new Map();
-  for (const f of files) if (f.mimeType !== FOLDER) byName.set(f.name.toLowerCase(), f);
+  // Deux fichiers du même nom (Drive l'autorise, ex. photosphere.json envoyé deux fois) : le plus récent.
+  const keep = (f) => {
+    const k = f.name.toLowerCase(), prev = byName.get(k);
+    if (!prev || String(f.modifiedTime || '') >= String(prev.modifiedTime || '')) byName.set(k, f);
+  };
+  for (const f of files) if (f.mimeType !== FOLDER) keep(f);
   const relief = files.find((f) => f.mimeType === FOLDER && f.name === RELIEF_DIR);
-  if (relief) for (const f of await listFolder(relief.id, key)) if (f.mimeType !== FOLDER) byName.set(f.name.toLowerCase(), f);
+  if (relief) for (const f of await listFolder(relief.id, key)) if (f.mimeType !== FOLDER) keep(f);
   return {
     name: 'Google Drive',
     has: (n) => byName.has(String(n).toLowerCase()),

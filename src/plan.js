@@ -577,8 +577,11 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
         // Chaque sens est dessiné sur la moitié du trait qui part de son point de contact.
         const seg = `<line class="${cls}${a.hidden ? ' hidden' : ''}" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>`;
         lines += `<line class="pair" x1="${a.x}" y1="${a.y}" x2="${mx}" y2="${my}"/>` + seg;
+        // Lien à sens unique (pas de retour) : trait fin jusqu'à la photo visée, pour voir où il mène.
+        const oneway = back ? '' : `<line class="${hs.auto ? 'auto' : 'manual'} oneway" x1="${mx}" y1="${my}" x2="${b.x}" y2="${b.y}"/>`;
+        lines += oneway;
         // Copie translucide au-dessus des photos : le lien reste visible là où il passe sur une image.
-        over += seg;
+        over += seg + oneway;
         dots += `<circle class="contact ${cls}${a.hidden ? ' hidden' : ''}" data-contact="${p.id}" data-k="${k}" cx="${a.x}" cy="${a.y}" r="7"><title>Lien vers « ${escapeHtml(q.name)} » : glisser pour le placer</title></circle>`;
       })
     );

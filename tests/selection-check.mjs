@@ -280,10 +280,26 @@ try {
   await page.waitForTimeout(300);
   const selShown = (await page.locator('.plan-links line.selected').count()) >= 2 && (await page.isVisible('[data-del-link=both]'));
   await page.screenshot({ path: path.join(shots, '05b-lien-selectionne.png') });
+  // Supprimer un seul sens : un trait fin continue jusqu'à la photo visée.
+  await page.click('[data-del-link=one]');
+  await page.waitForTimeout(600);
+  const nOne = await db(async (db) => (await db.listPhotos()).reduce((n, p) => n + (p.hotspots || []).length, 0));
+  const thin = await page.locator('.plan-links:not(.over) line.oneway').count();
+  check(nOne === 1 && thin === 1, `plan : un seul sens supprimé → le lien restant est prolongé d’un trait fin jusqu’à sa photo (${nOne} lien, ${thin} trait fin)`);
+  await page.screenshot({ path: path.join(shots, '05c-demi-lien.png') });
+  const hit2 = await page.evaluate(() => {
+    const l = document.querySelector('.plan-contacts line.link-hit');
+    const m = l.getScreenCTM();
+    const pt = (x, y) => ({ x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f });
+    const a = pt(+l.getAttribute('x1'), +l.getAttribute('y1')), b = pt(+l.getAttribute('x2'), +l.getAttribute('y2'));
+    return { x: a.x + (b.x - a.x) * 0.6, y: a.y + (b.y - a.y) * 0.6 };
+  });
+  await page.mouse.click(hit2.x, hit2.y);
+  await page.waitForTimeout(300);
   await page.click('[data-del-link=both]');
   await page.waitForTimeout(600);
   const afterDel = await db(async (db) => (await db.listPhotos()).map((p) => ({ n: (p.hotspots || []).length, placed: !!(p.mapPlaced && p.mapPos) })));
-  check(nLinks === 2 && selShown && afterDel.every((x) => x.n === 0 && x.placed), `plan : lien sélectionné d’un clic (en rouge) puis supprimé dans les deux sens, photos restées sur le plan (${JSON.stringify(afterDel)})`);
+  check(nLinks === 2 && selShown && afterDel.every((x) => x.n === 0 && x.placed), `plan : lien sélectionné d’un clic (en rouge), puis supprimé, photos restées sur le plan (${JSON.stringify(afterDel)})`);
   // Trait tracé puis déplacé en restant dans l'outil Traits.
   await page.click('[data-tool=line]');
   await page.mouse.click(vb.x + 500, vb.y + 200);

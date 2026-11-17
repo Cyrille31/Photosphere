@@ -88,7 +88,7 @@ const MANUAL = `
   <li>Nord en haut. Photos en sphères (Ctrl + glisser : les faire tourner) ou en rectangles ; chaque lien part de son point de contact dans la photo, que l’on peut faire glisser.</li>
   <li><b>Un clic sur une photo</b> l’affiche en grand (×8 par défaut, réglable avec « 🔍 × » dans la barre du plan), avec son nom modifiable (Entrée pour valider, Échap pour annuler) ; elle reprend sa taille dès qu’on la déplace, ou par un clic dans le vide ou Échap.</li>
   <li><b>Supprimer un lien</b> : cliquez son trait (ou son point de contact) ; il passe en rouge et la barre propose de le supprimer dans les deux sens ou dans un seul. Touche Suppr : les deux sens. Les photos restent à leur place sur le plan.</li>
-  <li><b>Relier</b> : « 🔗 Relier » ou déposer une photo sur une autre crée deux liens automatiques réciproques ; déplacer une photo réoriente ces liens. Double-clic : voir la photo.</li>
+  <li><b>Relier</b> : « 🔗 Relier » ou déposer une photo sur une autre crée deux liens automatiques réciproques ; déplacer une photo réoriente ces liens. Un lien à sens unique (l’autre sens supprimé) est prolongé d’un trait fin pointillé jusqu’à la photo où il mène. Double-clic : voir la photo.</li>
   <li><b>Photos non placées</b> : elles attendent dans une zone à part. Glissez-en une n’importe où sur le plan pour la placer (sans lien, à relier plus tard), ou sur une photo pour les relier. Ramenée dans la zone, une photo placée sans lien en ressort du plan.</li>
   <li><b>Dessin</b> (fond blanc) :
     <ul>
