@@ -57,6 +57,8 @@ test('pièce : nom proposé d’après le nom de la photo', () => {
   assert.equal(guessRoomName('360_0884 salle à manger 1'), 'salle à manger');
   assert.equal(guessRoomName('360_0881'), '');
   assert.equal(guessRoomName('360_0885 salon 2-2.JPG'), 'salon');
+  assert.equal(guessRoomName('360_0896 salle_à_manger_2 1'), 'salle à manger 2');
+  assert.equal(guessRoomName('360_0900 chaise_à_porteurs'), 'chaise à porteurs');
   assert.equal(guessRoomName('Moulin cuisine 3', 2), 'cuisine');
   assert.equal(guessRoomName('Cuisine haut', 1), 'Cuisine haut');
   assert.equal(guessRoomName('360_0887 entrée 1-1', 0), '');

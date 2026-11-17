@@ -826,7 +826,7 @@ async function showSettings() {
     ${ws.isSupported() ? `<label class="check"><input type="checkbox" name="renameFiles" ${state.settings.renameFiles ? 'checked' : ''}> Quand je renomme une photo, renommer aussi son fichier dans le dossier de travail</label>` : ''}
     <label class="field">Nom de pièce proposé (onglet Pièce, plan des pièces) d’après le nom de la photo<select name="roomWord">
       ${[[1, 'à partir du 1er mot'], [2, 'à partir du 2e mot (« 360_0884 salon 1 » → « salon »)'], [3, 'à partir du 3e mot'], [4, 'à partir du 4e mot'], [0, 'aucun']].map(([v, t]) => `<option value="${v}" ${v === (state.settings.roomWord ?? 2) ? 'selected' : ''}>${t}</option>`).join('')}
-    </select><small class="note">Les mots sont pris jusqu’au premier qui contient un chiffre.</small></label>
+    </select><small class="note">Les mots sont pris jusqu’au premier qui n’est qu’un numéro ; les « _ » deviennent des espaces (« 360_0896 salle_à_manger_2 1 » → « salle à manger 2 »).</small></label>
     <div class="row" style="justify-content:flex-start"><button class="btn small" data-backups>🕘 Sauvegardes automatiques…</button></div>
     <label class="check"><input type="checkbox" name="reconvert"> Reconvertir toutes les photos avec ces réglages</label>
     <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-save>Enregistrer</button></div>`,

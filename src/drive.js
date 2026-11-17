@@ -21,9 +21,10 @@ export function parcoursLink(folderId, base = location.origin + location.pathnam
   return `${base}#/parcours?drive=${encodeURIComponent(folderId)}`;
 }
 
-// Erreur passagère (réseau coupé, trop de requêtes, serveur occupé) : on réessaie (jusqu'à 3 fois,
-// après 1, 2 puis 4 s) avant d'abandonner.
-async function call(url, key, tries = 3) {
+// Erreur passagère (réseau coupé, trop de requêtes, serveur occupé) : on réessaie (jusqu'à 4 fois,
+// après 1, 3, 8 puis 15 s : Google ralentit parfois les téléchargements pendant quelques secondes).
+const RETRY_DELAYS = [1000, 3000, 8000, 15000];
+async function call(url, key, tries = RETRY_DELAYS.length) {
   let res;
   for (let k = 0; ; k++) {
     try {
@@ -32,7 +33,7 @@ async function call(url, key, tries = 3) {
     } catch (e) {
       if (k >= tries) throw new Error('réseau indisponible (' + e.message + ')');
     }
-    await new Promise((r) => setTimeout(r, 1000 * 2 ** k));
+    await new Promise((r) => setTimeout(r, RETRY_DELAYS[k]));
   }
   if (!res.ok) {
     let msg = `erreur ${res.status}`;

@@ -402,8 +402,9 @@ export function photoRoom(room, ceilingH, defaultCamH = 1.6) {
 }
 
 // Nom de pièce proposé d'après le nom de la photo : les mots à partir du n° `word` (réglage, 2 par
-// défaut ; 0 : aucun), jusqu'au premier qui contient un chiffre.
-// « 360_0887 entrée 1-1 » → « entrée » ; « 360_0884 salle à manger 1 » → « salle à manger ».
+// défaut ; 0 : aucun), jusqu'au premier qui n'est qu'un numéro ; « _ » remplacés par des espaces.
+// « 360_0887 entrée 1-1 » → « entrée » ; « 360_0884 salle à manger 1 » → « salle à manger » ;
+// « 360_0896 salle_à_manger_2 1 » → « salle à manger 2 ».
 let ROOM_WORD = 2;
 export function setRoomWord(n) {
   ROOM_WORD = Number.isFinite(+n) ? Math.max(0, Math.round(+n)) : 2;
@@ -413,10 +414,10 @@ export function guessRoomName(name, word = ROOM_WORD) {
   const words = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim().split(/\s+/).slice(word - 1);
   const out = [];
   for (const w of words) {
-    if (/\d/.test(w)) break;
+    if (/^\d+(?:[-_.]\d+)*$/.test(w)) break;
     out.push(w);
   }
-  return out.join(' ').replace(/[_-]+$/, '').trim();
+  return out.join(' ').replace(/_+/g, ' ').trim();
 }
 
 // Vecteur (x : est, z : nord) de la photo → vecteur du plan (x à droite, y vers le bas), le nord du plan
