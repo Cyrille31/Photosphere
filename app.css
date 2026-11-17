@@ -36,6 +36,8 @@ input[type=file] { display: none; }
 .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
 .toolbar .spacer { flex: 1; }
+.tool-group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 8px 6px 10px; border: 1px solid rgba(127,140,180,.25); border-radius: 12px; }
+.tool-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; margin-right: 2px; }
 .menu { position: relative; }
 .menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 270px; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .menu-list[hidden] { display: none; }

@@ -77,12 +77,28 @@ try {
   await page.locator('input[type=file][accept^="image"]').setInputFiles(files);
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 300000 });
 
+  // ---------- « Visiter » : départ de la photo choisie sur le plan, dans son sens d'entrée ----------
+  {
+    const ids = await db(async (db) => (await db.listPhotos()).map((p) => p.id));
+    const startId = ids[ids.length - 1];
+    await db(async (db, id) => db.putPlanDrawing({ ...(await db.getPlanDrawing()), start: id, startYaw: 70 }), startId);
+    await page.click('[data-act=visit]');
+    await page.waitForSelector('.ps-player canvas');
+    await page.waitForTimeout(1200);
+    const at = page.url().endsWith('#/view/' + startId);
+    const yaw = +(await page.evaluate(() => document.querySelector('.ps-player').dataset.yaw));
+    check(at && Math.abs(((yaw - 70 + 540) % 360) - 180) < 2, `« Visiter » part de la photo de départ du plan, regard à ${yaw}° (attendu 70°)`);
+    await page.click('.ps-back');
+    await page.waitForSelector('.grid');
+  }
+  await page.screenshot({ path: path.join(shots, '00-accueil.png') });
+
   // ---------- bibliothèque : sélection et redressement par lot ----------
   check(await page.isHidden('.selection-actions'), 'bibliothèque : actions groupées cachées sans sélection');
   await page.locator('.card [data-select]').first().check();
   check((await page.textContent('.selection-count')).includes('1 sélectionnée'), 'bibliothèque : une photo cochée');
   await page.click('[data-act=select-all]');
-  check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : « Tout sélectionner »');
+  check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : « Sélectionner » (toutes les photos affichées)');
   // Plage : une photo, puis Maj + clic sur une autre.
   await page.click('[data-act=select-none]');
   await page.locator('.card [data-select]').nth(0).click();
