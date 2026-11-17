@@ -6,6 +6,7 @@ import { escapeHtml, toast } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
 import { placeRooms, roomCorners } from './room.js';
 import { levelToViewTilt, withCap, remapHotspot, wrapDeg } from './math.js';
+import { reliefKey, rollEquirectBlob } from './depth.js';
 
 const SPACING = 170; // distance entre deux photos liées lors de la disposition automatique
 
@@ -1390,21 +1391,37 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   async function roomDrop(d) {
     const r = roomOf(d.key);
     const ids = [...d.snap.photos.keys()];
+    await saveDrawing(); // la pièce elle-même, tout de suite
     if (d.kind === 'room-rot' && d.da) {
       const dDeg = (d.da * 180) / Math.PI;
       for (const id of ids) {
+        const cur0 = await db.getPhoto(id);
+        if (!cur0) continue;
+        const pr = { yaw: 0, pitch: 0, roll: 0, ...cur0.params };
+        const old = { yaw: pr.yaw, pitch: pr.pitch, roll: pr.roll };
+        // La pièce tourne de dDeg (sens horaire) : ce que la photo voyait au cap β est maintenant au cap
+        // β + dDeg ; on corrige son nord en conséquence (liens et coins restent sur les mêmes points).
+        const lvl = withCap(pr, levelToViewTilt(pr, 0).cap - dDeg);
+        const next = { yaw: wrapDeg(lvl.yaw), pitch: lvl.pitch, roll: lvl.roll };
+        // Relief : la carte (et le fond) glissent de dDeg, sans recalcul.
+        let relief = cur0.relief;
+        if (relief && relief.kind === 'ai' && relief.key === reliefKey(cur0.params)) {
+          try {
+            const depth = await db.getBlob(id + ':depth');
+            const bg = await db.getBlob(id + ':depthbg');
+            if (depth) await db.putBlob(id + ':depth', await rollEquirectBlob(depth, dDeg, 'image/png'));
+            if (bg) await db.putBlob(id + ':depthbg', await rollEquirectBlob(bg, dDeg, 'image/jpeg'));
+            relief = { ...relief, key: reliefKey({ ...cur0.params, ...next }) };
+          } catch (e) {
+            // relief non réutilisable : il faudra le recalculer
+          }
+        }
         const upd = await db.updatePhoto(id, (cur) => {
-          const pr = { yaw: 0, pitch: 0, roll: 0, ...cur.params };
-          const old = { yaw: pr.yaw, pitch: pr.pitch, roll: pr.roll };
-          // La pièce tourne de dDeg (sens horaire) : ce que la photo voyait au cap β est maintenant au cap
-          // β + dDeg ; on corrige son nord en conséquence (liens et coins restent sur les mêmes points).
-          const lvl = withCap(pr, levelToViewTilt(pr, 0).cap - dDeg);
-          const next = { yaw: wrapDeg(lvl.yaw), pitch: lvl.pitch, roll: lvl.roll };
           const rm = (h) => remapHotspot(h, old, next);
           const room = cur.room ? { ...cur.room, corners: (cur.room.corners || []).map(rm), ...(cur.room.floor ? { floor: rm(cur.room.floor) } : {}) } : cur.room;
-          return { ...cur, params: { ...cur.params, ...next }, hotspots: (cur.hotspots || []).map(rm), room, status: 'pending' };
+          return { ...cur, params: { ...cur.params, ...next }, hotspots: (cur.hotspots || []).map(rm), room, relief, status: 'pending' };
         });
-        if (upd) Object.assign(byId.get(id), { params: upd.params, hotspots: upd.hotspots, room: upd.room });
+        if (upd) Object.assign(byId.get(id), { params: upd.params, hotspots: upd.hotspots, room: upd.room, relief: upd.relief });
       }
     }
     for (const id of ids) {

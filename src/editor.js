@@ -118,6 +118,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         </section>
         <section data-panel="room" hidden>
           <p class="note">Les 4 coins du plafond donnent le plan de la pièce et la place de la photo dedans (plan → « 🏠 Placer les pièces »). ${manualButton('piece')}</p>
+          <label class="check"><input type="checkbox" name="noRoom"> Pas dans une pièce (extérieur, couloir, escalier…)</label>
+          <div class="room-fields">
           <label class="field">Pièce (même nom pour toutes ses photos)<input type="text" name="roomName" list="room-names" placeholder="ex. Salle à manger" autocomplete="off"></label>
           <datalist id="room-names"></datalist>
           <div class="tools">
@@ -131,6 +133,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <label class="field">Hauteur sous plafond, commune à toutes les photos (m)<input type="number" name="ceilingH" min="1.8" max="8" step="0.05"></label>
           <label class="field">Hauteur de l’appareil (m)<input type="number" name="camH" min="0.3" max="3" step="0.05"></label>
           <p class="note room-info"></p>
+          </div>
         </section>
         <section data-panel="relief" hidden>
           <p class="note">Distances estimées par IA pour l’effet 3D dans le casque : <b style="color:#e5484d">proche</b>, <b style="color:#d6b600">moyen</b>, <b style="color:#2fa84f">loin</b>, <b style="color:#3b82f6">très loin</b>. ${manualButton('relief')}</p>
@@ -719,6 +722,9 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     return photoRoom({ ...p.room, camH: p.room.camH || null }, ceilingH, defaultCamH());
   }
   function syncRoom() {
+    const none = !!p.room.none;
+    $('[name=noRoom]').checked = none;
+    $('.room-fields').hidden = none;
     const nameIn = $('[name=roomName]');
     if (document.activeElement !== nameIn) nameIn.value = p.room.name || '';
     const ch = $('[name=ceilingH]');
@@ -735,7 +741,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   }
   // Coins, ligne plafond / mur prévue (rouge) et ligne sol / mur (bleue) sur l'image.
   function roomMarkers(frame, dpr) {
-    if (!roomTabOpen() || !p.room) return '';
+    if (!roomTabOpen() || !p.room || p.room.none) return '';
     let html = '';
     p.room.corners.forEach((c, i) => {
       const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
@@ -874,6 +880,18 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     }
     hint('');
     btn.disabled = false;
+    syncRoom();
+    redraw();
+  });
+  // Photo hors de toute pièce : pas de pièce sur le plan pour elle (« Placer les pièces » l'ignore).
+  $('[name=noRoom]').addEventListener('change', (e) => {
+    snapshot();
+    if (e.target.checked) p.room = { ...p.room, none: true };
+    else {
+      const { none, ...rest } = p.room;
+      p.room = { ...rest, name: rest.name || guessRoomName(p.name), corners: rest.corners || [] };
+    }
+    dirty = true;
     syncRoom();
     redraw();
   });
@@ -1173,7 +1191,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       srcType: p.srcType,
       params: p.params,
       hotspots: p.hotspots,
-      ...(p.room && (p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
+      ...(p.room && (p.room.none || p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       // Relief : gardé s'il correspond au redressement (la carte est refaite sinon).
       ...(p.relief ? { relief: p.relief } : {}),
       status: imageChanged || cur.status !== 'done' ? 'pending' : 'done',

@@ -64,3 +64,14 @@ test('pièce : nom proposé d’après le nom de la photo', () => {
   assert.equal(guessRoomName('360_0887 entrée 1-1', 0), '');
   assert.ok(Array.isArray(cornerXZ({ yaw: 0, pitch: 45 })));
 });
+
+test('pièce : une photo marquée « pas dans une pièce » est laissée de côté par « Placer les pièces »', () => {
+  const corners = [{ yaw: 45, pitch: 30 }, { yaw: 135, pitch: 30 }, { yaw: -135, pitch: 30 }, { yaw: -45, pitch: 30 }];
+  const photos = [
+    { id: 'a', name: '360_1 salon 1', room: { name: 'Salon', corners } },
+    { id: 'b', name: '360_2 couloir 1', room: { name: 'Couloir', corners, none: true } },
+  ];
+  const r = placeRooms(photos, { ceilingH: 2.6 });
+  assert.equal(r.rooms.length, 1);
+  assert.ok(r.positions.has('a') && !r.positions.has('b'));
+});

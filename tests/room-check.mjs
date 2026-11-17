@@ -138,6 +138,14 @@ try {
   await page.waitForSelector('[data-tab=room]');
   await page.waitForTimeout(1500);
   check(await page.evaluate(() => document.querySelector('[data-tab=room]').classList.contains('active') && !document.querySelector('[data-panel=room]').hidden), 'éditeur : photo suivante → toujours sur l’onglet Pièce');
+  // « Pas dans une pièce » : réglages et coins de la pièce masqués ; décoché, tout revient.
+  await page.check('[name=noRoom]');
+  await page.waitForTimeout(300);
+  const off = await page.evaluate(() => ({ hidden: document.querySelector('.room-fields').hidden, marks: document.querySelectorAll('.ed-room-corner').length }));
+  await page.uncheck('[name=noRoom]');
+  await page.waitForTimeout(300);
+  const on = await page.evaluate(() => ({ hidden: document.querySelector('.room-fields').hidden, marks: document.querySelectorAll('.ed-room-corner').length, name: document.querySelector('[name=roomName]').value }));
+  check(off.hidden && off.marks === 0 && !on.hidden && on.marks > 0 && on.name === 'Salon', `éditeur : « Pas dans une pièce » masque la pièce (${off.marks} coin affiché), décoché tout revient (« ${on.name} », ${on.marks} coins)`);
   await page.goto(base + '#/');
   await page.waitForSelector('.grid');
   const saved = await db(async (db) => (await db.listPhotos()).map((p) => p.room && p.room.corners.length));
@@ -208,6 +216,19 @@ try {
   await page.waitForTimeout(700);
   const s2 = await state();
   check(s2.room.w + s2.room.l > s1.room.w + s1.room.l + 0.5, `plan : pièce agrandie par une poignée (${s1.room.w.toFixed(1)} × ${s1.room.l.toFixed(1)} → ${s2.room.w.toFixed(1)} × ${s2.room.l.toFixed(1)} m)`);
+  // Relief de test sur la photo A : un objet proche dans la direction de son lien vers B.
+  await page.evaluate(async (id) => {
+    const db = await import('./src/db.js');
+    const { reliefKey } = await import('./src/depth.js');
+    const { depthToPng } = await import('./src/depth-ai.js');
+    const p = await db.getPhoto(id);
+    const yaw = p.hotspots[0].yaw;
+    const W = 2048, H = 1024, depth = new Float32Array(W * H).fill(4);
+    const cx = Math.round(((yaw / 360 + 0.5) % 1) * W);
+    for (let y = 480; y < 544; y++) for (let k = -20; k <= 20; k++) depth[y * W + ((cx + k + W) % W)] = 0.7;
+    await db.putBlob(id + ':depth', await depthToPng(depth));
+    await db.updatePhoto(id, (cur) => ({ ...cur, relief: { kind: 'ai', h: 1.6, key: reliefKey(cur.params) } }));
+  }, ids['salon-a.jpg']);
   // Rotation : la poignée ronde tourne de ~30° autour du centre de la pièce.
   const rh = await page.locator('.plan-roomsel .room-rot').boundingBox();
   const ctr = await page.evaluate(() => {
@@ -224,10 +245,20 @@ try {
     await page.mouse.move(ctr[0] + vx * Math.cos(a) - vy * Math.sin(a), ctr[1] + vx * Math.sin(a) + vy * Math.cos(a));
   }
   await page.mouse.up();
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(3000);
   const s3 = await state();
   const dAng = ((s3.room.ang - s2.room.ang) * 180) / Math.PI;
   const dCap = ((s3.capA - s2.capA + 540) % 360) - 180;
+  const rel = await page.evaluate(async (id) => {
+    const db = await import('./src/db.js');
+    const { reliefKey, loadDepthImage, depthAt } = await import('./src/depth.js');
+    const { dirFromLonLat } = await import('./src/math.js');
+    const p = await db.getPhoto(id);
+    const m = await loadDepthImage(await db.getBlob(id + ':depth'));
+    const at = (yaw) => depthAt(m.depth, dirFromLonLat((yaw * Math.PI) / 180, 0));
+    return { valid: !!p.relief && p.relief.key === reliefKey(p.params), onLink: at(p.hotspots[0].yaw), away: at(p.hotspots[0].yaw + 90) };
+  }, ids['salon-a.jpg']);
+  check(rel.valid && rel.onLink < 1 && rel.away > 3, `plan : pièce tournée → relief conservé et tourné avec elle (objet proche toujours dans la direction du lien : ${rel.onLink.toFixed(2)} ; à côté : ${rel.away.toFixed(2)})`);
   check(Math.abs(dAng - 30) < 3 && Math.abs(dCap + dAng) < 1.5 && s3.statusA === 'pending', `plan : pièce tournée de ${dAng.toFixed(1)}°, nord de ses photos corrigé de ${dCap.toFixed(1)}° (reconversion prévue)`);
   await page.screenshot({ path: path.join(shots, '03-plan-piece-tournee.png') });
 
@@ -268,7 +299,7 @@ try {
     }
     await page.mouse.up();
     await page.keyboard.up('Shift');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(3000);
     const s5 = await state();
     const deg = (((s5.room.ang * 180) / Math.PI) % 15 + 15) % 15;
     check(Math.min(deg, 15 - deg) < 0.01, `plan : Maj + rotation → côtés à un multiple de 15° (${((s5.room.ang * 180) / Math.PI).toFixed(2)}°)`);
