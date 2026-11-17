@@ -426,7 +426,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     try {
       const get = async (s) => (typeof s === 'function' ? s() : s);
       if (!photo.depthMaps) photo.depthMaps = await loadDepthImage(await get(photo.depthSrc));
-      if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await loadImageBitmap(await get(photo.depthBgSrc)).catch(() => null);
+      // Fond reconstitué : facultatif (absent ou injoignable : relief sans lui).
+      if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await get(photo.depthBgSrc).then(loadImageBitmap).catch(() => null);
       if (reliefFor === photo.id) {
         renderer.setDepth(photo.depthMaps.depth, photo.depthMaps.bg);
         renderer.setBackgroundColor(photo.depthBgImage || null);

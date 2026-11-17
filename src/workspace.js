@@ -4,7 +4,7 @@
 // Safari, smartphones) ne permettent pas cet accès : l'export manuel du fichier reste disponible.
 import * as db from './db.js';
 import { settingsBlob, SETTINGS_FILE_NAME } from './settings-file.js';
-import { RELIEF_DIR, reliefNames } from './relief-files.js';
+import { RELIEF_DIR, reliefNames, HEADERS_FILE, HEADERS_CONTENT } from './relief-files.js';
 import { reliefKey } from './depth.js';
 
 const HANDLE_KEY = 'workspace-handle';
@@ -129,6 +129,14 @@ export async function saveNow() {
       await w.write(blob);
       await w.close();
       await saveReliefs(photos);
+      // Fichier « _headers » (une fois) : le dossier peut être publié tel quel sur un hébergement web.
+      try {
+        await handle.getFileHandle(HEADERS_FILE);
+      } catch (e) {
+        const hw = await (await handle.getFileHandle(HEADERS_FILE, { create: true })).createWritable();
+        await hw.write(HEADERS_CONTENT);
+        await hw.close();
+      }
       lastSaved = new Date();
       lastError = null;
     } catch (e) {
