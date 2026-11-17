@@ -90,7 +90,7 @@ try {
   };
   let msg = await rename('Salon côté jardin');
   f = await readFolder();
-  check(msg.includes('Fichier non renommé') && f.names.includes('SAM_0001.JPG') && f.names.length === 3, `renommage impossible : message affiché, fichier d’origine intact (${f.names.join(', ')})`);
+  check(msg.includes('Fichier non renommé') && f.names.includes('SAM_0001.JPG') && f.names.filter((n) => n !== '_headers').length === 3 && f.names.includes('_headers'), `renommage impossible : message affiché, fichier d’origine intact (${f.names.join(', ')})`);
   await page.waitForTimeout(4000);
   msg = await rename('Salon cote jardin');
   f = await readFolder();

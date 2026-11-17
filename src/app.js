@@ -11,9 +11,9 @@ import { CALIB_VERSION } from './calibrate.js';
 import { reliefKey } from './depth.js';
 import { batchAutoLevel, batchRelief } from './batch.js';
 import { showManual, manualButton as manualLink, bindManualButtons as bindManualLinks } from './manual.js';
-import { openParcours, filesSource } from './parcours.js';
+import { openParcours, filesSource, webSource, clearParcoursDisk } from './parcours.js';
 import { driveSource, driveFolderId, parcoursLink } from './drive.js';
-import { RELIEF_DIR, reliefNames } from './relief-files.js';
+import { RELIEF_DIR, reliefNames, HEADERS_FILE, HEADERS_CONTENT } from './relief-files.js';
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
 import { setRoomWord } from './room.js';
@@ -993,7 +993,10 @@ async function exportParcours() {
   const b = busy('Préparation du parcours');
   try {
     const photos = await db.listPhotos();
-    const files = [{ name: SETTINGS_FILE_NAME, data: settingsBlob(photos, await db.getPlanDrawing()) }];
+    const files = [
+      { name: SETTINGS_FILE_NAME, data: settingsBlob(photos, await db.getPlanDrawing()) },
+      { name: HEADERS_FILE, data: new Blob([HEADERS_CONTENT], { type: 'text/plain' }) },
+    ];
     for (let i = 0; i < photos.length; i++) {
       const p = photos[i];
       b.update(i, photos.length, p.name);
@@ -1023,10 +1026,10 @@ function openParcoursView() {
       <button class="btn" data-parcours-back>← Bibliothèque</button>
     </div>
     <p class="note">Sur smartphone : « Choisir les fichiers », allez dans le dossier (OneDrive, Google Drive, carte SD…) et sélectionnez <b>toutes</b> les photos et <code>${SETTINGS_FILE_NAME}</code>, ainsi que le contenu de <code>${RELIEF_DIR}</code> pour le relief.</p>
-    <h3>Dossier Google Drive partagé</h3>
-    <p class="note">Collez le lien du dossier (partagé en « Tous les utilisateurs qui ont le lien »). « Ouvrir » le visualise ici ; le <b>lien de visite</b> s’envoie tel quel : il ouvre PhotoSphère directement sur le parcours, sans compte ni connexion. ${manualLink('parcours')}</p>
+    <h3>Dossier en ligne</h3>
+    <p class="note">Collez le lien d’un dossier <b>Google Drive</b> (partagé en « Tous les utilisateurs qui ont le lien »), ou l’<b>adresse web</b> d’un dossier publié sur un hébergement (Cloudflare Pages, Netlify…). « Ouvrir » le visualise ici ; le <b>lien de visite</b> s’envoie tel quel : il ouvre PhotoSphère directement sur le parcours, sans compte ni connexion. ${manualLink('parcours')}</p>
     <div class="parcours-drive">
-      <input type="url" name="drive-link" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
+      <input type="url" name="drive-link" placeholder="https://drive.google.com/drive/folders/…  ou  https://mon-parcours.pages.dev/" autocomplete="off">
       <button class="btn primary" data-parcours-drive>▶ Ouvrir</button>
     </div>
     <div class="parcours-share" hidden>
@@ -1036,17 +1039,24 @@ function openParcoursView() {
   </div>`;
   const linkInput = app.querySelector('[name=drive-link]');
   const share = app.querySelector('.parcours-share');
+  // Lien Google Drive, sinon adresse web d'un dossier publié.
+  const webUrl = (v) => {
+    const s = String(v || '').trim();
+    return /^https?:\/\/\S+$/i.test(s) && !/drive\.google\.com/i.test(s) ? s : null;
+  };
   const updateShare = () => {
-    const id = driveFolderId(linkInput.value);
-    share.hidden = !id;
+    const id = driveFolderId(linkInput.value), url = webUrl(linkInput.value);
+    share.hidden = !id && !url;
     if (id) app.querySelector('[name=share-link]').value = parcoursLink(id);
+    else if (url) app.querySelector('[name=share-link]').value = `${location.origin + location.pathname}#/parcours?url=${encodeURIComponent(url)}`;
   };
   linkInput.addEventListener('input', updateShare);
   linkInput.addEventListener('keydown', (e) => e.key === 'Enter' && app.querySelector('[data-parcours-drive]').click());
   app.querySelector('[data-parcours-drive]').addEventListener('click', () => {
     const v = linkInput.value;
-    if (!driveFolderId(v)) return toast('Collez le lien d’un dossier Google Drive.', true);
-    startParcours(() => driveSource(v));
+    if (driveFolderId(v)) return startParcours(() => driveSource(v));
+    if (webUrl(v)) return startParcours(() => webSource(webUrl(v)));
+    toast('Collez le lien d’un dossier Google Drive, ou l’adresse web du dossier publié.', true);
   });
   app.querySelector('[data-copy-link]').addEventListener('click', async () => {
     const t = app.querySelector('[name=share-link]');
@@ -1109,8 +1119,9 @@ async function route() {
   if (isParcours) {
     openParcoursView();
     // Lien de visite : #/parcours?drive=<dossier> ouvre directement le parcours.
-    const drive = new URLSearchParams(location.hash.split('?')[1] || '').get('drive');
-    if (drive) startParcours(() => driveSource(drive));
+    const q = new URLSearchParams(location.hash.split('?')[1] || '');
+    if (q.get('drive')) startParcours(() => driveSource(q.get('drive')));
+    else if (q.get('url')) startParcours(() => webSource(q.get('url')));
     return;
   }
   state.origin = 'library';
@@ -1155,6 +1166,12 @@ async function migratePhotos() {
     if (warnedUnsaved) return;
     warnedUnsaved = true;
     toast(`⚠ Le dossier « ${ws.getStatus().name} » n’est pas reconnecté : vos modifications ne sont pas enregistrées dans photosphere.json. Cliquez « 📁 Reconnecter » (vous pourrez garder votre travail).`, true, 12000);
+  });
+  // Parcours : ce qu'une visite interrompue (onglet fermé) aurait laissé sur l'appareil est effacé, et
+  // une visite en cours s'efface en quittant la page.
+  clearParcoursDisk();
+  window.addEventListener('pagehide', () => {
+    if (state.view === 'parcours' || window.photosphereParcours) clearParcoursDisk();
   });
   // Copie du travail à chaque ouverture (filet de sécurité).
   backupNow('ouverture de PhotoSphère').catch(() => {});

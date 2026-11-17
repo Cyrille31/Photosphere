@@ -24,35 +24,101 @@ export function filesSource(files, name = 'Fichiers choisis') {
   return { name, has: (n) => byName.has(key(n)), get: async (n) => byName.get(key(n)) || Promise.reject(new Error(`fichier « ${n} » introuvable`)) };
 }
 
-// Mémoire de la visite : les fichiers déjà lus (au plus `max`, les plus anciens oubliés), effacée en
-// sortant. Les préchargements passent l'un après l'autre, sans gêner la photo demandée.
-// Mémoire limitée en octets (et non en nombre de fichiers) : une photo n'est téléchargée qu'une fois
-// par visite tant que la place le permet — retélécharger sans cesse les mêmes photos de 10 Mo finit par
-// faire freiner (voire refuser) les téléchargements par Google Drive.
+// Source « adresse web » : le dossier du parcours publié tel quel sur un hébergement de fichiers
+// (Cloudflare Pages, Netlify, serveur personnel…). Les cartes de relief sont dans « photosphere-relief ».
+// L'hébergement doit autoriser la lecture depuis PhotoSphère (en-tête CORS : fichier « _headers » écrit
+// par PhotoSphère dans le dossier).
+export function webSource(base) {
+  let root = String(base || '').trim();
+  if (!/^https?:\/\//i.test(root)) throw new Error('Adresse web non reconnue (elle doit commencer par https://).');
+  root = root.replace(/[?#].*$/, '').replace(/\/[^/]*\.json$/i, '/');
+  if (!root.endsWith('/')) root += '/';
+  const pathOf = (n) => (/\.(profondeur\.png|fond\.jpe?g)$/i.test(n) ? RELIEF_DIR + '/' : '') + encodeURIComponent(n);
+  return {
+    name: root,
+    // On ne peut pas lister un dossier web : les fichiers sont ceux qu'annonce photosphere.json.
+    has: () => true,
+    get: async (n) => {
+      let last;
+      for (const wait of [0, 1000, 3000, 8000]) {
+        if (wait) await new Promise((r) => setTimeout(r, wait));
+        try {
+          const res = await fetch(root + pathOf(n));
+          if (res.ok) return await res.blob();
+          last = new Error(`erreur ${res.status} pour « ${n} »`);
+          if (res.status === 404) throw last;
+          if (res.status < 500 && res.status !== 429) break;
+        } catch (e) {
+          last = e;
+          if (/erreur 404/.test(e.message)) throw new Error(`fichier « ${n} » introuvable à cette adresse`);
+        }
+      }
+      throw last || new Error('réseau indisponible');
+    },
+  };
+}
+
+// Mémoire de la visite : chaque fichier n'est téléchargé qu'une fois par visite. Il est rangé sur le
+// disque de l'appareil (stockage du navigateur, sans limite de nombre : plus de 100 photos ne posent pas
+// de problème) ; seuls les plus récents restent aussi en mémoire vive. Tout est effacé en quittant le
+// parcours, et ce qui resterait d'une visite interrompue (onglet fermé) l'est au lancement suivant.
+// Les préchargements passent l'un après l'autre, sans gêner la photo demandée.
+const DISK = 'photosphere-parcours';
+export async function clearParcoursDisk() {
+  try {
+    if (typeof caches !== 'undefined') await caches.delete(DISK);
+  } catch (e) {
+    // stockage indisponible
+  }
+}
 const defaultCacheBytes = () => {
   const mobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
-  return (mobile ? 350 : 700) * 1048576;
+  return (mobile ? 200 : 500) * 1048576;
 };
 export function sessionCache(source, maxBytes = defaultCacheBytes()) {
-  const entries = new Map(); // nom → { p: Promise<Blob>, t, size }
+  const entries = new Map(); // en mémoire vive : nom → { p: Promise<Blob>, t, size }
+  const stored = new Set(); // noms rangés sur le disque pendant cette visite
+  const downloads = new Map(); // nom → nombre de téléchargements (contrôle : 1 par fichier)
   let queue = Promise.resolve();
+  let disk = null;
+  const openDisk = () => (disk ||= typeof caches !== 'undefined' ? caches.open(DISK).catch(() => null) : Promise.resolve(null));
+  const diskUrl = (k) => 'https://parcours.photosphere.invalid/' + encodeURIComponent(k);
   const trim = () => {
     let total = 0;
     for (const e of entries.values()) total += e.size || 0;
     if (total <= maxBytes) return;
-    // Les plus anciennes d'abord, en gardant toujours les 6 dernières utilisées.
+    // Les plus anciennes quittent la mémoire vive (pas le disque), en gardant les 6 dernières utilisées.
     const old = [...entries.entries()].filter(([, e]) => e.size).sort((a, b) => a[1].t - b[1].t).slice(0, -6);
     for (const [k, e] of old) {
       if (total <= maxBytes) break;
+      if (!stored.has(k)) continue; // pas sur le disque : on la garde, pour ne pas la retélécharger
       entries.delete(k);
       total -= e.size;
     }
+  };
+  const load = async (n, k) => {
+    const c = await openDisk();
+    if (c && stored.has(k)) {
+      const r = await c.match(diskUrl(k)).catch(() => null);
+      if (r) return r.blob();
+    }
+    downloads.set(k, (downloads.get(k) || 0) + 1);
+    const b = await source.get(n);
+    if (c) {
+      try {
+        await c.put(diskUrl(k), new Response(b, { headers: { 'content-type': b.type || 'application/octet-stream' } }));
+        stored.add(k);
+      } catch (e) {
+        // disque plein ou indisponible : la photo reste en mémoire vive
+      }
+    }
+    return b;
   };
   const get = (n) => {
     const k = key(n);
     let e = entries.get(k);
     if (!e) {
-      e = { p: source.get(n) };
+      e = { p: load(n, k) };
       e.p.then(
         (b) => {
           e.size = (b && b.size) || 1;
@@ -67,14 +133,20 @@ export function sessionCache(source, maxBytes = defaultCacheBytes()) {
   };
   return {
     get,
-    has: (n) => entries.has(key(n)),
+    has: (n) => entries.has(key(n)) || stored.has(key(n)),
     prefetch(names) {
       for (const n of names) queue = queue.then(() => get(n).then(() => {}, () => {}));
       return queue;
     },
-    clear: () => entries.clear(),
+    downloads: (n) => downloads.get(key(n)) || 0,
+    clear() {
+      entries.clear();
+      stored.clear();
+      disk = null;
+      return clearParcoursDisk();
+    },
     get size() {
-      return entries.size;
+      return new Set([...entries.keys(), ...stored]).size;
     },
   };
 }
@@ -123,9 +195,7 @@ export async function openParcours(container, source, { onExit, title } = {}) {
       if (p.reliefFiles.bg) p.depthBgSrc = () => cache.get(p.reliefFiles.bg);
     }
   }
-  // Préchargé pour une photo liée : la photo et sa carte de profondeur (légère) ; le fond reconstitué
-  // du relief (plus lourd) n'est chargé qu'en entrant dans la photo.
-  const filesOf = (p) => [p.file, ...(p.reliefFiles ? [p.reliefFiles.depth] : [])];
+  const filesOf = (p) => [p.file, ...(p.reliefFiles ? [p.reliefFiles.depth, p.reliefFiles.bg].filter(Boolean) : [])];
   // Photo de départ : celle indiquée dans le fichier, sinon la première prise qui a des liens (le début
   // du parcours ; les photos y sont rangées dans l'ordre de prise de vue), sinon la première.
   const start = (data.start && byId.get(key(data.start))) || photos.find((p) => p.hotspots.length) || photos[0];

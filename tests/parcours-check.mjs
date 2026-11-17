@@ -165,6 +165,7 @@ try {
   const top = entries.filter((e) => !e.full.includes('photosphere-relief'));
   const sub = entries.filter((e) => e.full.includes('photosphere-relief'));
   let mediaCalls = 0;
+  const perFile = {};
   // Réseau capricieux : l'entrée échoue deux fois (503) avant de passer ; la cuisine ne passe jamais.
   const fails = { 'entree.jpg': 2 };
   let cuisineBroken = false;
@@ -181,6 +182,7 @@ try {
         return route.fulfill({ status: 503, headers: cors, body: '{}' });
       }
       if (cuisineBroken && e.name === 'cuisine.jpg') return route.abort('failed');
+      perFile[e.name] = (perFile[e.name] || 0) + 1; // téléchargements réussis
       return route.fulfill({ status: 200, headers: cors, body: fs.readFileSync(e.full) });
     }
     const q = u.searchParams.get('q') || '';
@@ -216,6 +218,42 @@ try {
   const labelsAfter = await page.$$eval('.ps-labels > *', (l) => l.map((x) => x.textContent));
   check(stay === 'Salon' && JSON.stringify(labelsAfter) === JSON.stringify(salonLabels), `photo injoignable (cuisine) : on reste sur « ${stay} » avec ses liens (${labelsAfter.join(', ')}), message affiché`);
   cuisineBroken = false;
+  // Allers-retours : chaque fichier n'est téléchargé qu'une fois pendant la visite (rangé sur le disque).
+  for (const k of ['ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight']) {
+    const t = await page.textContent('.ps-title');
+    await page.keyboard.press(k);
+    await page.waitForFunction((x) => document.querySelector('.ps-title').textContent !== x, t, { timeout: 20000 });
+    await page.waitForTimeout(700);
+  }
+  const once = Object.entries(perFile).filter(([n]) => !/cuisine\.jpg/.test(n));
+  const onDisk = await page.evaluate(async () => (await (await caches.open('photosphere-parcours')).keys()).length);
+  check(once.length >= 3 && once.every(([, c]) => c === 1) && onDisk >= 3, `allers-retours : chaque fichier téléchargé une seule fois (${once.map(([n, c]) => n.replace('.profondeur.png', '…png') + ' ×' + c).join(', ')}), ${onDisk} fichier(s) rangés sur l’appareil`);
+  await page.click('.ps-back');
+  await page.waitForSelector('.parcours-page');
+  await page.waitForTimeout(500);
+  const leftOver = await page.evaluate(async () => (await caches.keys()).includes('photosphere-parcours') ? (await (await caches.open('photosphere-parcours')).keys()).length : 0);
+  check(leftOver === 0, `en quittant le parcours, les photos rangées sur l’appareil sont effacées (${leftOver} restant)`);
+
+  // ---------- dossier publié sur un hébergement web (adresse) ----------
+  const webCalls = {};
+  await page.route(/^https:\/\/parcours-test\.example\//, async (route) => {
+    const u = new URL(route.request().url());
+    const name = decodeURIComponent(u.pathname.split('/').pop());
+    const e = entries.find((x) => x.name === name);
+    webCalls[name] = (webCalls[name] || 0) + 1;
+    if (!e) return route.fulfill({ status: 404, headers: { 'access-control-allow-origin': '*' }, body: 'introuvable' });
+    return route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(e.full) });
+  });
+  await page.fill('[name=drive-link]', 'https://parcours-test.example/moulin/');
+  const webShare = await page.inputValue('[name=share-link]');
+  check(webShare.endsWith('#/parcours?url=' + encodeURIComponent('https://parcours-test.example/moulin/')), `adresse web : lien de visite ${webShare.replace(/^.*#/, '#')}`);
+  await page.goto(base + '#/');
+  await page.goto(webShare.replace(/^.*#/, base + '#'));
+  await page.waitForSelector('.ps-player canvas', { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('.ps-title').textContent.length > 0);
+  await page.waitForTimeout(1500);
+  const wTitle = await page.textContent('.ps-title');
+  check(wTitle === 'Entrée' && webCalls['photosphere.json'] === 1 && webCalls['entree.jpg'] === 1, `adresse web : parcours ouvert (« ${wTitle} »), fichiers lus : ${Object.keys(webCalls).join(', ')}`);
   await page.click('.ps-back');
   await page.waitForSelector('.parcours-page');
   // Dossier non partagé (ou lien faux) : message clair.
