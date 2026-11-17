@@ -172,7 +172,8 @@ export class ViewController {
       const t0 = performance.now();
       const check = () => {
         if (this.gyroMat) resolve(true);
-        else if (performance.now() - t0 > 1500) resolve(false);
+        // Au premier usage, les capteurs du téléphone peuvent mettre quelques secondes à démarrer.
+        else if (performance.now() - t0 > 5000) resolve(false);
         else setTimeout(check, 100);
       };
       check();

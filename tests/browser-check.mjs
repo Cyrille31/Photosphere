@@ -381,8 +381,23 @@ try {
     window.__orient = setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 20, beta: 90, gamma: 0 })), 50);
   });
   await page.click('.ps-mode[data-mode=cardboard]');
-  await page.waitForTimeout(1200);
+  await page.waitForSelector('.ps-player.stereo', { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(600);
   check(await page.locator('.ps-player.stereo').count() === 1, 'mode casque VR (écran partagé) activé');
+  {
+    // Boutons du casque : appui à droite / à gauche de l'écran → la vue tourne de 30°.
+    const yawOf = async () => +(await page.evaluate(() => document.querySelector('.ps-player').dataset.yaw));
+    const cb = await page.locator('.ps-player canvas').boundingBox();
+    const y0 = await yawOf();
+    await page.mouse.click(cb.x + cb.width * 0.9, cb.y + cb.height * 0.5);
+    await page.waitForTimeout(1500);
+    const y1 = await yawOf();
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(1500);
+    const y2 = await yawOf();
+    const d = (a, b) => ((a - b + 540) % 360) - 180;
+    check(Math.abs(d(y1, y0) - 30) < 2 && Math.abs(d(y2, y1) + 30) < 2, `casque : appui à droite de l’écran → vue tournée de ${d(y1, y0).toFixed(0)}°, flèche gauche → ${d(y2, y1).toFixed(0)}°`);
+  }
   {
     const rd = await page.evaluate(() => document.querySelector('.ps-player').dataset.retDir);
     check(rd !== undefined && rd !== '', `casque : flèche du rond de visée tournée vers le lien le plus proche (${rd}°)`);

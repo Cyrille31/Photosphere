@@ -34,7 +34,7 @@ export function buildSettings(photos, plan = null) {
       ...(p.mapRot ? { mapRot: p.mapRot } : {}),
       ...(p.mapPlaced ? { mapPlaced: true } : {}),
       ...(p.mapHidden ? { mapHidden: true } : {}),
-      ...(p.room && (p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
+      ...(p.room && (p.room.none || p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       ...(p.relief ? { relief: p.relief } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))

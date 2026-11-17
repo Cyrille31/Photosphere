@@ -240,9 +240,35 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     go(h.target, true, arrive);
   }
 
+  // Tourner la vue (casque) : de `deg` degrés vers la droite (négatif : la gauche), en douceur, comme si
+  // l'on tournait la tête.
+  let turnAnim = 0;
+  function turn(deg) {
+    cancelAnimationFrame(turnAnim);
+    const total = deg * DEG, t0 = performance.now(), dur = 350;
+    let done = 0;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      const d = total * e - done;
+      done += d;
+      if (controller.mode === 'gyro' && controller.gyroMat) controller.gyroOffset += d;
+      else controller.yaw += d;
+      dirty = true;
+      if (k < 1) turnAnim = requestAnimationFrame(step);
+    };
+    turnAnim = requestAnimationFrame(step);
+  }
+  const TURN_STEP = 30;
+
   function onTap(x, y) {
     if (!current) return;
     if (controller.stereo) {
+      // Casque : un appui à gauche ou à droite de l'écran (boutons latéraux de certains casques) tourne
+      // la vue ; au milieu (bouton type Cardboard), il ouvre le lien regardé.
+      const fx = x / (canvas.width || 1);
+      if (fx < 0.3) return turn(-TURN_STEP);
+      if (fx > 0.7) return turn(TURN_STEP);
       if (sel >= 0) follow(sel);
       return;
     }
@@ -542,6 +568,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       controller.setMode('touch');
       lockScreen(false);
     } else {
+      // Plein écran demandé tout de suite, pendant que le geste de l'utilisateur est encore « frais »
+      // (sinon le navigateur peut le refuser, et il fallait appuyer deux fois sur « Casque VR »).
+      if (mode === 'cardboard') await enterFullscreen(true);
       if (controller.mode !== 'gyro') {
         const ok = await controller.enableGyro();
         if (!ok) {
@@ -552,8 +581,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       if (mode === 'cardboard') {
         controller.stereo = true;
         controller.pitch = 0;
-        await enterFullscreen(true);
-        toast('Placez le téléphone dans le casque. Fixez un lien pour l’ouvrir, ou appuyez sur le bouton du casque.');
+        toast('Placez le téléphone dans le casque. Fixez un lien pour l’ouvrir, ou appuyez sur le bouton du casque. Toucher l’écran à gauche ou à droite (boutons du casque) fait tourner la vue.', 6000);
       }
       lockScreen(true);
     }
@@ -710,6 +738,17 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   window.addEventListener('resize', onResize);
   // Flèches gauche / droite du clavier : photo précédente / suivante (la direction de vue est conservée).
   const onKey = (e) => {
+    // Casque : télécommande Bluetooth ou clavier → flèches pour tourner la vue, Entrée pour ouvrir le lien.
+    if (controller.stereo && current) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        return turn(e.key === 'ArrowRight' ? TURN_STEP : -TURN_STEP);
+      }
+      if ((e.key === 'Enter' || e.key === ' ') && sel >= 0) {
+        e.preventDefault();
+        return follow(sel);
+      }
+    }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (e.target.closest && e.target.closest('input, select, textarea')) return;
     if (!current || photos.length < 2) return;

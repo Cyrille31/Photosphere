@@ -204,6 +204,33 @@ export async function loadDepthImage(src) {
   return { depth: decodeDepth(px), bg: decodeBackground(px) };
 }
 
+// Carte de relief (PNG) ou couleurs du fond (JPEG), panoramiques, décalées horizontalement de `deg`
+// degrés : ce qui était au cap β passe au cap β + deg. Changer le nord d'une photo (rotation d'une pièce
+// sur le plan) ne fait que faire glisser l'image : le relief suit sans être recalculé. Le PNG est
+// décalé octet par octet (aucune perte).
+export async function rollEquirectBlob(blob, deg, type = blob.type || 'image/png') {
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const w = bmp.width, h = bmp.height;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0);
+  if (bmp.close) bmp.close();
+  const src = g.getImageData(0, 0, w, h).data;
+  const out = g.createImageData(w, h);
+  const shift = (((Math.round((deg / 360) * w)) % w) + w) % w;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    out.data.set(src.subarray(row, row + (w - shift) * 4), row + shift * 4);
+    out.data.set(src.subarray(row + (w - shift) * 4, row + w * 4), row);
+  }
+  g.putImageData(out, 0, 0);
+  const res = await new Promise((r) => c.toBlob(r, type, type === 'image/jpeg' ? 0.92 : undefined));
+  c.width = c.height = 1;
+  return res;
+}
+
 // Image (Blob, URL ou data:) → ImageBitmap (couleurs du fond extrapolées).
 export async function loadImageBitmap(src) {
   const blob = src instanceof Blob ? src : await (await fetch(src)).blob();

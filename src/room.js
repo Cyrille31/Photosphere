@@ -434,6 +434,7 @@ export function toPlan([x, z], northDeg = 0) {
 export function placeRooms(photos, { ceilingH = 2.8, pxPerM = 50, defaultCamH = 1.6, anchorOf = () => null, freeX = 0, north = 0 } = {}) {
   const groups = new Map();
   for (const p of photos) {
+    if (p.room && p.room.none) continue; // photo hors de toute pièce
     const pr = photoRoom(p.room, ceilingH, p.cameraH || defaultCamH);
     if (!pr) continue;
     // Sans nom de pièce : celui que propose le nom de la photo, sinon la photo forme sa propre pièce.
