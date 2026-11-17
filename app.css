@@ -233,6 +233,7 @@ dialog.arrival { width: min(96vw, 1000px); }
 .plan-contacts circle.manual { fill: #f08c00; }
 .plan-contacts circle.hidden, .plan-links line.hidden { opacity: .45; }
 .plan-links line.hidden { stroke-dasharray: 6 5; }
+.plan-links line.oneway { stroke-width: 1.5; stroke-dasharray: 6 4; }
 .plan-pool { position: absolute; border: 2px dashed rgba(0,0,0,.22); border-radius: 16px; background: rgba(0,0,0,.025); }
 .plan-pool span { position: absolute; left: 14px; top: 10px; font-size: 13px; color: #555; }
 .plan-view.linking, .plan-view.linking .plan-node { cursor: crosshair; }
