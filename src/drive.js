@@ -21,8 +21,19 @@ export function parcoursLink(folderId, base = location.origin + location.pathnam
   return `${base}#/parcours?drive=${encodeURIComponent(folderId)}`;
 }
 
-async function call(url, key) {
-  const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key));
+// Erreur passagère (réseau coupé, trop de requêtes, serveur occupé) : on réessaie (jusqu'à 3 fois,
+// après 1, 2 puis 4 s) avant d'abandonner.
+async function call(url, key, tries = 3) {
+  let res;
+  for (let k = 0; ; k++) {
+    try {
+      res = await fetch(url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key));
+      if (res.ok || !(res.status === 429 || res.status >= 500 || (res.status === 403 && /rate|quota/i.test(await res.clone().text().catch(() => '')))) || k >= tries) break;
+    } catch (e) {
+      if (k >= tries) throw new Error('réseau indisponible (' + e.message + ')');
+    }
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** k));
+  }
   if (!res.ok) {
     let msg = `erreur ${res.status}`;
     try {

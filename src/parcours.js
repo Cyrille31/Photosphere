@@ -26,7 +26,7 @@ export function filesSource(files, name = 'Fichiers choisis') {
 
 // Mémoire de la visite : les fichiers déjà lus (au plus `max`, les plus anciens oubliés), effacée en
 // sortant. Les préchargements passent l'un après l'autre, sans gêner la photo demandée.
-export function sessionCache(source, max = 24) {
+export function sessionCache(source, max = 16) {
   const entries = new Map(); // nom → { p: Promise<Blob>, t }
   let queue = Promise.resolve();
   const get = (n) => {

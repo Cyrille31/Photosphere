@@ -110,3 +110,12 @@ test('la bascule avant / arrière agit dans l’axe du regard', () => {
   close(t0.forward, 0, 1e-9);
   close(t0.side, 10, 1e-9);
 });
+
+test('inclinaison de l’écran : textes gardés à l’endroit (téléphone droit, penché, à l’envers)', async () => {
+  const { deviceOrientationMatrix, screenRoll } = await import('../src/math.js');
+  const deg = (m) => (screenRoll(m) * 180) / Math.PI;
+  assert.ok(Math.abs(deg(deviceOrientationMatrix(0, 90, 0, 0))) < 0.5);
+  assert.ok(Math.abs(Math.abs(deg(deviceOrientationMatrix(0, -90, 180, 0))) - 180) < 0.5);
+  assert.ok(Math.abs(Math.abs(deg(deviceOrientationMatrix(0, 0, 90, 0))) - 90) < 0.5);
+  assert.equal(screenRoll(deviceOrientationMatrix(0, 0, 0, 0)), null);
+});

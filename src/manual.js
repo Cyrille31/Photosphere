@@ -78,7 +78,7 @@ const MANUAL = `
 
 <section id="man-visionneuse"><h3>Visionneuse et casque VR</h3>
 <ul>
-  <li><b>👆 Tactile</b> : doigt ou souris (molette : zoom). <b>📱 Bout de bras</b> : bougez le téléphone. <b>🥽 Casque</b> : écran partagé pour casque type Cardboard ; fixez un lien 1,5 s pour y aller, ou appuyez sur le bouton du casque. Une petite flèche accolée au rond de visée montre où se trouve le lien le plus proche. <b>WebXR</b> si le navigateur le permet.</li>
+  <li><b>👆 Tactile</b> : doigt ou souris (molette : zoom). <b>📱 Bout de bras</b> : bougez le téléphone. <b>🥽 Casque</b> : écran partagé pour casque type Cardboard ; fixez un lien 1,5 s pour y aller, ou appuyez sur le bouton du casque. Une petite flèche accolée au rond de visée montre où se trouve le lien le plus proche. Sur smartphone, les cibles sont plus petites et leurs noms restent à l’endroit, même téléphone penché ou à l’envers ; les noms s’affichent sans le numéro de prise de vue du début (« 360_0884 »). <b>WebXR</b> si le navigateur le permet.</li>
   <li><b>Réglages du casque</b> (⚙) : champ de vision ; correction des lentilles k1 / k2 (préréglages Cardboard v1 / v2, RAZ) — les lignes droites doivent rester droites jusqu’au bord ; écartement des centres des deux images — chaque œil doit voir le point de visée au centre de sa lentille ; intensité du relief.</li>
   <li>« ✏ Éditer » ouvre l’éditeur sur la photo affichée ; « 🗺 Plan » revient directement au plan ; ☰ : liste des photos avec recherche.</li>
 </ul></section>

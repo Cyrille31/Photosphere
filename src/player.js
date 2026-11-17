@@ -1,7 +1,7 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
-import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat } from './math.js';
+import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
 import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort } from './depth.js';
 
 const DWELL_MS = 1600;
@@ -42,6 +42,12 @@ function saveHeadsetSettings(h) {
 // photo.src (et depthSrc, depthBgSrc) : URL, Blob, ou fonction asynchrone qui les fournit (chargement à
 // la demande d'un parcours partagé). onShow(photo) : appelé quand une photo est affichée (préchargement
 // des photos liées). maxHalf : résolution maximale de chaque moitié d'image (haute définition).
+// Nom affiché d'une photo : sans le numéro de prise de vue du début (« 360_0884 salon 1 » → « salon 1 »).
+export function displayName(name) {
+  const n = String(name || '').replace(/^\s*(?:360_)?\d+(?![\d_])[\s_-]+/i, '').trim();
+  return n || String(name || '');
+}
+
 export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
   const root = el('div', 'ps-player');
@@ -141,9 +147,19 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       await new Promise((r) => setTimeout(r, 220));
     }
     // Photo lente à venir (réseau) : on le signale.
-    const slow = setTimeout(() => toast('Chargement de « ' + photo.name + ' »…', 20000), 500);
+    const slow = setTimeout(() => toast('Chargement de « ' + displayName(photo.name) + ' »…', 20000), 500);
+    let src;
     try {
-      const src = typeof photo.src === 'function' ? await photo.src() : photo.src;
+      src = typeof photo.src === 'function' ? await photo.src() : photo.src;
+    } catch (e) {
+      // Photo introuvable (réseau…) : on reste sur la photo affichée, avec ses liens.
+      clearTimeout(slow);
+      fade.classList.remove('on');
+      toast('« ' + displayName(photo.name) + ' » n’a pas pu être chargée (' + e.message + '). Réessayez dans un instant.', 6000);
+      dirty = true;
+      return;
+    }
+    try {
       await renderer.load(src, photo.srcType || 'equirect', photo.params || {});
       clearTimeout(slow);
       $('.ps-toast').hidden = true;
@@ -154,7 +170,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       loadRelief(photo);
     } catch (e) {
       clearTimeout(slow);
-      toast('Impossible de charger « ' + photo.name + ' » : ' + e.message);
+      toast('Impossible de charger « ' + displayName(photo.name) + ' » : ' + e.message);
     }
     if (onShow) onShow(photo);
     if (arrive && current) {
@@ -177,7 +193,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     hotAlpha = [];
     sel = -1;
     dwell = 0;
-    $('.ps-title').textContent = photo.name;
+    $('.ps-title').textContent = displayName(photo.name);
     buildLabels();
     dirty = true;
     fade.classList.remove('on');
@@ -232,7 +248,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     hotspotsOf(current).forEach((h, i) => {
       const target = byId.get(h.target);
       const b = el('button', 'ps-label');
-      b.textContent = h.label || target.name;
+      b.textContent = h.label || displayName(target.name);
       b.addEventListener('click', () => follow(i));
       box.appendChild(b);
     });
@@ -242,6 +258,12 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     const box = $('.ps-labels');
     const dpr = canvas.width / (canvas.clientWidth || 1);
     const dirs = hotDirs();
+    // Téléphone tenu de travers ou à l'envers : les noms restent à l'endroit (alignés sur l'horizon).
+    let roll = 0;
+    if (controller.mode === 'gyro' && frame.eyes && frame.eyes[0].cam) {
+      roll = screenRoll(frame.eyes[0].cam) ?? 0;
+    }
+    root.dataset.labelRoll = ((roll * 180) / Math.PI).toFixed(1);
     [...box.children].forEach((b, i) => {
       const p = !controller.stereo && dirs[i] ? renderer.project(dirs[i], frame) : null;
       const a = hotAlpha[i] || 0;
@@ -251,7 +273,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       }
       b.style.display = '';
       b.style.opacity = a.toFixed(2);
-      b.style.transform = `translate(${p.x / dpr}px, ${p.y / dpr}px) translate(-50%, 26px)`;
+      const mobile = controller.mode === 'gyro';
+      b.style.transform = `translate(${p.x / dpr}px, ${p.y / dpr}px) rotate(${roll.toFixed(3)}rad) translate(-50%, ${mobile ? 16 : 26}px)`;
+      b.classList.toggle('small', mobile);
     });
   }
 
@@ -460,7 +484,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       hotAlpha: updateHotAlpha(now, frame),
       hotSel: sel,
       dwell,
-      hotSize: controller.stereo ? 0.09 : 0.07,
+      // Smartphone (bout de bras, casque) : cibles plus petites, au cercle plus fin.
+      hotSize: controller.stereo ? 0.065 : controller.mode === 'gyro' ? 0.055 : 0.07,
+      hotRing: controller.stereo || controller.mode === 'gyro' ? 0.86 : 0.72,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
       retDir: controller.stereo || controller.mode === 'gyro' ? reticleDir(frame) : null,
     });

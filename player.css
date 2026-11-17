@@ -21,7 +21,7 @@
 .ps-cursor.over .arrow { display: none; }
 .ps-cursor.over .enter { display: block; }
 .ps-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.ps-label { position: absolute; left: 0; top: 0; pointer-events: auto; border: 0; border-radius: 8px; background: rgba(10, 16, 35, .78); color: #fff; font: inherit; font-size: 13px; padding: 5px 9px; white-space: nowrap; cursor: pointer; }
+.ps-label { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: auto; border: 0; border-radius: 8px; background: rgba(10, 16, 35, .78); color: #fff; font: inherit; font-size: 13px; padding: 5px 9px; white-space: nowrap; cursor: pointer; }
 .ps-eye-labels { position: absolute; inset: 0; display: none; pointer-events: none; }
 .ps-eye-labels span { position: absolute; top: 58%; width: 50%; text-align: center; font-weight: 600; text-shadow: 0 1px 4px #000; }
 .ps-presets { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -44,3 +44,5 @@
 .ps-toast { position: absolute; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: max-content; max-width: 86vw; background: rgba(10, 16, 35, .9); padding: 10px 14px; border-radius: 12px; font-size: 14px; text-align: center; }
 .ps-toast[hidden] { display: none; }
 @media (max-width: 520px) { .ps-btn span { display: none; } .ps-btn { padding: 10px 13px; font-size: 18px; } }
+
+.ps-label.small { font-size: 11px; padding: 3px 7px; border-radius: 6px; }
