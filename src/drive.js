@@ -21,6 +21,23 @@ export function parcoursLink(folderId, base = location.origin + location.pathnam
   return `${base}#/parcours?drive=${encodeURIComponent(folderId)}`;
 }
 
+export const DIRECT = 'https://lh3.googleusercontent.com/d/';
+async function direct(id) {
+  let last;
+  for (const wait of [0, 1500, 4000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch(`${DIRECT}${encodeURIComponent(id)}=d`);
+      if (res.ok) return await res.blob();
+      last = new Error(`erreur ${res.status}`);
+      if (res.status === 404 || res.status === 403) break;
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last || new Error('réseau indisponible');
+}
+
 // Erreur passagère (réseau coupé, trop de requêtes, serveur occupé) : on réessaie (jusqu'à 4 fois,
 // après 1, 3, 8 puis 15 s : Google ralentit parfois les téléchargements pendant quelques secondes).
 const RETRY_DELAYS = [1000, 3000, 8000, 15000];
@@ -93,7 +110,14 @@ export async function driveSource(link, key = storedKey() || GOOGLE_API_KEY) {
     get: async (n) => {
       const f = byName.get(String(n).toLowerCase());
       if (!f) throw new Error(`fichier « ${n} » introuvable dans le dossier`);
-      return (await call(`${API}/${f.id}?alt=media&supportsAllDrives=true`, key)).blob();
+      // Fichier d'origine, intact, servi par le réseau d'images de Google (comme dans Florilège) : pas
+      // soumis au freinage des téléchargements anonymes de l'API Drive. En cas d'échec, l'API prend le relais.
+      try {
+        if (/\.json$/i.test(n)) throw new Error('pas une image'); // servi seulement par l'API
+        return await direct(f.id);
+      } catch (e) {
+        return (await call(`${API}/${f.id}?alt=media&supportsAllDrives=true`, key, 2)).blob();
+      }
     },
   };
 }
