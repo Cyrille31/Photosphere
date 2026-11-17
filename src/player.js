@@ -93,6 +93,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       </div>
       <label>Écartement des centres des deux images <output></output><input type="range" name="sep" min="30" max="70" step="0.5"></label>
       <label>Relief (effet 3D, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
+      <label>Taille des cibles <output></output><input type="range" name="targetSize" min="1" max="5" step="0.1"></label>
+      <label>Les cibles apparaissent quand le regard en est à moins de <output></output><input type="range" name="targetAppear" min="4" max="40" step="1"></label>
       <p class="ps-note">Lentilles : les lignes droites doivent rester droites jusqu’au bord. Écartement : chaque œil doit voir le point de visée au centre de sa lentille.</p>
       <div class="ps-presets">
         <button class="ps-btn" data-preset="reset">↺ RAZ (valeurs par défaut)</button>
@@ -330,9 +332,13 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     lastAlphaTime = now;
     const k = Math.min(1, dt / HOT_FADE_MS);
     let moving = false;
+    // Casque : les cibles n'apparaissent qu'à l'approche du regard (réglable).
+    const inHeadset = controller.stereo || !!xrSession;
+    const far = inHeadset ? controller.headset.targetAppear ?? 11 : HOT_FAR;
+    const near = inHeadset ? far * 0.3 : HOT_NEAR;
     hotAlpha = dirs.map((d, i) => {
       const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, ref)))) / DEG;
-      const x = Math.min(1, Math.max(0, (HOT_FAR - ang) / (HOT_FAR - HOT_NEAR)));
+      const x = Math.min(1, Math.max(0, (far - ang) / (far - near)));
       const target = i === sel ? 1 : x * x * (3 - 2 * x);
       const cur = hotAlpha[i] ?? 0;
       const next = cur + (target - cur) * k;
@@ -421,7 +427,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     }
     const gaze = xrSession ? xrGaze : controller.gazeDir();
     if (!gaze) return;
-    const i = nearestHotspot(gaze, 0.11);
+    // Casque : le regard « attrape » une cible un peu au-delà de sa taille (réglable).
+    const i = nearestHotspot(gaze, controller.stereo || xrSession ? Math.max(3, 1.8 * (controller.headset.targetSize ?? 2.2)) * DEG : 0.11);
     if (i !== sel) {
       sel = i;
       dwellStart = now;
@@ -523,7 +530,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       hotSel: sel,
       dwell,
       // Smartphone (bout de bras, casque) : cibles plus petites, au cercle plus fin.
-      hotSize: controller.stereo ? 0.065 : controller.mode === 'gyro' ? 0.055 : 0.07,
+      hotSize: controller.stereo ? (controller.headset.targetSize ?? 2.2) * DEG : controller.mode === 'gyro' ? 0.055 : 0.07,
       hotRing: controller.stereo || controller.mode === 'gyro' ? 0.86 : 0.72,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
       retDir: controller.stereo || controller.mode === 'gyro' ? reticleDir(frame) : null,
@@ -636,7 +643,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
             offset: xrScale ? mat3Apply(rot, [view.transform.position.x - hp.x, view.transform.position.y - hp.y, -(view.transform.position.z - hp.z)]).map((v) => v * xrScale) : null,
           };
         });
-        renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotAlpha: updateHotAlpha(now, null), hotSel: sel, dwell, hotSize: 0.09, reticle: 0 });
+        renderer.draw({ mode: 'persp', eyes, framebuffer: layer.framebuffer, hotAlpha: updateHotAlpha(now, null), hotSel: sel, dwell, hotSize: (controller.headset.targetSize ?? 2.2) * DEG, reticle: 0 });
       };
       session.requestAnimationFrame(onFrame);
     } catch (e) {
@@ -704,7 +711,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   const syncHeadset = () => {
     hs.querySelectorAll('input').forEach((i) => {
       i.value = controller.headset[i.name];
-      i.previousElementSibling.textContent = i.name === 'eyeFov' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.name === 'relief' ? '× ' + i.value : i.value;
+      i.previousElementSibling.textContent = i.name === 'eyeFov' || i.name === 'targetSize' || i.name === 'targetAppear' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.name === 'relief' ? '× ' + i.value : i.value;
     });
   };
   hs.querySelectorAll('input').forEach((i) =>
