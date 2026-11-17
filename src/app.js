@@ -464,11 +464,15 @@ async function renderLibrary() {
   const links = photos.reduce((s, p) => s + (p.hotspots || []).length, 0);
   app.innerHTML = `<div class="wrap">
     <div class="toolbar">
-      ${importButtons()}
+      <div class="tool-group" aria-label="Ajouter des photos">
+        <span class="tool-label">Photos</span>
+        ${importButtons()}
+      </div>
       <span class="spacer"></span>
-      <button class="btn" data-act="parcours" title="Visualiser un parcours préparé par quelqu’un d’autre (dossier partagé)">🔗 Parcours partagé</button>
-      <button class="btn" data-act="plan" title="Plan des photos et de leurs liens">🗺 Plan</button>
-      <button class="btn primary" data-act="visit">🥽 Visiter</button>
+      <div class="tool-group" aria-label="Visite">
+        <span class="tool-label">Visite</span>
+        <button class="btn" data-act="plan" title="Plan des photos et de leurs liens">🗺 Plan</button>
+        <button class="btn primary" data-act="visit" title="Visiter, en partant de la photo de départ choisie sur le plan">🥽 Visiter</button>
       <div class="menu">
         <button class="btn" data-act="menu">⬇ Exporter ▾</button>
         <div class="menu-list" hidden>
@@ -481,6 +485,8 @@ async function renderLibrary() {
           <button data-act="restore">♻ Restaurer une sauvegarde</button>
         </div>
       </div>
+        <button class="btn" data-act="parcours" title="Visualiser un parcours partagé (dossier en ligne, lien de visite)">🔗 Parcours partagé</button>
+      </div>
     </div>
     <div class="library-search">
       <input type="search" class="search-input" name="library-search" placeholder="🔍 Rechercher une photo par son nom" value="${escapeHtml(state.search || '')}" autocomplete="off">
@@ -488,10 +494,10 @@ async function renderLibrary() {
     </div>
     <div class="selection-bar">
       <span class="note">${photos.length} photo(s), ${links} lien(s)</span>
-      <button class="btn small" data-act="select-all" title="Cocher toutes les photos affichées">☑ Tout sélectionner</button>
+      <button class="btn small" data-act="select-all" title="Cocher toutes les photos affichées (celles que montre la recherche)">☑ Sélectionner</button>
       <span class="selection-actions" hidden>
         <b class="selection-count"></b>
-        <button class="btn small" data-act="select-none">Aucune</button>
+        <button class="btn small" data-act="select-none" title="Décocher toutes les photos">☐ Tout désélectionner</button>
         <button class="btn small primary" data-act="batch-level" title="Redresser automatiquement les photos cochées d’après leurs verticales (celles déjà redressées sont ignorées)">✨ Redresser (auto)</button>
         <button class="btn small primary" data-act="batch-relief" title="Calculer le relief (IA) des photos cochées">🧠 Calculer le relief</button>
         <button class="btn small danger" data-act="batch-delete">🗑 Supprimer</button>
@@ -685,9 +691,15 @@ async function onAction(act, p, el) {
     case 'menu':
       menu.hidden = !menu.hidden;
       return;
-    case 'visit':
-      location.hash = '#/view/' + (state.photos[0] && state.photos[0].id);
+    case 'visit': {
+      // Départ de la visite : la photo de départ choisie sur le plan (et son sens d'entrée).
+      const d = await db.getPlanDrawing();
+      const start = state.photos.find((x) => x.id === d.start && !x.mapHidden) || state.photos[0];
+      if (!start) return;
+      state.lastView = start.id === d.start && d.startYaw != null ? { yaw: (d.startYaw * Math.PI) / 180, pitch: 0 } : null;
+      location.hash = '#/view/' + start.id;
       return;
+    }
     case 'plan':
       location.hash = '#/plan';
       return;
