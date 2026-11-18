@@ -42,14 +42,12 @@ function saveHeadsetSettings(h) {
 // photo.src (et depthSrc, depthBgSrc) : URL, Blob, ou fonction asynchrone qui les fournit (chargement à
 // la demande d'un parcours partagé). onShow(photo) : appelé quand une photo est affichée (préchargement
 // des photos liées). maxHalf : résolution maximale de chaque moitié d'image (haute définition).
-// Nom affiché d'une photo : sans le numéro de prise de vue du début ni le numéro de la photo à la fin,
-// « _ » remplacés par des espaces (« 360_0896 salle_à_manger_2 1 » → « salle à manger 2 »).
+// Nom affiché d'une photo : sans le numéro de prise de vue du début (« 360_0891 salon_1 2 » →
+// « salon_1 2 ») ; une photo qui n'a que ce numéro le garde.
 export function displayName(name) {
   const words = String(name || '').trim().split(/\s+/);
   if (words.length > 1 && /^(?:360_)?\d+$/i.test(words[0])) words.shift();
-  while (words.length > 1 && /^\d+(?:[-_.]\d+)*$/.test(words[words.length - 1])) words.pop();
-  const n = words.join(' ').replace(/_+/g, ' ').trim();
-  return n && !/^(?:360 )?\d+$/.test(n) ? n : String(name || '');
+  return words.join(' ') || String(name || '');
 }
 
 export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf }) {
@@ -446,7 +444,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     // Le nom du lien visé s'affiche sous le centre de chaque lentille.
     const sep = (controller.headset.sep ?? 50) / 2;
     eyeLabels.forEach((s, k) => (s.style.left = 50 + (k ? sep : -sep) - 25 + '%'));
-    const name = sel >= 0 ? hotspotsOf(current)[sel].label || byId.get(hotspotsOf(current)[sel].target).name : '';
+    const name = sel >= 0 ? hotspotsOf(current)[sel].label || displayName(byId.get(hotspotsOf(current)[sel].target).name) : '';
     eyeLabels.forEach((s) => (s.textContent = controller.stereo ? name : ''));
   }
 
@@ -692,7 +690,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     });
     photos.forEach((p) => {
       const b = el('button', 'ps-list-item' + (current && p.id === current.id ? ' active' : ''));
-      b.textContent = p.name;
+      b.textContent = displayName(p.name);
       items.push({ b, text: norm(p.name + ' ' + (p.fileName || '')) });
       b.addEventListener('click', () => {
         list.hidden = true;

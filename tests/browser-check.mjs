@@ -332,7 +332,7 @@ try {
   await page.click('.ps-list-btn');
   await page.fill('.ps-search', 'phone');
   await page.press('.ps-search', 'Enter');
-  await page.waitForFunction(() => document.querySelector('.ps-title').textContent === 'phone 360', null, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.ps-title').textContent === 'phone_360', null, { timeout: 10000 });
   check(true, 'visionneuse : liste ☰ avec recherche, Entrée ouvre la photo trouvée');
   await page.keyboard.press('ArrowLeft');
   await page.waitForTimeout(1200);
@@ -438,7 +438,7 @@ try {
       const { displayName } = await import('./src/player.js');
       return [displayName('360_0896 salle_à_manger_2 1'), displayName('360_0881'), displayName('Entrée du jardin'), displayName('360_0885 salon 2-2')];
     });
-    check(names[0] === 'salle à manger 2' && names[1] === '360_0881' && names[2] === 'Entrée du jardin' && names[3] === 'salon', `visionneuse : noms des photos sans numéros de prise de vue ni de photo (${names.join(' | ')})`);
+    check(names[0] === 'salle_à_manger_2 1' && names[1] === '360_0881' && names[2] === 'Entrée du jardin' && names[3] === 'salon 2-2', `visionneuse : noms des photos sans le numéro de prise de vue (${names.join(' | ')})`);
     await page.screenshot({ path: path.join(shots, '07b-bout-de-bras-penche.png') });
   }
 
