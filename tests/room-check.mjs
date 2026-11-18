@@ -478,6 +478,41 @@ try {
     const nBack = await labels();
     check(nHidden === 0 && tour === 0 && nBack === 1 && toPlan, `navigation : lien vers la photo retirée masqué (visionneuse ${nHidden}, parcours ${tour}), revenu une fois remise (${nBack}) ; bouton « Plan » de la visionneuse → plan (${toPlan})`);
   }
+
+  // ---------- supprimer une pièce ----------
+  {
+    await page.goto(base + '#/');
+    await page.goto(base + '#/plan');
+    await page.waitForSelector('.plan-node');
+    await page.waitForTimeout(600);
+    await page.click('[data-fit]');
+    await page.waitForTimeout(400);
+    const roomsNow = async () => db(async (db) => {
+      const d = await db.getPlanDrawing();
+      return { rooms: d.rooms.length, walls: d.lines.filter((l) => l.room).length, photoRooms: (await db.listPhotos()).filter((p) => p.room && p.room.corners && p.room.corners.length).length };
+    });
+    const pick = async () => {
+      const [x, y] = await edgeMid();
+      await page.mouse.click(x, y);
+      await page.waitForTimeout(400);
+    };
+    const r0 = await roomsNow();
+    await pick();
+    await page.click('.plan-roompanel [data-room-delete]');
+    await page.click('dialog [data-del=plan]');
+    await page.waitForTimeout(800);
+    const r1 = await roomsNow();
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(800);
+    const r2 = await roomsNow();
+    await pick();
+    await page.keyboard.press('Delete');
+    await page.click('dialog [data-del=all]');
+    await page.waitForTimeout(1200);
+    const r3 = await roomsNow();
+    check(r0.rooms === 1 && r1.rooms === 0 && r1.walls === 0 && r1.photoRooms === r0.photoRooms && r2.rooms === 1 && r3.rooms === 0 && r3.photoRooms < r1.photoRooms,
+      `plan : pièce supprimée du plan (${r0.rooms} → ${r1.rooms}, murs ${r1.walls}, photos gardant leurs coins ${r1.photoRooms}), Ctrl + Z la rétablit (${r2.rooms}), Suppr « du plan et des photos » (${r3.rooms} pièce, ${r3.photoRooms} photo avec coins)`);
+  }
 } catch (e) {
   failures++;
   console.error(e);

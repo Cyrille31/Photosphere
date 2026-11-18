@@ -2,7 +2,7 @@
 // traits sont les liens. Déplacer une photo réoriente ses liens « automatiques » (les liens retour
 // créés automatiquement), qui pointent alors vers la position des photos voisines sur le plan.
 import * as db from './db.js';
-import { escapeHtml, toast } from './ui.js';
+import { escapeHtml, toast, dialog } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
 import { placeRooms, roomCorners } from './room.js';
 import { levelToViewTilt, withCap, remapHotspot, wrapDeg } from './math.js';
@@ -405,8 +405,10 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
   async function undoDrawing() {
     if (!undoStack.length) return;
     drawing = JSON.parse(undoStack.pop());
+    drawing.rooms = drawing.rooms || [];
     poly = null;
     drawDrawing();
+    drawRooms();
     await saveDrawing();
   }
 
@@ -1073,6 +1075,9 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     if ((e.key === 'Delete' || e.key === 'Backspace') && selLink) {
       e.preventDefault();
       deleteLink(true);
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && selRoom) {
+      e.preventDefault();
+      askDeleteRoom(selRoom);
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
@@ -1262,9 +1267,10 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
       <label>Largeur <input type="number" data-rp="w" min="0.5" max="100" step="0.05"> m</label>
       <label>Longueur <input type="number" data-rp="l" min="0.5" max="100" step="0.05"> m</label>
       <span class="note">Surface : <span data-rp="area"></span> m²</span>
-      <button class="btn small" data-room-done>Terminer</button>`;
+      <div class="row2"><button class="btn small danger" data-room-delete title="Supprimer la pièce (touche Suppr)">🗑 Supprimer</button><button class="btn small" data-room-done>Terminer</button></div>`;
     updateRoomPanel(r);
     panel.querySelector('[data-room-done]').addEventListener('click', () => selectRoom(null));
+    panel.querySelector('[data-room-delete]').addEventListener('click', () => askDeleteRoom(r.key));
     panel.querySelector('[data-rp=name]').addEventListener('change', (e) => renameRoom(r.key, e.target.value.trim()));
     for (const k of ['w', 'l'])
       panel.querySelector(`[data-rp=${k}]`).addEventListener('change', (e) => {
@@ -1303,6 +1309,54 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
     drawDrawing();
     await roomDrop({ kind: 'room-size', key: r.key, snap });
   }
+  // Supprimer une pièce : ses murs et son nom quittent le plan (les photos restent où elles sont). Au
+  // choix, la pièce est aussi oubliée dans ses photos (nom et coins), sinon « Placer les pièces » la
+  // redessinerait.
+  function askDeleteRoom(key) {
+    const r = roomOf(key);
+    if (!r) return;
+    const n = (r.ids || []).length;
+    dialog(
+      `<h2>Supprimer la pièce « ${escapeHtml(r.name)} » ?</h2>
+      <p>Ses murs et son nom sont retirés du plan ; ses ${n} photo(s) restent à leur place, avec leurs liens.</p>
+      <p class="note">Tant que ses photos gardent leurs coins de plafond (éditeur, onglet Pièce), « 🏠 Placer les pièces » la redessinerait.</p>
+      <div class="row">
+        <button class="btn" data-close>Annuler</button>
+        <button class="btn danger" data-del="plan">Retirer du plan</button>
+        <button class="btn danger" data-del="all">Retirer du plan et des photos</button>
+      </div>`,
+      (d) =>
+        d.querySelectorAll('[data-del]').forEach((b) =>
+          b.addEventListener('click', async () => {
+            d.close();
+            await deleteRoom(key, b.dataset.del === 'all');
+          })
+        )
+    );
+  }
+  async function deleteRoom(key, fromPhotos) {
+    const r = roomOf(key);
+    if (!r) return;
+    pushUndo();
+    drawing.rooms = drawing.rooms.filter((x) => x.key !== key);
+    drawing.lines = drawing.lines.filter((x) => x.room !== key);
+    drawing.texts = drawing.texts.filter((x) => x.room !== key);
+    selectRoom(null);
+    drawDrawing();
+    await saveDrawing();
+    if (fromPhotos) {
+      for (const id of r.ids || []) {
+        const ph = byId.get(id);
+        if (ph) delete ph.room;
+        await db.updatePhoto(id, (cur) => {
+          const { room, ...rest } = cur;
+          return rest;
+        });
+      }
+    }
+    toast(fromPhotos ? `Pièce « ${r.name} » supprimée, du plan et de ses photos.` : `Pièce « ${r.name} » retirée du plan (Ctrl + Z pour l’annuler).`, false, 6000);
+  }
+
   // Renommer une pièce : sur le plan et dans ses photos (onglet Pièce de l'éditeur).
   async function renameRoom(key, name) {
     const r = roomOf(key);
