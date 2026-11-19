@@ -35,6 +35,9 @@ export function onStatus(fn) {
   return () => listeners.delete(fn);
 }
 
+// Poignée du dossier lié (synchronisation vers Google Drive), si l'accès est accordé.
+export const getHandle = () => (handle && granted ? handle : null);
+
 export function getStatus() {
   return { supported: isSupported(), linked: !!handle, granted, name: handle ? handle.name : '', lastSaved, lastError };
 }

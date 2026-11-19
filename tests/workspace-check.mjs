@@ -238,7 +238,7 @@ try {
     await page.goto(base + '#/');
     await page.waitForSelector('[data-act=workspace]');
     await page.click('[data-act=workspace]');
-    await page.click('[data-ws=import]');
+    await page.click('[data-ws=sync]');
     await page.waitForSelector('dialog [data-choice]', { timeout: 20000 });
   };
   const n0 = await countLinks();
@@ -265,6 +265,95 @@ try {
   await page.waitForTimeout(2500);
   const restored = await countLinks();
   check(loaded === 0 && idx >= 0 && restored === n0, `« Charger le fichier » puis restauration de la sauvegarde automatique : ${loaded} → ${restored} lien(s)`);
+
+  // ---------- synchronisation vers Google Drive (Drive simulé) ----------
+  {
+    const remote = new Map(); // id → { name, parent, size, mimeType, modifiedTime, trashed }
+    const FOLDER_ID = 'dossierDriveTest1234567890';
+    let n = 0, uploads = 0;
+    remote.set('notes', { name: 'notes.txt', parent: FOLDER_ID, size: 5, mimeType: 'text/plain', modifiedTime: new Date().toISOString(), trashed: false });
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type, x-upload-content-type', 'access-control-allow-methods': 'GET, POST, PATCH, PUT, OPTIONS', 'access-control-expose-headers': 'Location' };
+    const sessions = new Map();
+    await page.route(/^https:\/\/(www\.googleapis\.com\/(upload\/)?drive\/v3\/files|upload\.test\/)/, async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      const u = new URL(req.url());
+      const json = (o) => route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(o) });
+      if (u.host === 'upload.test') {
+        const sid = u.pathname.slice(1), sess = sessions.get(sid);
+        const body = req.postDataBuffer() || Buffer.alloc(0);
+        const id = sess.id || 'f' + ++n;
+        const prev = remote.get(id) || {};
+        remote.set(id, { ...prev, ...sess.meta, name: sess.meta.name || prev.name, parent: (sess.meta.parents || [prev.parent])[0], size: body.length, mimeType: 'application/octet-stream', trashed: false });
+        uploads++;
+        return json({ id });
+      }
+      if (u.pathname.startsWith('/upload/')) {
+        const m = u.pathname.match(/files\/([^/]+)$/);
+        const sid = 's' + ++n;
+        sessions.set(sid, { id: m && m[1], meta: JSON.parse(req.postData() || '{}') });
+        return route.fulfill({ status: 200, headers: { ...cors, location: 'https://upload.test/' + sid }, body: '' });
+      }
+      const m = u.pathname.match(/files\/([^/]+)$/);
+      if (m && req.method() === 'PATCH') {
+        Object.assign(remote.get(m[1]), JSON.parse(req.postData() || '{}'));
+        return json({ id: m[1] });
+      }
+      if (req.method() === 'POST') {
+        const meta = JSON.parse(req.postData() || '{}');
+        const id = 'd' + ++n;
+        remote.set(id, { name: meta.name, parent: meta.parents[0], mimeType: meta.mimeType, size: 0, modifiedTime: new Date().toISOString(), trashed: false });
+        return json({ id, name: meta.name });
+      }
+      const q = u.searchParams.get('q') || '';
+      const parent = (q.match(/'([^']+)' in parents/) || [])[1];
+      const files = [...remote.entries()].filter(([, f]) => f.parent === parent && !f.trashed).map(([id, f]) => ({ id, name: f.name, size: String(f.size), mimeType: f.mimeType, modifiedTime: f.modifiedTime }));
+      return json({ files });
+    });
+    await page.evaluate(() => {
+      localStorage.setItem('ps-google-client', 'client-de-test.apps.googleusercontent.com');
+      window.google = { accounts: { oauth2: { initTokenClient: (o) => ({ requestAccessToken: () => o.callback({ access_token: 'jeton-de-test', expires_in: 3600 }) }) } } };
+    });
+    const sync = async () => {
+      await page.goto(base + '#/');
+      await page.waitForSelector('[data-act=workspace]');
+      await page.click('[data-act=workspace]');
+      await page.fill('[name=gd-link]', `https://drive.google.com/drive/folders/${FOLDER_ID}?usp=sharing`);
+      await page.locator('[name=gd-link]').dispatchEvent('change');
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: path.join(shots, 'dossier-de-travail.png') });
+      const before = uploads;
+      await page.click('[data-ws=drive]');
+      await page.waitForSelector('.toast:has-text("Google Drive à jour")', { timeout: 60000 });
+      const msg = (await page.locator('.toast:has-text("Google Drive à jour")').last().textContent()) || '';
+      await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
+      return { msg, uploads: uploads - before };
+    };
+    const remoteNames = () => [...remote.values()].filter((f) => !f.trashed && f.mimeType !== 'application/vnd.google-apps.folder').map((f) => f.name).sort();
+    await page.evaluate(() => {
+      window.google = { accounts: { oauth2: { initTokenClient: (o) => ({ requestAccessToken: () => o.callback({ access_token: 'jeton-de-test', expires_in: 3600 }) }) } } };
+    });
+    const s1 = await sync();
+    const local = (await readFolder()).names.filter((x) => x !== '_headers' && x !== 'photosphere-relief');
+    const names1 = remoteNames();
+    check(local.every((x) => names1.includes(x)) && names1.some((x) => /profondeur\.png$/.test(x)) && names1.includes('notes.txt'), `Google Drive : premier envoi (${s1.msg.replace(/^.*: /, '')}) → ${names1.join(', ')}`);
+    const s2 = await sync();
+    check(s2.uploads === 0 && /0 envoyé.*0 mis à jour.*0 à la corbeille/.test(s2.msg), `Google Drive : rien de changé → rien d’envoyé (${s2.msg.replace(/^.*: /, '')})`);
+    // Modification (nom d'une photo → photosphere.json réécrit) et suppression d'une photo du dossier.
+    await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const p = (await db.listPhotos())[0];
+      await db.updatePhoto(p.id, (cur) => ({ ...cur, name: cur.name + ' bis' }));
+      const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('photos');
+      await dir.removeEntry('SAM_0002.JPG');
+    });
+    await page.waitForTimeout(2500);
+    const s3 = await sync();
+    const names3 = remoteNames();
+    check(s3.uploads === 1 && /1 mis à jour/.test(s3.msg) && /1 à la corbeille/.test(s3.msg) && !names3.includes('SAM_0002.JPG') && names3.includes('notes.txt'),
+      `Google Drive : seul photosphere.json renvoyé, photo supprimée mise à la corbeille, autres fichiers intacts (${s3.msg.replace(/^.*: /, '')})`);
+    await page.screenshot({ path: path.join(shots, 'drive-sync.png') });
+  }
 } catch (e) {
   failures++;
   console.error(e);
