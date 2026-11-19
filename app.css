@@ -84,7 +84,7 @@ dialog h2 { margin-bottom: 12px; }
 dialog p, dialog li { line-height: 1.5; color: #cfd6f3; }
 dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
 .field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; font-size: 14px; }
-.field input[type=text], .field select, .field input[type=number] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+.field input[type=text], .field input[type=url], .field select, .field input[type=number] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 8px 0; }
 
 #toasts { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
@@ -317,3 +317,5 @@ table.cmp th, table.cmp td { padding: 4px 8px; border-bottom: 1px solid rgba(127
 ul.backups { list-style: none; padding: 0; max-height: 50vh; overflow: auto; }
 ul.backups li { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.3); }
 .plan-roompanel .row2 { display: flex; gap: 6px; justify-content: space-between; }
+.ws-block { border: 1px solid rgba(127,140,180,.25); border-radius: 12px; padding: 10px 14px; margin: 10px 0; }
+.ws-block h3 { margin: 2px 0 6px; font-size: 15px; }

@@ -13,6 +13,7 @@ import { batchAutoLevel, batchRelief } from './batch.js';
 import { showManual, manualButton as manualLink, bindManualButtons as bindManualLinks } from './manual.js';
 import { openParcours, filesSource, webSource, clearParcoursDisk } from './parcours.js';
 import { driveSource, driveFolderId, parcoursLink } from './drive.js';
+import { signIn, syncToDrive, clientId } from './drive-sync.js';
 import { RELIEF_DIR, reliefNames, HEADERS_FILE, HEADERS_CONTENT } from './relief-files.js';
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
@@ -376,25 +377,56 @@ async function importFromWorkspace() {
   await ws.saveNow();
 }
 
-function showWorkspace() {
+// Fenêtre « Dossier de travail » : le dossier sur le disque (lu et tenu à jour automatiquement) et sa
+// copie sur Google Drive (pour le parcours partagé), synchronisée à la demande.
+async function showWorkspace() {
   const s = ws.getStatus();
   const saved = s.lastSaved ? s.lastSaved.toLocaleTimeString('fr-FR') : 'pas encore';
+  const gd = (await db.getSetting('drive-sync')) || {};
+  const last = gd.last ? new Date(gd.last.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null;
   dialog(
     `<h2>Dossier de travail</h2>
-    <p>Liez le dossier qui contient vos photos d’origine : PhotoSphère y lit les photos et y enregistre <b>automatiquement</b> le fichier <code>${'photosphere.json'}</code> (redressement, nord, liens, noms, plan) après chaque modification. Les photos elles-mêmes ne sont jamais modifiées.</p>
-    ${
-      s.linked
-        ? `<p>Dossier lié : <b>${escapeHtml(s.name)}</b> — ${s.granted ? `enregistrement automatique actif (dernier : ${saved})` : 'accès à reconfirmer'}.</p>
-           ${s.lastError ? `<p class="note">Dernière erreur : ${escapeHtml(s.lastError)}</p>` : ''}
-           <div class="row" style="justify-content:flex-start">
-             ${s.granted ? '<button class="btn" data-ws="import">📥 Importer les photos du dossier</button><button class="btn" data-ws="save">💾 Enregistrer maintenant</button>' : '<button class="btn primary" data-ws="reconnect">🔓 Reconnecter</button>'}
-             <button class="btn danger" data-ws="unlink">Délier</button>
-           </div>`
-        : '<div class="row" style="justify-content:flex-start"><button class="btn primary" data-ws="link">📁 Choisir le dossier des photos</button></div>'
-    }
-    <p class="note">Disponible sur PC avec Chrome ou Edge. Le renommage des fichiers sur le disque se règle dans ⚙ Réglages.</p>
+    <section class="ws-block">
+      <h3>💻 Sur ce PC</h3>
+      <p class="note">PhotoSphère lit les photos d’origine de ce dossier et y enregistre <b>automatiquement</b> <code>${SETTINGS_FILE_NAME}</code> et les reliefs. Les photos elles-mêmes ne sont jamais modifiées.</p>
+      ${
+        s.linked
+          ? `<p>📁 <b>${escapeHtml(s.name)}</b> — ${s.granted ? `enregistrement automatique actif (dernier : ${saved})` : '<b>accès à reconfirmer</b> : rien n’y est enregistré pour l’instant'}.</p>
+             ${s.lastError ? `<p class="note">Dernière erreur : ${escapeHtml(s.lastError)}</p>` : ''}
+             <div class="row" style="justify-content:flex-start">
+               <button class="btn primary" data-ws="sync" title="Relit le dossier (photos et ${SETTINGS_FILE_NAME}) ; si son contenu diffère du travail en cours, PhotoSphère demande lequel garder. L’enregistrement automatique continue ensuite.">🔄 Synchroniser avec ce dossier</button>
+               <button class="btn" data-ws="link">📂 Changer de dossier…</button>
+               <button class="btn danger" data-ws="unlink">Délier</button>
+             </div>`
+          : '<div class="row" style="justify-content:flex-start"><button class="btn primary" data-ws="link">📂 Choisir le dossier des photos</button></div>'
+      }
+    </section>
+    <section class="ws-block">
+      <h3>☁ Copie sur Google Drive</h3>
+      <p class="note">Pour le parcours partagé : le dossier Google Drive reçoit une copie des photos d’origine, de <code>${SETTINGS_FILE_NAME}</code> et de <code>${RELIEF_DIR}</code>. Seul ce qui a changé est envoyé ; ce qui n’existe plus ici va à la corbeille de Drive. Les autres fichiers du dossier Drive ne sont pas touchés.</p>
+      <label class="field">Lien du dossier Google Drive<input type="url" name="gd-link" value="${escapeHtml(gd.link || '')}" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off"></label>
+      ${
+        clientId()
+          ? ''
+          : `<label class="field">Identifiant client Google (à créer une fois, voir le manuel)<input type="text" name="gd-client" placeholder="….apps.googleusercontent.com" autocomplete="off"></label>`
+      }
+      <div class="row" style="justify-content:flex-start">
+        <button class="btn primary" data-ws="drive" ${s.linked && s.granted ? '' : 'disabled title="Reliez (ou reconnectez) d’abord le dossier sur ce PC"'}>☁ Synchroniser vers Google Drive</button>
+      </div>
+      ${last ? `<p class="note">Dernière synchronisation : ${last} — ${gd.last.sent} envoyé(s), ${gd.last.updated} mis à jour, ${gd.last.trashed} à la corbeille, ${gd.last.unchanged} inchangé(s).</p>` : ''}
+      <div class="parcours-share gd-share" ${driveFolderId(gd.link || '') ? '' : 'hidden'}>
+        <label class="field">Lien de visite à envoyer<input type="text" name="gd-visit" readonly value="${driveFolderId(gd.link || '') ? escapeHtml(parcoursLink(driveFolderId(gd.link))) : ''}"></label>
+      </div>
+    </section>
     <div class="row"><button class="btn" data-close>Fermer</button></div>`,
     (d) => {
+      const linkIn = d.querySelector('[name=gd-link]');
+      linkIn.addEventListener('change', async () => {
+        const id = driveFolderId(linkIn.value);
+        await db.putSetting('drive-sync', { ...((await db.getSetting('drive-sync')) || {}), link: linkIn.value.trim() });
+        d.querySelector('.gd-share').hidden = !id;
+        if (id) d.querySelector('[name=gd-visit]').value = parcoursLink(id);
+      });
       d.querySelectorAll('[data-ws]').forEach((b) =>
         b.addEventListener('click', async () => {
           const act = b.dataset.ws;
@@ -403,20 +435,28 @@ function showWorkspace() {
               await ws.link();
               d.close();
               await importFromWorkspace();
-            } else if (act === 'reconnect') {
-              await ws.reconnect();
+            } else if (act === 'sync') {
+              if (!ws.getStatus().granted) await ws.reconnect();
               d.close();
               if (ws.getStatus().granted) await importFromWorkspace();
-            } else if (act === 'import') {
-              d.close();
-              await importFromWorkspace();
-            } else if (act === 'save') {
-              const ok = await ws.saveNow();
-              toast(ok ? 'photosphere.json enregistré dans le dossier.' : 'Enregistrement impossible : ' + ws.getStatus().lastError, !ok);
-              d.close();
             } else if (act === 'unlink') {
               await ws.unlink();
               d.close();
+            } else if (act === 'drive') {
+              const ci = d.querySelector('[name=gd-client]');
+              if (ci && ci.value.trim()) {
+                try {
+                  localStorage.setItem('ps-google-client', ci.value.trim());
+                } catch (e) {
+                  // non mémorisé
+                }
+              }
+              const id = driveFolderId(linkIn.value);
+              if (!id) return toast('Collez le lien du dossier Google Drive (partagé en « Tous les utilisateurs qui ont le lien »).', true);
+              if (!clientId()) return toast('Indiquez l’identifiant client Google (voir le manuel, « Parcours partagé »).', true);
+              await signIn(); // dans le clic : sinon le navigateur bloque la fenêtre de connexion Google
+              d.close();
+              await syncDrive(id, linkIn.value.trim());
             }
           } catch (e) {
             if (e.name !== 'AbortError') toast(e.message, true);
@@ -426,6 +466,23 @@ function showWorkspace() {
       );
     }
   );
+}
+
+// Synchronisation du dossier de travail vers le dossier Google Drive.
+async function syncDrive(folderId, link) {
+  const handle = ws.getHandle();
+  if (!handle) return toast('Dossier de travail non connecté.', true);
+  await ws.saveNow(); // photosphere.json et reliefs à jour sur le disque d'abord
+  const b = busy('Synchronisation vers Google Drive');
+  try {
+    const st = await syncToDrive(handle, folderId, { onProgress: b.update });
+    b.close();
+    await db.putSetting('drive-sync', { link, last: { at: Date.now(), ...st } });
+    toast(`Google Drive à jour : ${st.sent} envoyé(s), ${st.updated} mis à jour, ${st.trashed} à la corbeille, ${st.unchanged} inchangé(s).`, false, 8000);
+  } catch (e) {
+    b.close();
+    toast('Synchronisation interrompue : ' + e.message + ' (relancez-la : ce qui est déjà envoyé ne le sera pas deux fois).', true, 10000);
+  }
 }
 
 // Option : le fichier d'origine prend le nouveau nom de la photo (dossier de travail).
