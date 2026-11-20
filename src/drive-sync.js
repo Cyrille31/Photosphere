@@ -9,7 +9,7 @@ import { SETTINGS_FILE_NAME } from './settings-file.js';
 
 // Identifiant client OAuth (public, comme la clé d'API) de l'application PhotoSphère dans Google Cloud.
 // Un identifiant enregistré sur l'appareil (réglage « ps-google-client ») est prioritaire.
-export const GOOGLE_CLIENT_ID = '';
+export const GOOGLE_CLIENT_ID = '770781521657-80pqjfhd1liird8tnpks6p1kgrl3m1md.apps.googleusercontent.com';
 export const clientId = () => {
   try {
     return localStorage.getItem('ps-google-client') || GOOGLE_CLIENT_ID;
