@@ -18,6 +18,7 @@ import { RELIEF_DIR, reliefNames, HEADERS_FILE, HEADERS_CONTENT } from './relief
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
 import { setRoomWord } from './room.js';
+import { aboutLine } from './version.js';
 
 const app = document.getElementById('app');
 const state = {
@@ -380,14 +381,55 @@ async function importFromWorkspace() {
 
 // Option « renommer aussi le fichier » : les photos renommées pendant que le dossier n'était pas relié
 // (ou pas reconnecté) ont gardé leur ancien nom de fichier ; on rattrape ces renommages.
-async function renamePendingFiles() {
-  if (!state.settings.renameFiles || !ws.getStatus().granted) return;
+// Photos dont le fichier ne porte pas (encore) le nom de la photo.
+async function filesToRename() {
+  return (await db.listPhotos()).filter((p) => {
+    if (!p.fileName || !p.name) return false;
+    const ext = (p.fileName.match(/\.[^.]+$/) || [''])[0];
+    return ws.safeFileName(p.name) + ext !== p.fileName;
+  });
+}
+// report : compte rendu détaillé dans une fenêtre (bouton de la fenêtre « Dossier de travail »).
+async function renamePendingFiles({ report = false } = {}) {
+  if (!ws.getStatus().granted) return;
+  const pending = await filesToRename();
+  if (!pending.length) {
+    if (report) toast('Tous les fichiers portent déjà le nom de leur photo.');
+    return;
+  }
+  // Option non cochée : on propose (avec un exemple), plutôt que de ne rien faire sans le dire.
+  if (!state.settings.renameFiles) {
+    if (state.settings.renameAsk === false) return;
+    const ex = pending[0];
+    const ext = (ex.fileName.match(/\.[^.]+$/) || [''])[0];
+    const yes = await new Promise((resolve) => {
+      let ok = false;
+      const d = dialog(
+        `<h2>Renommer les fichiers ?</h2>
+        <p>${pending.length} photo(s) portent un nom différent de leur fichier dans le dossier, par exemple <b>${escapeHtml(ex.fileName)}</b> → <b>${escapeHtml(ws.safeFileName(ex.name) + ext)}</b>.</p>
+        <p class="note">Les fichiers renommés (et leurs reliefs) remplaceront les anciens sur Google Drive à la prochaine synchronisation.</p>
+        <div class="row"><button class="btn" data-never>Ne plus demander</button><button class="btn" data-close>Pas maintenant</button><button class="btn primary" data-yes>Renommer les fichiers (et toujours le faire)</button></div>`,
+        (dd) => {
+          dd.querySelector('[data-yes]').addEventListener('click', () => {
+            ok = true;
+            dd.close();
+          });
+          dd.querySelector('[data-never]').addEventListener('click', async () => {
+            state.settings = { ...state.settings, renameAsk: false };
+            await db.putSetting('app', state.settings);
+            dd.close();
+          });
+        }
+      );
+      d.addEventListener('close', () => resolve(ok));
+    });
+    if (!yes) return;
+    state.settings = { ...state.settings, renameFiles: true };
+    await db.putSetting('app', state.settings);
+  }
   let done = 0;
   const failed = [];
-  for (const p of await db.listPhotos()) {
-    if (!p.fileName || !p.name) continue;
-    const ext = (p.fileName.match(/\.[^.]+$/) || [''])[0];
-    if (ws.safeFileName(p.name) + ext === p.fileName) continue;
+  for (const p of pending) {
     try {
       const file = await ws.renameFile(p.fileName, p.name);
       if (file) {
@@ -398,8 +440,14 @@ async function renamePendingFiles() {
       failed.push(`« ${p.name} » : ${e.message}`);
     }
   }
-  if (done) toast(`${done} fichier(s) renommé(s) sur le disque d’après le nom des photos.`, false, 6000);
-  if (failed.length) toast(`${failed.length} fichier(s) non renommé(s) : ${failed.slice(0, 3).join(' ; ')}${failed.length > 3 ? '…' : ''}`, true, 10000);
+  if (report || failed.length)
+    dialog(
+      `<h2>Renommage des fichiers</h2>
+      <p>${done} fichier(s) renommé(s) sur ${pending.length}.</p>
+      ${failed.length ? `<p><b>${failed.length} non renommé(s)</b> :</p><ul class="backups">${failed.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : ''}
+      <div class="row"><button class="btn primary" data-close>OK</button></div>`
+    );
+  else if (done) toast(`${done} fichier(s) renommé(s) sur le disque d’après le nom des photos.`, false, 6000);
   if (done) await refresh();
 }
 
@@ -409,6 +457,7 @@ async function showWorkspace() {
   const s = ws.getStatus();
   const saved = s.lastSaved ? s.lastSaved.toLocaleTimeString('fr-FR') : 'pas encore';
   const gd = (await db.getSetting('drive-sync')) || {};
+  const toRename = s.linked ? (await filesToRename()).length : 0;
   const last = gd.last ? new Date(gd.last.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null;
   dialog(
     `<h2>Dossier de travail</h2>
@@ -419,6 +468,7 @@ async function showWorkspace() {
         s.linked
           ? `<p>📁 <b>${escapeHtml(s.name)}</b> — ${s.granted ? `enregistrement automatique actif (dernier : ${saved})` : '<b>accès à reconfirmer</b> : rien n’y est enregistré pour l’instant'}.</p>
              ${s.lastError ? `<p class="note">Dernière erreur : ${escapeHtml(s.lastError)}</p>` : ''}
+             ${toRename ? `<p class="note">✏ ${toRename} fichier(s) ne portent pas le nom de leur photo. <button class="btn small" data-ws="rename" ${s.granted ? '' : 'disabled'}>Renommer les fichiers</button></p>` : ''}
              <div class="row" style="justify-content:flex-start">
                <button class="btn primary" data-ws="sync" title="Relit le dossier (photos et ${SETTINGS_FILE_NAME}) ; si son contenu diffère du travail en cours, PhotoSphère demande lequel garder. L’enregistrement automatique continue ensuite.">🔄 Synchroniser avec ce dossier</button>
                <button class="btn" data-ws="link">📂 Changer de dossier…</button>
@@ -465,6 +515,10 @@ async function showWorkspace() {
               if (!ws.getStatus().granted) await ws.reconnect();
               d.close();
               if (ws.getStatus().granted) await importFromWorkspace();
+            } else if (act === 'rename') {
+              d.close();
+              await renamePendingFiles({ report: true });
+              await ws.saveNow();
             } else if (act === 'unlink') {
               await ws.unlink();
               d.close();
@@ -924,6 +978,7 @@ async function showSettings() {
     </select><small class="note">Les mots sont pris jusqu’au premier qui n’est qu’un numéro ; les « _ » deviennent des espaces (« 360_0896 salle_à_manger_2 1 » → « salle à manger 2 »).</small></label>
     <div class="row" style="justify-content:flex-start"><button class="btn small" data-backups>🕘 Sauvegardes automatiques…</button></div>
     <label class="check"><input type="checkbox" name="reconvert"> Reconvertir toutes les photos avec ces réglages</label>
+    <p class="note about">${escapeHtml(aboutLine())}. En échange de l’usage libre et gratuit de PhotoSphère, une seule chose vous est demandée, sur l’honneur : faire une bonne action chaque jour.</p>
     <div class="row"><button class="btn" data-close>Annuler</button><button class="btn primary" data-save>Enregistrer</button></div>`,
     (d) => {
       const q = d.querySelector('[name=quality]');
@@ -934,7 +989,8 @@ async function showSettings() {
       });
       d.querySelector('[data-save]').addEventListener('click', async () => {
         const rf = d.querySelector('[name=renameFiles]');
-        state.settings = { outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles, roomWord: +d.querySelector('[name=roomWord]').value };
+        state.settings = { ...state.settings, outWidth: +d.querySelector('[name=outWidth]').value, quality: +q.value, renameFiles: rf ? rf.checked : !!state.settings.renameFiles, roomWord: +d.querySelector('[name=roomWord]').value };
+        if (rf && rf.checked) delete state.settings.renameAsk;
         setRoomWord(state.settings.roomWord);
         await db.putSetting('app', state.settings);
         if (d.querySelector('[name=reconvert]').checked) {

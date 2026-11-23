@@ -385,6 +385,35 @@ try {
     check(before.includes('Salon cote jardin.JPG') && f2.names.includes('Terrasse.JPG') && !f2.names.includes('Salon cote jardin.JPG') && f2.json.photos.some((p) => p.file === 'Terrasse.JPG' && p.name === 'Terrasse') && relief.some((n) => n.startsWith('Terrasse.JPG.')) && !relief.some((n) => n.startsWith('Salon cote jardin.JPG.')),
       `photo renommée hors connexion, dossier relié ensuite : fichier renommé (${f2.names.join(', ')}), relief suivi (${relief.join(', ')})`);
   }
+
+  // ---------- option « renommer aussi le fichier » non cochée : PhotoSphère propose le renommage ----------
+  {
+    await page.goto(base + '#/');
+    await page.waitForSelector('[data-act=workspace]');
+    // Option décochée dans ⚙ Réglages, puis photo renommée.
+    await page.click('#btn-settings');
+    await page.uncheck('dialog [name=renameFiles]');
+    await page.click('dialog [data-save]');
+    await page.waitForTimeout(800);
+    await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const p = (await db.listPhotos()).find((x) => x.fileName === 'Terrasse.JPG');
+      await db.updatePhoto(p.id, (cur) => ({ ...cur, name: 'Jardin' }));
+    });
+    await page.waitForTimeout(2500);
+    await page.click('[data-act=workspace]');
+    await page.click('[data-ws=sync]');
+    const keep = await page.waitForSelector('dialog [data-choice=keep]', { timeout: 15000 }).then(() => true, () => false);
+    if (keep) await page.click('dialog [data-choice=keep]');
+    await page.waitForSelector('dialog [data-yes]', { timeout: 15000 });
+    const ask = await page.textContent('dialog h2');
+    await page.screenshot({ path: path.join(shots, 'renommer-fichiers.png') });
+    await page.click('dialog [data-yes]');
+    await page.waitForTimeout(3000);
+    const f3 = await readFolder();
+    const opt = await page.evaluate(async () => (await (await import('./src/db.js')).getSetting('app')).renameFiles);
+    check(/Renommer les fichiers/.test(ask) && f3.names.includes('Jardin.JPG') && !f3.names.includes('Terrasse.JPG') && opt === true, `option non cochée : PhotoSphère propose de renommer (« ${ask} »), fichier renommé (${f3.names.join(', ')}), option désormais cochée`);
+  }
 } catch (e) {
   failures++;
   console.error(e);

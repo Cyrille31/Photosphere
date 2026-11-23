@@ -15,3 +15,11 @@ test('fichier de réglages : liens désignés par nom de fichier', () => {
   assert.equal(s.photos[0].params.yaw, 12);
   assert.ok(JSON.stringify(s).length < 2000);
 });
+
+test('version : le numéro affiché suit celui du cache du service worker', async () => {
+  const fs = await import('node:fs');
+  const { VERSION } = await import('../src/version.js');
+  const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+  const n = sw.match(/photosphere-v(\d+)/)[1];
+  assert.equal(VERSION, '1.' + n);
+});

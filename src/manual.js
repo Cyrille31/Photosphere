@@ -1,5 +1,6 @@
 // Manuel utilisateur : toutes les explications détaillées, à un seul endroit. Les panneaux de
 // l'application n'en gardent qu'une ligne et un bouton « 📖 » qui ouvre la bonne section.
+import { aboutLine } from './version.js';
 import { dialog } from './ui.js';
 
 const SECTIONS = [
@@ -150,10 +151,12 @@ const MANUAL = `
 </table></section>`;
 
 // Ouvre le manuel, éventuellement sur une section (« liens », « relief »…).
+const escapeAbout = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
 export function showManual(section = null) {
   const d = dialog(
     `<div class="manual">
-      <div class="manual-head"><h2>📖 Manuel</h2><button class="btn small" data-close>Fermer</button></div>
+      <div class="manual-head"><h2>📖 Manuel</h2><span class="note">${escapeAbout(aboutLine())}</span><button class="btn small" data-close>Fermer</button></div>
       <nav class="manual-toc">${SECTIONS.map(([id, t]) => `<a href="#man-${id}" data-sec="${id}">${t}</a>`).join('')}</nav>
       <div class="manual-body">${MANUAL}</div>
     </div>`,
