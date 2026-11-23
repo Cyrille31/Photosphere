@@ -354,6 +354,37 @@ try {
       `Google Drive : seul photosphere.json renvoyé, photo supprimée mise à la corbeille, autres fichiers intacts (${s3.msg.replace(/^.*: /, '')})`);
     await page.screenshot({ path: path.join(shots, 'drive-sync.png') });
   }
+
+  // ---------- photo renommée pendant que le dossier n'était pas relié ----------
+  {
+    await page.goto(base + '#/');
+    await page.waitForSelector('[data-act=workspace]');
+    await page.click('[data-act=workspace]');
+    await page.click('[data-ws=unlink]');
+    await page.waitForTimeout(500);
+    await page.evaluate(async () => {
+      const db = await import('./src/db.js');
+      const p = (await db.listPhotos()).find((x) => x.fileName === 'Salon cote jardin.JPG');
+      await db.updatePhoto(p.id, (cur) => ({ ...cur, name: 'Terrasse' }));
+    });
+    const before = (await readFolder()).names;
+    await page.reload();
+    await page.waitForSelector('[data-act=workspace]');
+    await page.click('[data-act=workspace]');
+    await page.click('[data-ws=link]');
+    const asked = await page.waitForSelector('dialog [data-choice=keep]', { timeout: 20000 }).then(() => true, () => false);
+    if (asked) await page.click('dialog [data-choice=keep]');
+    await page.waitForTimeout(4000);
+    const f2 = await readFolder();
+    const relief = await page.evaluate(async () => {
+      const dir = await (await (await navigator.storage.getDirectory()).getDirectoryHandle('photos')).getDirectoryHandle('photosphere-relief');
+      const n = [];
+      for await (const e of dir.values()) n.push(e.name);
+      return n;
+    });
+    check(before.includes('Salon cote jardin.JPG') && f2.names.includes('Terrasse.JPG') && !f2.names.includes('Salon cote jardin.JPG') && f2.json.photos.some((p) => p.file === 'Terrasse.JPG' && p.name === 'Terrasse') && relief.some((n) => n.startsWith('Terrasse.JPG.')) && !relief.some((n) => n.startsWith('Salon cote jardin.JPG.')),
+      `photo renommée hors connexion, dossier relié ensuite : fichier renommé (${f2.names.join(', ')}), relief suivi (${relief.join(', ')})`);
+  }
 } catch (e) {
   failures++;
   console.error(e);

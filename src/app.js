@@ -374,7 +374,33 @@ async function importFromWorkspace() {
   const files = await ws.listFiles();
   if (!files.length) return toast('Aucune photo JPEG trouvée dans ce dossier.', true);
   await handleFiles(files);
+  await renamePendingFiles();
   await ws.saveNow();
+}
+
+// Option « renommer aussi le fichier » : les photos renommées pendant que le dossier n'était pas relié
+// (ou pas reconnecté) ont gardé leur ancien nom de fichier ; on rattrape ces renommages.
+async function renamePendingFiles() {
+  if (!state.settings.renameFiles || !ws.getStatus().granted) return;
+  let done = 0;
+  const failed = [];
+  for (const p of await db.listPhotos()) {
+    if (!p.fileName || !p.name) continue;
+    const ext = (p.fileName.match(/\.[^.]+$/) || [''])[0];
+    if (ws.safeFileName(p.name) + ext === p.fileName) continue;
+    try {
+      const file = await ws.renameFile(p.fileName, p.name);
+      if (file) {
+        await db.updatePhoto(p.id, (c) => ({ ...c, fileName: file }));
+        done++;
+      }
+    } catch (e) {
+      failed.push(`« ${p.name} » : ${e.message}`);
+    }
+  }
+  if (done) toast(`${done} fichier(s) renommé(s) sur le disque d’après le nom des photos.`, false, 6000);
+  if (failed.length) toast(`${failed.length} fichier(s) non renommé(s) : ${failed.slice(0, 3).join(' ; ')}${failed.length > 3 ? '…' : ''}`, true, 10000);
+  if (done) await refresh();
 }
 
 // Fenêtre « Dossier de travail » : le dossier sur le disque (lu et tenu à jour automatiquement) et sa

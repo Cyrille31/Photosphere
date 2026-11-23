@@ -175,6 +175,27 @@ async function saveReliefs(photos) {
     }
     reliefWritten.add(tag);
   }
+  // Cartes de relief d'une photo qui n'est plus dans le dossier (fichier renommé ou supprimé) : effacées,
+  // pour ne pas encombrer le dossier ni la copie Google Drive.
+  try {
+    const rd = dir || (await handle.getDirectoryHandle(RELIEF_DIR));
+    const present = new Set();
+    const walk = async (d, depth) => {
+      for await (const e of d.values()) {
+        if (e.kind === 'file') present.add(e.name.toLowerCase());
+        else if (depth < 3 && !e.name.startsWith('.') && e.name !== RELIEF_DIR) await walk(e, depth + 1);
+      }
+    };
+    await walk(handle, 0);
+    const stale = [];
+    for await (const e of rd.values()) {
+      const m = e.kind === 'file' && e.name.match(/^(.*)\.(profondeur\.png|fond\.jpe?g)$/i);
+      if (m && !present.has(m[1].toLowerCase())) stale.push(e.name);
+    }
+    for (const n of stale) await rd.removeEntry(n);
+  } catch (e) {
+    // pas de dossier de relief
+  }
 }
 
 async function findFile(dir, name, depth = 0) {
