@@ -73,7 +73,8 @@ const MANUAL = `
 <section id="man-relief"><h3>Relief (effet 3D dans le casque)</h3>
 <ul>
   <li>Dans le casque, chaque œil voit la photo d’un point légèrement différent. Une intelligence artificielle (Depth Anything V2, exécutée dans le navigateur, sans envoi de la photo) estime la distance de chaque point : murs, sol, plafond, meubles, personnes.</li>
-  <li><b>Calcul</b> : onglet « Relief » de l’éditeur, ou par lot depuis la bibliothèque. La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon. À refaire si le redressement change.</li>
+  <li><b>Calcul</b> : onglet « Relief » de l’éditeur, ou par lot depuis la bibliothèque. La première fois, le modèle (27 à 50 Mo) est téléchargé puis gardé par le navigateur. Quelques secondes avec une carte graphique récente (WebGPU), jusqu’à une minute ou deux sinon.</li>
+  <li><b>Redresser après le calcul</b> : le relief tourne avec la photo, sans nouveau calcul (dans l’éditeur, par le redressement automatique et en tournant une pièce sur le plan). Au-delà d’un degré de redressement, l’onglet Relief conseille un nouveau calcul (l’IA voit mieux une scène droite), et « 🧠 Calculer le relief » sur une sélection ne refait que ces reliefs-là et ceux qui manquent.</li>
   <li><b>Vérifier</b> : « Colorer selon la distance » — rouge proche, jaune moyen, vert loin, bleu très loin.</li>
   <li><b>Hauteur de l’objectif</b> : l’échelle des distances est déduite du sol ; plus la hauteur indiquée est faible, plus le relief est marqué. Si le sol est peu visible, l’échelle est approximative.</li>
   <li><b>Confort</b> : ce que vous regardez est placé sans décalage entre les yeux (comme quand les yeux convergent) et l’écart entre les deux images est limité. Autour des personnes et objets proches, le fond est prolongé plutôt que d’étirer l’objet. Intensité : ⚙ du casque, « Relief ».</li>

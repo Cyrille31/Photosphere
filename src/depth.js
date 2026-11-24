@@ -4,7 +4,7 @@
 // et un décalage près, différents d'une vue à l'autre). On les accorde entre elles sur les zones
 // communes, puis on fixe l'échelle avec le sol (à une hauteur d'objectif sous la caméra).
 // Les distances sont exprimées en hauteurs d'objectif. Fonctions pures, testables hors navigateur.
-import { cameraMatrix, mat3Apply, mat3Transpose, DEG } from './math.js';
+import { cameraMatrix, mat3Apply, mat3Transpose, mat3Mul, levelMatrix, DEG } from './math.js';
 
 export const DEPTH_FOV = 100; // champ de chaque vue (degrés)
 // 8 vues autour de l'horizon, une vers le haut, une vers le bas.
@@ -224,6 +224,56 @@ export async function rollEquirectBlob(blob, deg, type = blob.type || 'image/png
     const row = y * w * 4;
     out.data.set(src.subarray(row, row + (w - shift) * 4), row + shift * 4);
     out.data.set(src.subarray(row + (w - shift) * 4, row + w * 4), row);
+  }
+  g.putImageData(out, 0, 0);
+  const res = await new Promise((r) => c.toBlob(r, type, type === 'image/jpeg' ? 0.92 : undefined));
+  c.width = c.height = 1;
+  return res;
+}
+
+// Carte de relief (PNG) ou fond (JPEG), panoramiques, après un changement de redressement (oldLevel →
+// newLevel, { yaw, pitch, roll } en degrés) : la sphère tourne, les distances ne changent pas. Chaque
+// point de la nouvelle carte reprend la valeur du point correspondant de l'ancienne (sans mélange :
+// les contours des objets restent nets, et le codage du PNG est préservé octet par octet).
+export async function relevelEquirectBlob(blob, oldLevel, newLevel, type = blob.type || 'image/png') {
+  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const w = bmp.width, h = bmp.height;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0);
+  if (bmp.close) bmp.close();
+  const src = g.getImageData(0, 0, w, h).data;
+  const out = g.createImageData(w, h);
+  const dst = out.data;
+  // Direction dans le nouveau repère d → direction dans l'ancien : M · d.
+  const L = (l) => levelMatrix(l.yaw || 0, l.pitch || 0, l.roll || 0);
+  const M = mat3Mul(mat3Transpose(L(oldLevel)), L(newLevel));
+  const sinLon = new Float64Array(w), cosLon = new Float64Array(w);
+  for (let x = 0; x < w; x++) {
+    const lon = ((x + 0.5) / w - 0.5) * 2 * Math.PI;
+    sinLon[x] = Math.sin(lon);
+    cosLon[x] = Math.cos(lon);
+  }
+  for (let y = 0; y < h; y++) {
+    const lat = (0.5 - (y + 0.5) / h) * Math.PI;
+    const cl = Math.cos(lat), sl = Math.sin(lat);
+    for (let x = 0; x < w; x++) {
+      const dx = cl * sinLon[x], dy = sl, dz = cl * cosLon[x];
+      const ox = M[0] * dx + M[1] * dy + M[2] * dz;
+      const oy = M[3] * dx + M[4] * dy + M[5] * dz;
+      const oz = M[6] * dx + M[7] * dy + M[8] * dz;
+      let sx = Math.floor((Math.atan2(ox, oz) / (2 * Math.PI) + 0.5) * w);
+      let sy = Math.floor((0.5 - Math.asin(Math.max(-1, Math.min(1, oy))) / Math.PI) * h);
+      sx = ((sx % w) + w) % w;
+      sy = Math.min(h - 1, Math.max(0, sy));
+      const si = (sy * w + sx) * 4, di = (y * w + x) * 4;
+      dst[di] = src[si];
+      dst[di + 1] = src[si + 1];
+      dst[di + 2] = src[si + 2];
+      dst[di + 3] = src[si + 3];
+    }
   }
   g.putImageData(out, 0, 0);
   const res = await new Promise((r) => c.toBlob(r, type, type === 'image/jpeg' ? 0.92 : undefined));

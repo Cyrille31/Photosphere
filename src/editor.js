@@ -14,6 +14,7 @@ import { manualButton, bindManualButtons } from './manual.js';
 import { pickPhoto } from './photo-picker.js';
 import { chooseArrivalView } from './arrival-view.js';
 import { newId, videoFrame } from './importer.js';
+import { relevelRelief, reliefTiltChange, RELIEF_RECOMPUTE_DEG, level } from './relevel.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -1071,7 +1072,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       depthBgImage = r.bgCanvas;
       depthPng = r.png;
       depthBgBlob = r.bgImage;
-      p.relief = { kind: 'ai', h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(p.params), floor: r.floorOk };
+      p.relief = { kind: 'ai', h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(p.params), floor: r.floorOk, basis: level(p.params) };
       dirty = true;
       depthStatus('');
       toast(`Relief calculé en ${((performance.now() - t0) / 1000).toFixed(0)} s${r.floorOk ? '' : ' (sol peu visible : échelle approximative)'}. Enregistrez pour le garder.`, false, 6000);
@@ -1096,10 +1097,14 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     const info = $('.relief-info');
     if (!r) {
       info.textContent =
-        p.relief && p.relief.kind === 'ai' && depthMaps ? 'Le redressement a changé : recalculez le relief.' : 'Pas encore de relief pour cette photo : appuyez sur « Calculer le relief ».';
+        p.relief && p.relief.kind === 'ai' && depthMaps
+          ? 'Le redressement a changé : le relief tournera avec la photo à l’enregistrement (ou recalculez-le).'
+          : 'Pas encore de relief pour cette photo : appuyez sur « Calculer le relief ».';
       return;
     }
     let txt = r.floor === false ? 'Sol peu visible : l’échelle des distances est approximative.' : 'Échelle déduite du sol.';
+    const tilt = reliefTiltChange(p);
+    if (tilt > RELIEF_RECOMPUTE_DEG) txt = `⚠ La photo a été redressée de ${tilt.toFixed(1)}° depuis le calcul du relief : il a tourné avec elle, mais un nouveau calcul (« Recalculer le relief ») serait un peu meilleur. ` + txt;
     if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(depthAt(depthMaps.depth, controller.gazeDir()) * r.h).toFixed(2)} m.`;
     info.textContent = txt;
   }
@@ -1270,6 +1275,15 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       posterBlob = null;
     }
     const imageChanged = cur.srcType !== p.srcType || JSON.stringify(cur.params) !== JSON.stringify(p.params);
+    // Redressement modifié : le relief tourne avec la photo, sans être recalculé (sauf s'il vient
+    // d'être recalculé dans cette séance).
+    if (p.relief && !depthPng && imageChanged) {
+      try {
+        p.relief = await relevelRelief(p.id, p.relief, cur.params, p.params);
+      } catch (e) {
+        // relief non réutilisable : il faudra le recalculer
+      }
+    }
     const updated = {
       ...cur,
       name: $('[name=title]').value.trim() || cur.name,
