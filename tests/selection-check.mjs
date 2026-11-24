@@ -110,6 +110,7 @@ try {
   await page.locator('.card .thumb').nth(0).click({ modifiers: ['Shift'] });
   check((await page.textContent('.selection-count')).includes('2 sélectionnée'), 'bibliothèque : Maj + clic sur une vignette sélectionne la plage');
   await page.screenshot({ path: path.join(shots, '01-selection.png') });
+  const offBefore = await page.locator('.card .badge.mini.off').count();
   const before = await db(async (db) => (await db.listPhotos()).map((p) => ({ id: p.id, ...p.params })));
   await page.click('[data-act=batch-level]');
   await page.waitForSelector('.batch-report', { timeout: 240000 });
@@ -124,6 +125,34 @@ try {
   await page.click('dialog [data-close]');
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 300000 });
   check(true, 'photos redressées reconverties');
+  {
+    // Indicateurs : « ⊥ » redressée (et « N » nord indiqué) ; pâles et barrés tant que ce n'est pas fait.
+    const lvOn = await page.locator('.card .badge.mini.on:not(.north)').count();
+    check(offBefore === 4 && lvOn === 2, `bibliothèque : indicateurs « redressée » et « nord » (4 éteints avant, ${lvOn} « redressée » allumés après)`);
+    // Double-clic hors des photos : désélection.
+    await page.click('[data-act=select-all]');
+    const sel1 = await page.isVisible('.selection-actions');
+    const g = await page.locator('.grid').boundingBox();
+    await page.mouse.dblclick(g.x + g.width - 5, g.y + g.height + 40);
+    await page.waitForTimeout(2000);
+    const sel2 = await page.isVisible('.selection-actions');
+    // Boutons restés visibles en faisant défiler la page.
+    await page.evaluate(() => {
+      document.querySelector('.grid').style.minHeight = '3000px';
+      window.scrollTo(0, 1500);
+    });
+    await page.waitForTimeout(300);
+    const head = await page.evaluate(() => {
+      const r = document.querySelector('.lib-head').getBoundingClientRect();
+      return { top: Math.round(r.top), visible: r.bottom > 0 && r.top < innerHeight, label: document.querySelector('[data-act=select-all]').textContent.trim() };
+    });
+    await page.screenshot({ path: path.join(shots, '02b-boutons-fixes.png') });
+    await page.evaluate(() => {
+      document.querySelector('.grid').style.minHeight = '';
+      window.scrollTo(0, 0);
+    });
+    check(sel1 && !sel2 && head.visible && head.top < 120 && head.label.includes('Tout sélectionner'), `bibliothèque : double-clic hors des photos → tout désélectionné (${sel1} → ${sel2}) ; boutons et recherche toujours visibles après défilement (haut à ${head.top} px) ; « ${head.label} »`);
+  }
   // Second passage : les photos déjà redressées sont ignorées.
   const before2 = await db(async (db) => (await db.listPhotos()).map((p) => JSON.stringify(p.params)).join());
   await page.click('[data-act=select-all]');

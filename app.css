@@ -320,3 +320,11 @@ ul.backups li { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.3); }
 .ws-block { border: 1px solid rgba(127,140,180,.25); border-radius: 12px; padding: 10px 14px; margin: 10px 0; }
 .ws-block h3 { margin: 2px 0 6px; font-size: 15px; }
 .ed-video-cue { position: absolute; transform: translate(-50%, -50%); padding: 4px 10px; border-radius: 14px; background: rgba(229,72,77,.92); color: #fff; font: 700 13px system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); pointer-events: none; white-space: nowrap; }
+
+.lib-head { position: sticky; top: var(--topbar-h, 60px); z-index: 9; background: var(--bg); padding-top: 8px; margin-top: -8px; box-shadow: 0 6px 10px -8px rgba(0,0,0,.6); }
+.lib-head .toolbar { margin-bottom: 8px; }
+.lib-head .library-search { margin-bottom: 0; flex: 1 1 260px; }
+.lib-head .selection-bar { margin-bottom: 8px; }
+.badge.mini { padding: 1px 6px; font-weight: 800; }
+.badge.mini.off { opacity: .35; text-decoration: line-through; }
+.badge.mini.north.on { color: #ff6b6b; }

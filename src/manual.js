@@ -34,7 +34,7 @@ const MANUAL = `
 <section id="man-bibliotheque"><h3>Bibliothèque et traitements par lot</h3>
 <ul>
   <li>Cliquez le nom d’une photo pour la <b>renommer</b> ; la recherche ignore majuscules et accents.</li>
-  <li><b>Sélection</b> : cochez la case en haut à droite des vignettes ; <b>Maj + clic</b> sur une autre case (ou vignette) sélectionne toutes les photos entre les deux ; <b>Ctrl + clic</b> sur une vignette la coche ou la décoche sans l’ouvrir ; « ☑ Tout sélectionner » prend les photos affichées par la recherche. Avec une sélection :
+  <li><b>Sélection</b> : cochez la case en haut à droite des vignettes ; <b>Maj + clic</b> sur une autre case (ou vignette) sélectionne toutes les photos entre les deux ; <b>Ctrl + clic</b> sur une vignette la coche ou la décoche sans l’ouvrir ; « ☑ Tout sélectionner » prend les photos affichées par la recherche ; un <b>double-clic hors des photos</b> désélectionne tout. Les boutons et la recherche restent en haut de l’écran quand on fait défiler les photos. Sur chaque vignette, <b>⊥</b> indique une photo redressée et <b>N</b> (rouge) un nord indiqué ; pâles et barrés, ce n’est pas encore fait. Avec une sélection :
     <ul>
       <li><b>✨ Redresser (auto)</b> : redressement automatique d’après les verticales (murs, portes, meubles) de chaque photo ; refusé au-delà de 15° (verticales peu fiables). Les photos déjà redressées (bascules non nulles, à la main ou automatiquement) sont ignorées ; le cap (nord) seul ne compte pas. Les photos corrigées sont ensuite reconverties.</li>
       <li><b>🧠 Calculer le relief</b> : carte de profondeur par IA pour le casque (voir <a href="#man-relief">Relief</a>). Faites-le après le redressement.</li>
@@ -121,7 +121,7 @@ const MANUAL = `
 <ul>
   <li><b>Import</b> : les vidéos .MP4 de la Gear 360 (double fisheye) s’importent comme les photos (bouton Importer, dossier de travail, glisser-déposer). Elles sont lues par le navigateur : le HEVC (H.265) de la Gear 360 passe dans Chrome (PC et Android), pas dans Firefox ; Edge demande l’extension HEVC de Windows.</li>
   <li><b>Une image de la vidéo sert de photosphère</b> : redressement, nord, liens, pièce, plan et relief se règlent sur elle, comme pour une photo. Onglet <b>Vidéo</b> de l’éditeur : choisissez l’instant de cette image (la première par défaut).</li>
-  <li><b>Lancement</b> : par le bouton <b>« ▶ Vidéo »</b>, une cible comme un lien (à placer où l’on veut : « 📍 Placer le bouton »), ou <b>dès l’arrivée</b> (case à cocher). <b>En boucle</b> ou non : sans boucle, la vidéo revient à son image à la fin. Pendant la lecture : ⏸ pause, ⏹ retour à l’image ; les liens restent disponibles.</li>
+  <li><b>Lancement</b> : par le bouton <b>« ▶ Vidéo »</b>, une cible comme un lien (à placer où l’on veut : « 📍 Placer le bouton »), ou <b>dès l’arrivée</b> (case à cocher). <b>En boucle</b> ou non : sans boucle, la vidéo revient à son image à la fin. Pendant la lecture : ⏸ pause, ⏹ retour à l’image ; les liens restent disponibles. Le lien « ▶ Vidéo » se place aussi depuis l’onglet Liens (« ▶ Lien « Vidéo » »).</li>
   <li><b>Parcours partagé</b> : les vidéos y sont jouées comme dans PhotoSphère. Le dossier de travail (ou le ZIP « Parcours à partager ») range l’image affichée avant le lancement dans <code>photosphere-relief</code> (<code>…​.affiche.jpg</code>) ; la synchronisation vers Google Drive envoie la vidéo et cette image. Le visiteur ne télécharge la vidéo qu’au moment de la lancer (une seule fois par visite).</li>
 </ul></section>
 
