@@ -13,6 +13,7 @@ const SECTIONS = [
   ['visionneuse', 'Visionneuse et casque VR'],
   ['plan', 'Plan'],
   ['piece', 'Plan des pièces'],
+  ['video', 'Vidéos 360'],
   ['parcours', 'Parcours partagé'],
   ['exporter', 'Exporter, conserver, transférer'],
   ['raccourcis', 'Raccourcis'],
@@ -114,6 +115,14 @@ const MANUAL = `
   <li><b>Échelle</b> : la barre sous la flèche indique une longueur en mètres. Glissez sa poignée ronde pour changer l’échelle : photos, murs, textes et pièces s’écartent ou se rapprochent (les pièces gardent leurs dimensions en mètres), mais les photos gardent leur taille. Pratique quand les photos sont trop grosses pour leurs pièces.</li>
   <li><b>Photo de départ</b> : cliquez une photo du plan, puis « 🚩 Départ ». Elle porte alors le repère vert « Départ ▼ » ; le parcours partagé et la visite exportée commencent par elle. Une petite <b>flèche verte</b>, placée derrière elle et pointée vers elle, indique le sens dans lequel on « entre » (le sens du regard) : faites-la glisser autour de la photo pour le choisir (Maj : pas de 15°).</li>
   <li><b>Retirer une photo du plan</b> : cliquez-la, puis « ⤺ Retirer du plan », ou glissez-la dans la zone des photos non placées. Elle quitte sa pièce, et « Placer les pièces » la laisse de côté. Ses liens sont gardés, mais ni dessinés sur le plan ni proposés pendant la visite (visionneuse, parcours partagé, visite exportée) ; ils reviennent quand on la remet sur le plan. Glissez-la sur le plan pour l’y remettre.</li>
+</ul></section>
+
+<section id="man-video"><h3>Vidéos 360</h3>
+<ul>
+  <li><b>Import</b> : les vidéos .MP4 de la Gear 360 (double fisheye) s’importent comme les photos (bouton Importer, dossier de travail, glisser-déposer). Elles sont lues par le navigateur : le HEVC (H.265) de la Gear 360 passe dans Chrome (PC et Android), pas dans Firefox ; Edge demande l’extension HEVC de Windows.</li>
+  <li><b>Une image de la vidéo sert de photosphère</b> : redressement, nord, liens, pièce, plan et relief se règlent sur elle, comme pour une photo. Onglet <b>Vidéo</b> de l’éditeur : choisissez l’instant de cette image (la première par défaut).</li>
+  <li><b>Lancement</b> : par le bouton <b>« ▶ Vidéo »</b>, une cible comme un lien (à placer où l’on veut : « 📍 Placer le bouton »), ou <b>dès l’arrivée</b> (case à cocher). <b>En boucle</b> ou non : sans boucle, la vidéo revient à son image à la fin. Pendant la lecture : ⏸ pause, ⏹ retour à l’image ; les liens restent disponibles.</li>
+  <li>Les vidéos sont copiées vers Google Drive avec les photos ; elles ne sont pas encore jouées dans un parcours partagé (étape suivante).</li>
 </ul></section>
 
 <section id="man-parcours"><h3>Parcours partagé</h3>

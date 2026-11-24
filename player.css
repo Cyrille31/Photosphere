@@ -46,3 +46,6 @@
 @media (max-width: 520px) { .ps-btn span { display: none; } .ps-btn { padding: 10px 13px; font-size: 18px; } }
 
 .ps-label.small { font-size: 11px; padding: 3px 7px; border-radius: 6px; }
+.ps-video { position: absolute; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 12px; background: rgba(10,16,35,.7); color: #fff; font-size: 13px; }
+.ps-video[hidden] { display: none; }
+.ps-player.stereo .ps-video { display: none; }

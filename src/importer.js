@@ -97,14 +97,53 @@ function isImageFile(f) {
 }
 
 // Renvoie { added: [...], skipped: [{ name, reason }] }
+// Vidéos 360 (Gear 360 : double fisheye, souvent en HEVC). Une vidéo est rangée comme une photo dont
+// l'« original » est une image tirée de la vidéo (son affiche) : redressement, liens, plan, conversion
+// fonctionnent comme pour une photo ; la vidéo elle-même est gardée à part (clé « <id>:video »).
+export const isVideoFile = (f) => /\.(mp4|m4v|mov)$/i.test(f.name || '') || /^video\//.test(f.type || '');
+
+// Image de la vidéo à l'instant t (secondes) → { blob (JPEG), width, height, duration }.
+export async function videoFrame(src, t = 0) {
+  const url = typeof src === 'string' ? src : URL.createObjectURL(src);
+  const v = document.createElement('video');
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = 'auto';
+  v.src = url;
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('vidéo illisible (délai dépassé)')), 20000);
+      v.addEventListener('loadeddata', () => (clearTimeout(timer), resolve()), { once: true });
+      v.addEventListener('error', () => (clearTimeout(timer), reject(new Error('vidéo illisible par ce navigateur (format ou codec, ex. HEVC, non pris en charge)'))), { once: true });
+    });
+    const target = Math.max(0, Math.min(t, (v.duration || 0) - 0.05));
+    if (target > 0.01 || v.currentTime > 0.01) {
+      await new Promise((resolve) => {
+        v.addEventListener('seeked', resolve, { once: true });
+        v.currentTime = target;
+      });
+    }
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.93));
+    return { blob, width: v.videoWidth, height: v.videoHeight, duration: v.duration || 0, time: target };
+  } finally {
+    v.removeAttribute('src');
+    v.load();
+    if (typeof src !== 'string') URL.revokeObjectURL(url);
+  }
+}
+
 export async function importFiles(files, onProgress) {
   const existing = await db.listPhotos();
   const known = new Set(existing.map((p) => p.fileName + ':' + p.fileSize));
   const added = [], skipped = [];
   const list = [...files].filter((f) => {
     if (isReliefFile(f)) return false; // cartes de relief rangées avec les photos
-    if (isImageFile(f)) return true;
-    if (!/^\./.test(f.name)) skipped.push({ name: f.name, reason: 'format non pris en charge (JPEG uniquement)' });
+    if (isImageFile(f) || isVideoFile(f)) return true;
+    if (!/^\./.test(f.name)) skipped.push({ name: f.name, reason: 'format non pris en charge (JPEG ou vidéo MP4 uniquement)' });
     return false;
   });
   for (let i = 0; i < list.length; i++) {
@@ -112,6 +151,14 @@ export async function importFiles(files, onProgress) {
     if (onProgress) onProgress(i, list.length, f.name);
     if (known.has(f.name + ':' + f.size)) {
       skipped.push({ name: f.name, reason: 'déjà importée' });
+      continue;
+    }
+    if (isVideoFile(f)) {
+      try {
+        added.push(await importVideo(f));
+      } catch (e) {
+        skipped.push({ name: f.name, reason: e.message });
+      }
       continue;
     }
     try {
@@ -155,6 +202,41 @@ export async function importFiles(files, onProgress) {
   }
   if (onProgress) onProgress(list.length, list.length, '');
   return { added, skipped };
+}
+
+async function importVideo(f) {
+  const fr = await videoFrame(f, 0);
+  if (Math.abs(fr.width / fr.height - 2) > 0.03) throw new Error(`format ${fr.width}×${fr.height} : une vidéo 360 doit être au rapport 2:1`);
+  const img = await decodeImage(fr.blob);
+  const analysis = analyzeImage(img);
+  const preview = sample(img, 1024, 512).canvas;
+  if (img.close) img.close();
+  const id = newId();
+  const photo = {
+    id,
+    kind: 'video',
+    name: f.name.replace(/\.[^.]+$/, ''),
+    fileName: f.name,
+    fileSize: f.size,
+    createdAt: Date.now(),
+    takenAt: f.lastModified || Date.now(),
+    model: '',
+    srcType: analysis.type,
+    srcWidth: fr.width,
+    srcHeight: fr.height,
+    params: { yaw: 0, pitch: 0, roll: 0, ...(await lensDefaults('')) },
+    layout: 2,
+    hotspots: [],
+    status: 'pending',
+    // loop : lecture en boucle ; autoplay : lancement dès l'arrivée ; posterTime : instant de l'image
+    // affichée avant le lancement ; cue : place du bouton « ▶ Vidéo » (degrés, repère de la photo).
+    video: { loop: false, autoplay: false, posterTime: 0, duration: fr.duration, cue: { yaw: 0, pitch: -12 } },
+  };
+  await db.putBlob(id + ':video', f);
+  await db.putBlob(id + ':orig', fr.blob);
+  await db.putBlob(id + ':thumb', await new Promise((r) => preview.toBlob(r, 'image/jpeg', 0.8)));
+  await db.putPhoto(photo);
+  return photo;
 }
 
 export async function convertPhoto(photo, settings, onProgress, shouldAbort) {

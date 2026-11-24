@@ -257,7 +257,7 @@ function fileInput(attrs, onFiles) {
   return i;
 }
 
-const pickPhotos = fileInput({ accept: 'image/jpeg,.jpg,.jpeg,.json,application/json', multiple: '' }, handleFiles);
+const pickPhotos = fileInput({ accept: 'image/jpeg,.jpg,.jpeg,video/mp4,.mp4,.m4v,.mov,.json,application/json', multiple: '' }, handleFiles);
 const pickSettings = fileInput({ accept: '.json,application/json' }, handleFiles);
 const pickFolder = fileInput({ webkitdirectory: '', multiple: '' }, handleFiles);
 const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) => {
@@ -647,7 +647,8 @@ async function renderLibrary() {
         <div class="thumb" data-act="view"><img alt="" loading="lazy">
           <div class="badges"><span class="badge">${p.srcType === 'fisheye' ? 'Double fisheye' : 'Équirectangulaire'}</span>${statusBadge(p)}
           ${(p.hotspots || []).length ? `<span class="badge">🔗 ${p.hotspots.length}</span>` : ''}
-          ${p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) ? '<span class="badge" title="Relief calculé">🧊 Relief</span>' : ''}</div>
+          ${p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) ? '<span class="badge" title="Relief calculé">🧊 Relief</span>' : ''}
+          ${p.kind === 'video' ? `<span class="badge" title="Vidéo 360${p.video && p.video.duration ? ' : ' + p.video.duration.toFixed(1) + ' s' : ''}">🎬 Vidéo</span>` : ''}</div>
           <div class="progress" style="width:${state.converting === p.id ? Math.round(state.progress * 100) : 0}%"></div>
         </div>
         <div class="card-body">
@@ -1043,6 +1044,10 @@ async function photoSources(photos) {
       reliefKey: reliefKey(p.params),
       depthSrc,
       depthBgSrc,
+      // Vidéo : lue à la demande (fichier gardé à part), assemblée en direct avec son propre réglage.
+      ...(p.kind === 'video' && p.video
+        ? { video: { ...p.video, src: () => db.getBlob(p.id + ':video'), srcType: p.srcType, params: p.params } }
+        : {}),
     });
   }
   return { list, revoke: () => urls.forEach((u) => URL.revokeObjectURL(u)) };

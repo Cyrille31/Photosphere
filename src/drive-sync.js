@@ -109,7 +109,7 @@ async function upload(file, { name, parent, id }) {
 }
 
 // Fichiers gérés par PhotoSphère dans le dossier Drive (les autres ne sont jamais touchés).
-const isPhoto = (n) => /\.jpe?g$/i.test(n) && !/\.fond\.jpe?g$/i.test(n);
+const isPhoto = (n) => /\.(jpe?g|mp4|m4v|mov)$/i.test(n) && !/\.fond\.jpe?g$/i.test(n);
 const managedTop = (n) => isPhoto(n) || n === SETTINGS_FILE_NAME;
 const managedRelief = (n) => /\.(profondeur\.png|fond\.jpe?g)$/i.test(n);
 

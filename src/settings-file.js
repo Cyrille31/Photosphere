@@ -36,6 +36,7 @@ export function buildSettings(photos, plan = null) {
       ...(p.mapHidden ? { mapHidden: true } : {}),
       ...(p.room && (p.room.none || p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       ...(p.relief ? { relief: p.relief } : {}),
+      ...(p.kind === 'video' ? { kind: 'video', video: p.video || {} } : {}),
       hotspots: (p.hotspots || [])
         .filter((h) => byId.has(h.target))
         .map((h) => ({ target: byId.get(h.target).fileName, yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}), ...(h.auto ? { auto: true } : {}) })),
@@ -134,6 +135,7 @@ export async function applySettings(data) {
       ...(e.mapHidden ? { mapHidden: true } : {}),
       ...(e.room ? { room: e.room } : {}),
       ...(e.relief ? { relief: e.relief } : {}),
+      ...(e.video && cur.kind === 'video' ? { video: { ...(cur.video || {}), ...e.video } } : {}),
       srcType,
       params,
       hotspots,

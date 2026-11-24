@@ -13,7 +13,7 @@ import { toast, escapeHtml, dialog } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
 import { pickPhoto } from './photo-picker.js';
 import { chooseArrivalView } from './arrival-view.js';
-import { newId } from './importer.js';
+import { newId, videoFrame } from './importer.js';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -77,6 +77,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <button data-tab="links">Liens</button>
           <button data-tab="relief">Relief</button>
           <button data-tab="room">Pièce</button>
+          ${photo.kind === 'video' ? '<button data-tab="video">Vidéo</button>' : ''}
         </div>
       </div>
       <div class="ed-body">
@@ -133,6 +134,15 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <label class="field">Hauteur sous plafond, commune à toutes les photos (m)<input type="number" name="ceilingH" min="1.8" max="8" step="0.05"></label>
           <label class="field">Hauteur de l’appareil (m)<input type="number" name="camH" min="0.3" max="3" step="0.05"></label>
           <p class="note room-info"></p>
+          </div>
+        </section>
+        <section data-panel="video" hidden>
+          <p class="note">Vidéo 360 : avant son lancement, l’image choisie ci-dessous s’affiche comme une photosphère (redressement, liens, plan…). Le lancement se fait par le bouton « ▶ Vidéo », ou dès l’arrivée.</p>
+          <label class="check"><input type="checkbox" name="videoLoop"> Lecture en boucle</label>
+          <label class="check"><input type="checkbox" name="videoAuto"> Lancement dès l’arrivée dans la vidéo</label>
+          <label class="field">Image affichée avant le lancement : <output class="video-time"></output><input type="range" name="videoPoster" min="0" step="0.1" value="0"></label>
+          <div class="tools">
+            <button class="btn small" data-video-cue title="Touchez ensuite l’image à l’endroit voulu">📍 Placer le bouton « ▶ Vidéo »</button>
           </div>
         </section>
         <section data-panel="relief" hidden>
@@ -242,6 +252,12 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       if (s) html += `<div class="ed-hot-label" style="left:${s.x / dpr}px;top:${s.y / dpr}px">→ ${escapeHtml(h.label || (t ? t.name : '?'))}</div>`;
     });
     html += roomMarkers(frame, dpr);
+    // Bouton « ▶ Vidéo » (onglet Vidéo ouvert).
+    if (p.video && !$('[data-panel=video]').hidden) {
+      const c = p.video.cue || { yaw: 0, pitch: -12 };
+      const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
+      if (sc) html += `<div class="ed-video-cue" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">▶ Vidéo</div>`;
+    }
     box.innerHTML = html;
   }
 
@@ -264,7 +280,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     }
     lastKey = key;
     lastTime = now;
-    history.push(clone({ params: p.params, srcType: p.srcType, hotspots: p.hotspots, room: p.room, reverse: reverseLinks.length }));
+    history.push(clone({ params: p.params, srcType: p.srcType, hotspots: p.hotspots, room: p.room, video: p.video || null, reverse: reverseLinks.length }));
     if (history.length > 60) history.shift();
     updateUndo();
   }
@@ -275,6 +291,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     p.srcType = s.srcType;
     p.hotspots = s.hotspots;
     p.room = s.room;
+    if (s.video) p.video = s.video;
     reverseLinks.length = Math.min(reverseLinks.length, s.reverse);
     lastKey = '';
     dirty = true;
@@ -297,6 +314,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       p.room.corners = (p.room.corners || []).map((c) => remapHotspot(c, old, next));
       if (p.room.floor) p.room.floor = remapHotspot(p.room.floor, old, next);
     }
+    // Bouton « ▶ Vidéo » : il reste au même endroit de la scène.
+    if (p.video && p.video.cue) p.video.cue = remapHotspot(p.video.cue, old, next);
     Object.assign(p.params, next);
     dirty = true;
     syncInputs();
@@ -378,6 +397,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       hint('');
       if (kind === 'north') {
         setNorth(pos.yaw);
+      } else if (kind === 'video-cue') {
+        snapshot();
+        p.video = { ...p.video, cue: { yaw: +pos.yaw.toFixed(2), pitch: +pos.pitch.toFixed(2) } };
+        dirty = true;
+        redraw();
       } else if (kind === 'add-to') {
         snapshot();
         p.hotspots.push({ id: newId(), target: placing_target, label: '', ...pos });
@@ -973,6 +997,59 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   );
   syncRoom();
 
+  // ---------- vidéo : boucle, lancement, image d'affiche, place du bouton « ▶ Vidéo » ----------
+  let posterBlob = null, posterChanged = false;
+  if (p.kind === 'video') {
+    p.video = { loop: false, autoplay: false, posterTime: 0, cue: { yaw: 0, pitch: -12 }, ...(p.video || {}) };
+    const loopIn = $('[name=videoLoop]'), autoIn = $('[name=videoAuto]'), posterIn = $('[name=videoPoster]');
+    const showTime = () => ($('.video-time').textContent = `${(+posterIn.value).toFixed(1)} s sur ${(p.video.duration || 0).toFixed(1)} s`);
+    loopIn.checked = !!p.video.loop;
+    autoIn.checked = !!p.video.autoplay;
+    posterIn.max = Math.max(0, (p.video.duration || 0) - 0.05).toFixed(2);
+    posterIn.value = p.video.posterTime || 0;
+    showTime();
+    loopIn.addEventListener('change', () => {
+      snapshot();
+      p.video = { ...p.video, loop: loopIn.checked };
+      dirty = true;
+    });
+    autoIn.addEventListener('change', () => {
+      snapshot();
+      p.video = { ...p.video, autoplay: autoIn.checked };
+      dirty = true;
+    });
+    posterIn.addEventListener('input', showTime);
+    // Nouvelle image d'affiche : tirée de la vidéo, affichée tout de suite, enregistrée avec la photo.
+    posterIn.addEventListener('change', async () => {
+      const t = +posterIn.value;
+      hint('Image de la vidéo à ' + t.toFixed(1) + ' s…');
+      try {
+        const v = await db.getBlob(p.id + ':video');
+        if (!v) throw new Error('vidéo introuvable');
+        const fr = await videoFrame(v, t);
+        posterBlob = fr.blob;
+        posterChanged = true;
+        snapshot();
+        p.video = { ...p.video, posterTime: +fr.time.toFixed(2) };
+        // L'ancien relief correspondait à l'ancienne image.
+        delete p.relief;
+        dirty = true;
+        await renderer.load(posterBlob, p.srcType, p.params);
+        redraw();
+      } catch (e) {
+        toast('Image de la vidéo : ' + e.message, true);
+      }
+      hint('');
+    });
+    $('[data-video-cue]').addEventListener('click', () => {
+      stopTool();
+      placing = { kind: 'video-cue' };
+      if (controller.mode === 'flat') setView('persp');
+      hint('Touchez l’endroit où placer le bouton « ▶ Vidéo ». <button class="btn small" data-place-cancel>Annuler</button>');
+      bindPlaceCancel();
+    });
+  }
+
   // ---------- relief (profondeur par IA) ----------
   const depthStatus = (txt) => {
     const el = $('.depth-status');
@@ -1184,6 +1261,11 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
 
   async function save() {
     const cur = await db.getPhoto(p.id);
+    // Vidéo : nouvelle image d'affiche choisie → elle devient l'« original » de la photosphère.
+    if (posterBlob) {
+      await db.putBlob(p.id + ':orig', posterBlob);
+      posterBlob = null;
+    }
     const imageChanged = cur.srcType !== p.srcType || JSON.stringify(cur.params) !== JSON.stringify(p.params);
     const updated = {
       ...cur,
@@ -1194,7 +1276,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       ...(p.room && (p.room.none || p.room.name || (p.room.corners || []).length) ? { room: p.room } : {}),
       // Relief : gardé s'il correspond au redressement (la carte est refaite sinon).
       ...(p.relief ? { relief: p.relief } : {}),
-      status: imageChanged || cur.status !== 'done' ? 'pending' : 'done',
+      ...(p.video ? { video: p.video } : {}),
+      status: imageChanged || posterChanged || cur.status !== 'done' ? 'pending' : 'done',
     };
     if (depthPng) {
       await db.putBlob(p.id + ':depth', depthPng);

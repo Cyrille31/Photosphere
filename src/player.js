@@ -69,6 +69,11 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       ${onEdit ? '<button class="ps-btn ps-edit" title="Redresser cette photo ou y ajouter des liens">✏<span>Éditer</span></button>' : ''}
       <button class="ps-btn ps-list-btn" title="Liste des photos">☰</button>
     </div>
+    <div class="ps-video" hidden>
+      <button class="ps-btn ps-video-play" title="Pause / lecture">⏸</button>
+      <button class="ps-btn ps-video-stop" title="Arrêter la vidéo (retour à l’image)">⏹</button>
+      <span class="ps-video-time"></span>
+    </div>
     <div class="ps-bottom">
       <button class="ps-btn ps-mode" data-mode="touch" title="Déplacer la vue au doigt ou à la souris">👆<span>Tactile</span></button>
       <button class="ps-btn ps-mode" data-mode="gyro" title="Bouger le téléphone tenu à bout de bras">📱<span>Bout de bras</span></button>
@@ -137,14 +142,102 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     toast.timer = setTimeout(() => (t.hidden = true), ms);
   }
 
+  // Liens de la photo ; pour une vidéo pas encore lancée, en plus, le bouton « ▶ Vidéo » qui la lance.
   function hotspotsOf(photo) {
-    return (photo.hotspots || []).filter((h) => byId.has(h.target));
+    const list = (photo.hotspots || []).filter((h) => byId.has(h.target));
+    if (photo.video && !(videoOn && videoOn.photo === photo)) {
+      const c = photo.video.cue || { yaw: 0, pitch: -12 };
+      list.push({ video: true, yaw: c.yaw, pitch: c.pitch, label: '▶ Vidéo' });
+    }
+    return list;
   }
+
+  // ---------- vidéos ----------
+  // photo.video : { src (URL, Blob ou fonction), srcType, params, loop, autoplay }. Avant le lancement, la
+  // photo affichée est l'image choisie de la vidéo (une photosphère comme les autres).
+  let videoOn = null; // { photo, el }
+  const videoBar = $('.ps-video');
+  function refreshHotspots() {
+    renderer.setHotspots(hotspotsOf(current));
+    hotAlpha = [];
+    sel = -1;
+    dwell = 0;
+    buildLabels();
+    dirty = true;
+  }
+  async function playVideo(photo = current) {
+    if (!photo || !photo.video || (videoOn && videoOn.photo === photo)) return;
+    stopVideo(false);
+    const cfg = photo.video;
+    const el = document.createElement('video');
+    el.playsInline = true;
+    el.loop = !!cfg.loop;
+    el.preload = 'auto';
+    el.crossOrigin = 'anonymous';
+    videoOn = { photo, el };
+    refreshHotspots();
+    toast('Chargement de la vidéo…', 20000);
+    try {
+      let src = typeof cfg.src === 'function' ? await cfg.src() : cfg.src;
+      if (src instanceof Blob) {
+        el.dataset.url = src = URL.createObjectURL(src);
+      }
+      el.src = src;
+      await new Promise((resolve, reject) => {
+        el.addEventListener('loadeddata', resolve, { once: true });
+        el.addEventListener('error', () => reject(new Error('vidéo illisible sur cet appareil (format ou codec non pris en charge)')), { once: true });
+      });
+      if (!videoOn || videoOn.el !== el) return;
+      try {
+        await el.play();
+      } catch (e) {
+        // Lecture avec le son refusée sans geste de l'utilisateur : on la lance sans le son.
+        el.muted = true;
+        await el.play();
+      }
+      if (!videoOn || videoOn.el !== el) return;
+      renderer.startVideo(el, cfg.srcType || photo.srcType || 'fisheye', cfg.params || photo.params || {});
+      $('.ps-toast').hidden = true;
+      el.addEventListener('ended', () => {
+        if (videoOn && videoOn.el === el) stopVideo();
+      });
+      videoBar.hidden = false;
+      $('.ps-video-play').textContent = '⏸';
+      root.dataset.video = 'playing';
+      dirty = true;
+    } catch (e) {
+      toast('Vidéo : ' + e.message, 6000);
+      stopVideo();
+    }
+  }
+  function stopVideo(refresh = true) {
+    if (!videoOn) return;
+    const { el } = videoOn;
+    videoOn = null;
+    el.pause();
+    if (el.dataset.url) URL.revokeObjectURL(el.dataset.url);
+    el.removeAttribute('src');
+    el.load();
+    renderer.stopVideo();
+    videoBar.hidden = true;
+    delete root.dataset.video;
+    if (refresh && current) refreshHotspots();
+    dirty = true;
+  }
+  $('.ps-video-play').addEventListener('click', () => {
+    if (!videoOn) return;
+    const el = videoOn.el;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+    $('.ps-video-play').textContent = el.paused ? '▶' : '⏸';
+  });
+  $('.ps-video-stop').addEventListener('click', () => stopVideo());
 
   // arrive : vue d'arrivée réglée sur le lien suivi ({ yaw, pitch } en degrés), sinon on garde la vue.
   async function go(id, keepView = true, arrive = null) {
     const photo = byId.get(id);
     if (!photo) return;
+    stopVideo(false);
     const fade = $('.ps-fade');
     if (current) {
       fade.classList.add('on');
@@ -208,6 +301,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     buildLabels();
     dirty = true;
     fade.classList.remove('on');
+    // Vidéo réglée pour se lancer dès l'arrivée.
+    if (photo.video && photo.video.autoplay) playVideo(photo);
   }
 
   function hotDirs() {
@@ -231,6 +326,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   function follow(i) {
     const h = hotspotsOf(current)[i];
     if (!h) return;
+    if (h.video) return playVideo(current);
     let arrive = h.arrive || null;
     if (!arrive) {
       const target = byId.get(h.target);
@@ -512,6 +608,12 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   function loop(now) {
     if (disposed) return;
     raf = requestAnimationFrame(loop);
+    // Vidéo en cours : chaque nouvelle image est envoyée à la carte graphique.
+    if (videoOn && renderer.updateVideo()) {
+      dirty = true;
+      const el = videoOn.el;
+      $('.ps-video-time').textContent = `${el.currentTime.toFixed(1)} / ${(el.duration || 0).toFixed(1)} s`;
+    }
     if (xrSession) return;
     updateGaze(now);
     if (!dirty && controller.mode !== 'gyro') return;
@@ -770,6 +872,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     go,
     dispose() {
       disposed = true;
+      stopVideo(false);
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('keydown', onKey);
