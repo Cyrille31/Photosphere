@@ -5,7 +5,8 @@ import { DEG, cameraMatrix, deviceOrientationMatrix, headingOf, mat3Mul, rotY } 
 // relief : intensité du relief (0 = aucun, 1 = écart réel des yeux, 6,4 cm).
 // targetSize : rayon des cibles dans le casque (degrés) ; targetAppear : elles apparaissent quand le
 // regard en est à moins de ce nombre de degrés (champ de vision étroit : petites, et tardives).
-export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1, sep: 50, relief: 1, targetSize: 2.2, targetAppear: 11 };
+// swapEyes : images gauche et droite inversées (relief vu en louchant, sans casque).
+export const DEFAULT_HEADSET = { eyeFov: 90, k1: 0.22, k2: 0.1, sep: 50, relief: 1, targetSize: 2.2, targetAppear: 11, swapEyes: false };
 
 // Coefficients publiés par Google pour ses casques (profils de visionneuse Cardboard).
 export const HEADSET_PRESETS = {
