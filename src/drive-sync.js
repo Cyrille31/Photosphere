@@ -4,7 +4,7 @@
 // Les autres fichiers du dossier Drive ne sont jamais touchés.
 // Écrire sur Drive demande la connexion du propriétaire du dossier (Google, « OAuth ») : la clé d'API
 // du parcours ne permet que la lecture.
-import { RELIEF_DIR } from './relief-files.js';
+import { RELIEF_DIR, RELIEF_FILE_RE } from './relief-files.js';
 import { SETTINGS_FILE_NAME } from './settings-file.js';
 
 // Identifiant client OAuth (public, comme la clé d'API) de l'application PhotoSphère dans Google Cloud.
@@ -109,9 +109,9 @@ async function upload(file, { name, parent, id }) {
 }
 
 // Fichiers gérés par PhotoSphère dans le dossier Drive (les autres ne sont jamais touchés).
-const isPhoto = (n) => /\.(jpe?g|mp4|m4v|mov)$/i.test(n) && !/\.fond\.jpe?g$/i.test(n);
+const isPhoto = (n) => /\.(jpe?g|mp4|m4v|mov)$/i.test(n) && !RELIEF_FILE_RE.test(n);
 const managedTop = (n) => isPhoto(n) || n === SETTINGS_FILE_NAME;
-const managedRelief = (n) => /\.(profondeur\.png|fond\.jpe?g)$/i.test(n);
+const managedRelief = (n) => RELIEF_FILE_RE.test(n);
 
 // Même fichier : même taille et, sauf pour les photos d'origine (jamais modifiées : celles déjà copiées
 // à la main sur Drive ne sont pas renvoyées), même date de modification (à 2 s près).

@@ -437,6 +437,8 @@ async function renamePendingFiles({ report = false } = {}) {
         done++;
       }
     } catch (e) {
+      // Fichier absent de ce dossier (photo venue d'ailleurs, fichier supprimé) : rien à renommer ici.
+      if (/introuvable/.test(e.message)) continue;
       failed.push(`« ${p.name} » : ${e.message}`);
     }
   }
@@ -1156,6 +1158,11 @@ async function exportParcours() {
     for (let i = 0; i < photos.length; i++) {
       const p = photos[i];
       b.update(i, photos.length, p.name);
+      // Vidéo : l'image affichée avant son lancement.
+      if (p.kind === 'video' && p.fileName) {
+        const poster = await db.getBlob(p.id + ':orig');
+        if (poster) files.push({ name: `${RELIEF_DIR}/${reliefNames(p.fileName).poster}`, data: poster });
+      }
       if (!p.relief || p.relief.kind !== 'ai' || p.relief.key !== reliefKey(p.params) || !p.fileName) continue;
       const names = reliefNames(p.fileName);
       const depth = await db.getBlob(p.id + ':depth'), bg = await db.getBlob(p.id + ':depthbg');

@@ -122,7 +122,7 @@ const MANUAL = `
   <li><b>Import</b> : les vidéos .MP4 de la Gear 360 (double fisheye) s’importent comme les photos (bouton Importer, dossier de travail, glisser-déposer). Elles sont lues par le navigateur : le HEVC (H.265) de la Gear 360 passe dans Chrome (PC et Android), pas dans Firefox ; Edge demande l’extension HEVC de Windows.</li>
   <li><b>Une image de la vidéo sert de photosphère</b> : redressement, nord, liens, pièce, plan et relief se règlent sur elle, comme pour une photo. Onglet <b>Vidéo</b> de l’éditeur : choisissez l’instant de cette image (la première par défaut).</li>
   <li><b>Lancement</b> : par le bouton <b>« ▶ Vidéo »</b>, une cible comme un lien (à placer où l’on veut : « 📍 Placer le bouton »), ou <b>dès l’arrivée</b> (case à cocher). <b>En boucle</b> ou non : sans boucle, la vidéo revient à son image à la fin. Pendant la lecture : ⏸ pause, ⏹ retour à l’image ; les liens restent disponibles.</li>
-  <li>Les vidéos sont copiées vers Google Drive avec les photos ; elles ne sont pas encore jouées dans un parcours partagé (étape suivante).</li>
+  <li><b>Parcours partagé</b> : les vidéos y sont jouées comme dans PhotoSphère. Le dossier de travail (ou le ZIP « Parcours à partager ») range l’image affichée avant le lancement dans <code>photosphere-relief</code> (<code>…​.affiche.jpg</code>) ; la synchronisation vers Google Drive envoie la vidéo et cette image. Le visiteur ne télécharge la vidéo qu’au moment de la lancer (une seule fois par visite).</li>
 </ul></section>
 
 <section id="man-parcours"><h3>Parcours partagé</h3>

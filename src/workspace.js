@@ -175,6 +175,19 @@ async function saveReliefs(photos) {
     }
     reliefWritten.add(tag);
   }
+  // Vidéos : l'image affichée avant le lancement (pour le parcours partagé), écrite si elle a changé.
+  for (const p of photos) {
+    if (p.kind !== 'video' || !p.fileName) continue;
+    const poster = await db.getBlob(p.id + ':orig');
+    if (!poster) continue;
+    const tag = `${p.id}|${p.fileName}|affiche|${poster.size}|${p.video && p.video.posterTime}`;
+    if (reliefWritten.has(tag)) continue;
+    if (!dir) dir = await handle.getDirectoryHandle(RELIEF_DIR, { create: true });
+    const w = await (await dir.getFileHandle(reliefNames(p.fileName).poster, { create: true })).createWritable();
+    await w.write(poster);
+    await w.close();
+    reliefWritten.add(tag);
+  }
   // Cartes de relief d'une photo qui n'est plus dans le dossier (fichier renommé ou supprimé) : effacées,
   // pour ne pas encombrer le dossier ni la copie Google Drive.
   try {
@@ -189,7 +202,7 @@ async function saveReliefs(photos) {
     await walk(handle, 0);
     const stale = [];
     for await (const e of rd.values()) {
-      const m = e.kind === 'file' && e.name.match(/^(.*)\.(profondeur\.png|fond\.jpe?g)$/i);
+      const m = e.kind === 'file' && e.name.match(/^(.*)\.(profondeur\.png|fond\.jpe?g|affiche\.jpe?g)$/i);
       if (m && !present.has(m[1].toLowerCase())) stale.push(e.name);
     }
     for (const n of stale) await rd.removeEntry(n);

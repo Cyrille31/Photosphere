@@ -6,7 +6,7 @@
 import { createPlayer } from './player.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { reliefKey } from './depth.js';
-import { reliefNames, RELIEF_DIR } from './relief-files.js';
+import { reliefNames, RELIEF_DIR, RELIEF_FILE_RE } from './relief-files.js';
 import { SETTINGS_FILE_NAME } from './settings-file.js';
 
 const key = (n) => String(n || '').toLowerCase();
@@ -33,7 +33,7 @@ export function webSource(base) {
   if (!/^https?:\/\//i.test(root)) throw new Error('Adresse web non reconnue (elle doit commencer par https://).');
   root = root.replace(/[?#].*$/, '').replace(/\/[^/]*\.json$/i, '/');
   if (!root.endsWith('/')) root += '/';
-  const pathOf = (n) => (/\.(profondeur\.png|fond\.jpe?g)$/i.test(n) ? RELIEF_DIR + '/' : '') + encodeURIComponent(n);
+  const pathOf = (n) => (RELIEF_FILE_RE.test(n) ? RELIEF_DIR + '/' : '') + encodeURIComponent(n);
   return {
     name: root,
     // On ne peut pas lister un dossier web : les fichiers sont ceux qu'annonce photosphere.json.
@@ -154,8 +154,8 @@ export function sessionCache(source, maxBytes = defaultCacheBytes()) {
 // Photos de la visite d'après le fichier de réglages (seules celles présentes dans la source).
 export function tourFromSettings(data, has) {
   if (!data || !Array.isArray(data.photos)) throw new Error('Ce fichier n’est pas un fichier de réglages PhotoSphère.');
-  // Les vidéos ne sont pas encore proposées dans un parcours partagé (étape suivante).
-  const entries = data.photos.filter((e) => e.file && e.kind !== 'video' && has(e.file));
+  // Une vidéo n'est proposée que si son image d'affiche est là (rangée dans « photosphere-relief »).
+  const entries = data.photos.filter((e) => e.file && has(e.file) && (e.kind !== 'video' || has(reliefNames(e.file).poster)));
   // Liens vers les photos retirées du plan : plus proposés dans la navigation.
   const ids = new Set(entries.filter((e) => !e.mapHidden).map((e) => key(e.file)));
   return entries.map((e) => {
@@ -172,6 +172,8 @@ export function tourFromSettings(data, has) {
       relief,
       reliefKey: reliefKey(params),
       reliefFiles: relief ? { depth: rn.depth, bg: has(rn.bg) ? rn.bg : null } : null,
+      // Vidéo : la photosphère affichée est son image d'affiche ; la vidéo n'est lue qu'au lancement.
+      ...(e.kind === 'video' ? { image: rn.poster, video: { ...(e.video || {}), file: e.file } } : {}),
     };
   });
 }
@@ -190,13 +192,14 @@ export async function openParcours(container, source, { onExit, title } = {}) {
   const cache = sessionCache(source);
   const byId = new Map(photos.map((p) => [p.id, p]));
   for (const p of photos) {
-    p.src = () => cache.get(p.file);
+    p.src = () => cache.get(p.image || p.file);
+    if (p.video) p.video = { ...p.video, src: () => cache.get(p.video.file), srcType: p.srcType, params: p.params };
     if (p.reliefFiles) {
       p.depthSrc = () => cache.get(p.reliefFiles.depth);
       if (p.reliefFiles.bg) p.depthBgSrc = () => cache.get(p.reliefFiles.bg);
     }
   }
-  const filesOf = (p) => [p.file, ...(p.reliefFiles ? [p.reliefFiles.depth, p.reliefFiles.bg].filter(Boolean) : [])];
+  const filesOf = (p) => [p.image || p.file, ...(p.reliefFiles ? [p.reliefFiles.depth, p.reliefFiles.bg].filter(Boolean) : [])];
   // Photo de départ : celle indiquée dans le fichier, sinon la première prise qui a des liens (le début
   // du parcours ; les photos y sont rangées dans l'ordre de prise de vue), sinon la première.
   const start = (data.start && byId.get(key(data.start))) || photos.find((p) => p.hotspots.length) || photos[0];
