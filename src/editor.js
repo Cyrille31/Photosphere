@@ -143,7 +143,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <label class="check"><input type="checkbox" name="videoAuto"> Lancement dès l’arrivée dans la vidéo</label>
           <label class="field">Image affichée avant le lancement : <output class="video-time"></output><input type="range" name="videoPoster" min="0" step="0.1" value="0"></label>
           <div class="tools">
-            <button class="btn small" data-video-cue title="Touchez ensuite l’image à l’endroit voulu">📍 Placer le bouton « ▶ Vidéo »</button>
+            <button class="btn small" data-video-cue title="Touchez ensuite l’image à l’endroit voulu">➕ Ajouter un lien « ▶ Vidéo »</button>
+          </div>
+          <div class="video-cues"></div>
+          <div class="tools">
           </div>
         </section>
         <section data-panel="relief" hidden>
@@ -161,7 +164,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         </section>
         <section data-panel="links" hidden>
           <p class="note">Cliquez un lien sur l’image pour le retrouver ici ; <b>Ctrl + glisser</b> pour le déplacer. ${manualButton('liens')}</p>
-          <div class="tools"><button class="btn primary small" data-add-link ${others.length ? '' : 'disabled'}>➕ Ajouter un lien</button>${photo.kind === 'video' ? '<button class="btn small" data-video-cue title="Le lien « ▶ Vidéo » lance la vidéo ; touchez ensuite l’image à l’endroit voulu">▶ Lien « Vidéo »</button>' : ''}</div>
+          <div class="tools"><button class="btn primary small" data-add-link ${others.length ? '' : 'disabled'}>➕ Ajouter un lien</button>${photo.kind === 'video' ? '<button class="btn small" data-video-cue title="Le lien « ▶ Vidéo » lance la vidéo ; touchez ensuite l’image à l’endroit voulu">➕ Lien « ▶ Vidéo »</button>' : ''}</div>
+          ${photo.kind === 'video' ? '<div class="video-cues"></div>' : ''}
           ${others.length ? '' : '<p class="note">Importez d’autres photos pour pouvoir créer des liens.</p>'}
           <div class="links-list"></div>
         </section>
@@ -255,9 +259,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     html += roomMarkers(frame, dpr);
     // Bouton « ▶ Vidéo » (onglets Vidéo et Liens).
     if (p.video && (!$('[data-panel=video]').hidden || !$('[data-panel=links]').hidden)) {
-      const c = p.video.cue || { yaw: 0, pitch: -12 };
-      const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
-      if (sc) html += `<div class="ed-video-cue" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">▶ Vidéo</div>`;
+      (p.video.cues || []).forEach((c, i) => {
+        const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
+        if (sc) html += `<div class="ed-video-cue" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">▶ Vidéo${p.video.cues.length > 1 ? ' ' + (i + 1) : ''}</div>`;
+      });
     }
     box.innerHTML = html;
   }
@@ -292,7 +297,10 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     p.srcType = s.srcType;
     p.hotspots = s.hotspots;
     p.room = s.room;
-    if (s.video) p.video = s.video;
+    if (s.video) {
+      p.video = s.video;
+      renderCues();
+    }
     reverseLinks.length = Math.min(reverseLinks.length, s.reverse);
     lastKey = '';
     dirty = true;
@@ -316,7 +324,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       if (p.room.floor) p.room.floor = remapHotspot(p.room.floor, old, next);
     }
     // Bouton « ▶ Vidéo » : il reste au même endroit de la scène.
-    if (p.video && p.video.cue) p.video.cue = remapHotspot(p.video.cue, old, next);
+    if (p.video && p.video.cues) p.video.cues = p.video.cues.map((c) => remapHotspot(c, old, next));
     Object.assign(p.params, next);
     dirty = true;
     syncInputs();
@@ -400,7 +408,12 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         setNorth(pos.yaw);
       } else if (kind === 'video-cue') {
         snapshot();
-        p.video = { ...p.video, cue: { yaw: +pos.yaw.toFixed(2), pitch: +pos.pitch.toFixed(2) } };
+        const c = { yaw: +pos.yaw.toFixed(2), pitch: +pos.pitch.toFixed(2) };
+        const cues = [...(p.video.cues || [])];
+        if (index != null && cues[index]) cues[index] = c;
+        else cues.push(c);
+        p.video = { ...p.video, cues };
+        renderCues();
         dirty = true;
         redraw();
       } else if (kind === 'add-to') {
@@ -1000,8 +1013,12 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
 
   // ---------- vidéo : boucle, lancement, image d'affiche, place du bouton « ▶ Vidéo » ----------
   let posterBlob = null, posterChanged = false;
+  let renderCues = () => {};
   if (p.kind === 'video') {
-    p.video = { loop: false, autoplay: false, posterTime: 0, cue: { yaw: 0, pitch: -12 }, ...(p.video || {}) };
+    p.video = { loop: false, autoplay: false, posterTime: 0, ...(p.video || {}) };
+    // Ancienne vidéo : un seul lien (cue) devient une liste.
+    if (!p.video.cues) p.video.cues = p.video.cue ? [p.video.cue] : [];
+    delete p.video.cue;
     const loopIn = $('[name=videoLoop]'), autoIn = $('[name=videoAuto]'), posterIn = $('[name=videoPoster]');
     const showTime = () => ($('.video-time').textContent = `${(+posterIn.value).toFixed(1)} s sur ${(p.video.duration || 0).toFixed(1)} s`);
     loopIn.checked = !!p.video.loop;
@@ -1042,15 +1059,48 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       }
       hint('');
     });
-    container.querySelectorAll('[data-video-cue]').forEach((b) =>
-      b.addEventListener('click', () => {
-        stopTool();
-        placing = { kind: 'video-cue' };
-        if (controller.mode === 'flat') setView('persp');
-        hint('Touchez l’endroit où placer le lien « ▶ Vidéo ». <button class="btn small" data-place-cancel>Annuler</button>');
-        bindPlaceCancel();
-      })
-    );
+    const placeCue = (index = null) => {
+      stopTool();
+      placing = { kind: 'video-cue', index };
+      if (controller.mode === 'flat') setView('persp');
+      hint(`Touchez l’endroit où ${index == null ? 'placer le nouveau' : 'déplacer le'} lien « ▶ Vidéo ». <button class="btn small" data-place-cancel>Annuler</button>`);
+      bindPlaceCancel();
+    };
+    container.querySelectorAll('[data-video-cue]').forEach((b) => b.addEventListener('click', () => placeCue()));
+    // Liste des liens « ▶ Vidéo » (onglets Liens et Vidéo) : voir, déplacer, supprimer.
+    renderCues = () => {
+      const cues = p.video.cues || [];
+      const html = cues.length
+        ? cues
+            .map(
+              (c, i) => `<div class="link-item video-cue-item" data-cue="${i}"><b>▶ Vidéo${cues.length > 1 ? ' ' + (i + 1) : ''}</b> <span class="note">lance la vidéo</span>
+            <div class="row2"><button class="btn small" data-cue-look>👁 Voir</button><button class="btn small" data-cue-move>✥ Déplacer</button><button class="btn small danger" data-cue-del>🗑</button></div></div>`
+            )
+            .join('')
+        : `<p class="note">Aucun lien « ▶ Vidéo »${p.video.autoplay ? ' (la vidéo se lance dès l’arrivée)' : ' : la vidéo ne pourra être lancée que si « Lancement dès l’arrivée » est coché'}.</p>`;
+      container.querySelectorAll('.video-cues').forEach((box) => {
+        box.innerHTML = html;
+        box.querySelectorAll('[data-cue]').forEach((item) => {
+          const i = +item.dataset.cue;
+          item.querySelector('[data-cue-look]').addEventListener('click', () => {
+            if (controller.mode === 'flat') setView('persp');
+            controller.yaw = cues[i].yaw * DEG;
+            controller.pitch = cues[i].pitch * DEG;
+            redraw();
+          });
+          item.querySelector('[data-cue-move]').addEventListener('click', () => placeCue(i));
+          item.querySelector('[data-cue-del]').addEventListener('click', () => {
+            snapshot();
+            p.video = { ...p.video, cues: cues.filter((_, k) => k !== i) };
+            dirty = true;
+            renderCues();
+            redraw();
+          });
+        });
+      });
+    };
+    renderCues();
+    autoIn.addEventListener('change', () => renderCues());
   }
 
   // ---------- relief (profondeur par IA) ----------

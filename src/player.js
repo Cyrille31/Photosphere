@@ -147,8 +147,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   function hotspotsOf(photo) {
     const list = (photo.hotspots || []).filter((h) => byId.has(h.target));
     if (photo.video && !(videoOn && videoOn.photo === photo)) {
-      const c = photo.video.cue || { yaw: 0, pitch: -12 };
-      list.push({ video: true, yaw: c.yaw, pitch: c.pitch, label: '▶ Vidéo' });
+      const v = photo.video;
+      for (const c of v.cues || (v.cue ? [v.cue] : [])) list.push({ video: true, yaw: c.yaw, pitch: c.pitch, label: '▶ Vidéo' });
     }
     return list;
   }

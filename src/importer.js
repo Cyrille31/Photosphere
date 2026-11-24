@@ -229,8 +229,8 @@ async function importVideo(f) {
     hotspots: [],
     status: 'pending',
     // loop : lecture en boucle ; autoplay : lancement dès l'arrivée ; posterTime : instant de l'image
-    // affichée avant le lancement ; cue : place du bouton « ▶ Vidéo » (degrés, repère de la photo).
-    video: { loop: false, autoplay: false, posterTime: 0, duration: fr.duration, cue: { yaw: 0, pitch: -12 } },
+    // affichée avant le lancement ; cues : liens « ▶ Vidéo » qui la lancent (degrés, repère de la photo).
+    video: { loop: false, autoplay: false, posterTime: 0, duration: fr.duration, cues: [{ yaw: 0, pitch: -12 }] },
   };
   await db.putBlob(id + ':video', f);
   await db.putBlob(id + ':orig', fr.blob);
