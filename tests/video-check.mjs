@@ -48,7 +48,21 @@ try {
   await page.waitForTimeout(800);
   await page.click('[data-tab=links]');
   const cueLink = await page.locator('[data-panel=links] [data-video-cue]').count();
-  check(cueLink === 1, 'éditeur, onglet Liens d’une vidéo : bouton « ▶ Lien « Vidéo » »');
+  // Plusieurs liens « ▶ Vidéo » : ajout de deux liens, suppression d'un.
+  const cb = await page.locator('.editor canvas').boundingBox();
+  const items = () => page.locator('[data-panel=links] .video-cue-item').count();
+  const n0 = await items();
+  for (const dx of [-200, 200]) {
+    await page.click('[data-panel=links] [data-video-cue]');
+    await page.mouse.click(cb.x + cb.width / 2 + dx, cb.y + cb.height / 2);
+    await page.waitForTimeout(300);
+  }
+  const n2 = await items();
+  await page.locator('[data-panel=links] .video-cue-item [data-cue-del]').first().click();
+  await page.waitForTimeout(300);
+  const n3 = await items();
+  const marks = await page.locator('.ed-video-cue').count();
+  check(cueLink === 1 && n0 === 1 && n2 === 3 && n3 === 2 && marks >= 1, `éditeur, onglet Liens d’une vidéo : liens « ▶ Vidéo » ajoutés (${n0} → ${n2}) et supprimé (→ ${n3}), montrés sur l’image`);
   await page.click('[data-tab=video]');
   await page.check('[name=videoLoop]');
   await page.$eval('[name=videoPoster]', (i) => {
@@ -62,7 +76,7 @@ try {
   await page.click('[data-save]');
   await page.waitForSelector('.grid');
   const saved = await db(async (db, id) => (await db.getPhoto(id)).video, v.id);
-  check(saved.loop === true && saved.autoplay === false && Math.abs(saved.posterTime - 1.5) < 0.2 && cueShown === 1, `éditeur : boucle cochée, image d’affiche à ${saved.posterTime} s, bouton « ▶ Vidéo » montré sur l’image`);
+  check(saved.loop === true && saved.autoplay === false && Math.abs(saved.posterTime - 1.5) < 0.2 && cueShown >= 1, `éditeur : boucle cochée, image d’affiche à ${saved.posterTime} s, bouton « ▶ Vidéo » montré sur l’image`);
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 1, null, { timeout: 120000 });
 
   // ---------- visionneuse : lancement par le bouton « ▶ Vidéo » ----------
@@ -77,6 +91,7 @@ try {
   const t2 = await page.textContent('.ps-video-time');
   const labelsPlaying = await page.$$eval('.ps-labels > *', (l) => l.map((x) => x.textContent));
   await page.screenshot({ path: path.join(shots, '02-video-en-lecture.png') });
+  check(labels.filter((l) => l === '▶ Vidéo').length === 2, `visionneuse : les 2 liens « ▶ Vidéo » sont proposés (${labels.join(', ')})`);
   check(labels.includes('▶ Vidéo') && t1 !== t2 && !labelsPlaying.includes('▶ Vidéo'), `visionneuse : « ▶ Vidéo » lance la lecture (${t1} → ${t2}), le bouton disparaît pendant la lecture`);
   // Boucle : toujours en lecture après la fin (3 s).
   await page.waitForTimeout(3000);

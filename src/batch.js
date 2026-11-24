@@ -75,7 +75,7 @@ export async function batchAutoLevel(ids, { onProgress = () => {}, isCancelled =
             params: { ...cur.params, ...next },
             hotspots: (cur.hotspots || []).map(rm),
             ...(cur.room ? { room: { ...cur.room, corners: (cur.room.corners || []).map(rm), ...(cur.room.floor ? { floor: rm(cur.room.floor) } : {}) } } : {}),
-            ...(cur.video && cur.video.cue ? { video: { ...cur.video, cue: rm(cur.video.cue) } } : {}),
+            ...(cur.video ? { video: { ...cur.video, cues: (cur.video.cues || (cur.video.cue ? [cur.video.cue] : [])).map(rm), cue: undefined } } : {}),
             ...(relief ? { relief } : {}),
             status: 'pending',
           }));
