@@ -19,6 +19,7 @@ import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
 import { setRoomWord } from './room.js';
 import { aboutLine } from './version.js';
+import { levelToViewTilt } from './math.js';
 
 const app = document.getElementById('app');
 const state = {
@@ -339,6 +340,25 @@ window.addEventListener('drop', async (e) => {
 });
 
 // ---------- bibliothèque ----------
+// Petits indicateurs : photo redressée ou non, nord indiqué ou non (pâles et barrés quand ce n'est pas fait).
+function isLeveled(p) {
+  const q = p.params || {};
+  return Math.abs(q.pitch || 0) + Math.abs(q.roll || 0) > 0.05;
+}
+function hasNorth(p) {
+  const q = p.params || {};
+  if (q.northSet) return true;
+  try {
+    return Math.abs(levelToViewTilt({ yaw: 0, pitch: 0, roll: 0, ...q }, 0).cap) > 0.5;
+  } catch (e) {
+    return false;
+  }
+}
+function stateBadges(p) {
+  const lv = isLeveled(p), n = hasNorth(p);
+  return `<span class="badge mini ${lv ? 'on' : 'off'}" title="${lv ? 'Photo redressée' : 'Photo pas encore redressée'}">⊥</span><span class="badge mini north ${n ? 'on' : 'off'}" title="${n ? 'Nord indiqué' : 'Nord pas encore indiqué'}">N</span>`;
+}
+
 function statusBadge(p) {
   if (state.converting === p.id) return `<span class="badge warn status">Conversion ${Math.round(state.progress * 100)} %</span>`;
   if (p.status === 'done') return `<span class="badge ok status">${p.outWidth} × ${p.outWidth / 2}</span>`;
@@ -602,6 +622,7 @@ async function renderLibrary() {
   }
   const links = photos.reduce((s, p) => s + (p.hotspots || []).length, 0);
   app.innerHTML = `<div class="wrap">
+    <div class="lib-head">
     <div class="toolbar">
       <div class="tool-group" aria-label="Ajouter des photos">
         <span class="tool-label">Photos</span>
@@ -626,14 +647,14 @@ async function renderLibrary() {
       </div>
         <button class="btn" data-act="parcours" title="Visualiser un parcours partagé (dossier en ligne, lien de visite)">🔗 Parcours partagé</button>
       </div>
-    </div>
-    <div class="library-search">
-      <input type="search" class="search-input" name="library-search" placeholder="🔍 Rechercher une photo par son nom" value="${escapeHtml(state.search || '')}" autocomplete="off">
-      <span class="note search-count"></span>
+      <div class="library-search">
+        <input type="search" class="search-input" name="library-search" placeholder="🔍 Rechercher une photo par son nom" value="${escapeHtml(state.search || '')}" autocomplete="off">
+        <span class="note search-count"></span>
+      </div>
     </div>
     <div class="selection-bar">
       <span class="note">${photos.length} photo(s), ${links} lien(s)</span>
-      <button class="btn small" data-act="select-all" title="Cocher toutes les photos affichées (celles que montre la recherche)">☑ Sélectionner</button>
+      <button class="btn small" data-act="select-all" title="Cocher toutes les photos affichées (celles que montre la recherche)">☑ Tout sélectionner</button>
       <span class="selection-actions" hidden>
         <b class="selection-count"></b>
         <button class="btn small" data-act="select-none" title="Décocher toutes les photos">☐ Tout désélectionner</button>
@@ -641,6 +662,7 @@ async function renderLibrary() {
         <button class="btn small primary" data-act="batch-relief" title="Calculer le relief (IA) des photos cochées">🧠 Calculer le relief</button>
         <button class="btn small danger" data-act="batch-delete">🗑 Supprimer</button>
       </span>
+    </div>
     </div>
     <div class="grid">${photos
       .map(
@@ -650,7 +672,8 @@ async function renderLibrary() {
           <div class="badges"><span class="badge">${p.srcType === 'fisheye' ? 'Double fisheye' : 'Équirectangulaire'}</span>${statusBadge(p)}
           ${(p.hotspots || []).length ? `<span class="badge">🔗 ${p.hotspots.length}</span>` : ''}
           ${p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) ? '<span class="badge" title="Relief calculé">🧊 Relief</span>' : ''}
-          ${p.kind === 'video' ? `<span class="badge" title="Vidéo 360${p.video && p.video.duration ? ' : ' + p.video.duration.toFixed(1) + ' s' : ''}">🎬 Vidéo</span>` : ''}</div>
+          ${p.kind === 'video' ? `<span class="badge" title="Vidéo 360${p.video && p.video.duration ? ' : ' + p.video.duration.toFixed(1) + ' s' : ''}">🎬 Vidéo</span>` : ''}
+          ${stateBadges(p)}</div>
           <div class="progress" style="width:${state.converting === p.id ? Math.round(state.progress * 100) : 0}%"></div>
         </div>
         <div class="card-body">
@@ -786,6 +809,9 @@ function bindLibrary() {
     cb.addEventListener('click', (e) => selectPhoto(cb.closest('.card').dataset.id, cb.checked, e.shiftKey))
   );
   updateSelectionBar();
+  // Barre des boutons fixe en haut, sous l'en-tête : hauteur de l'en-tête mesurée.
+  const top = document.querySelector('.topbar');
+  if (top) document.documentElement.style.setProperty('--topbar-h', top.offsetHeight + 'px');
   const search = app.querySelector('[name=library-search]');
   if (search) {
     search.addEventListener('input', () => {
@@ -1316,6 +1342,14 @@ async function migratePhotos() {
   }
   if (n) toast(`${n} photo(s) recalibrée(s) avec le nouvel assemblage…`);
 }
+
+// Bibliothèque : un double-clic hors des photos (et des boutons) désélectionne tout.
+document.addEventListener('dblclick', (e) => {
+  if (state.view !== 'library' || !state.selected.size) return;
+  if (e.target.closest('.card, button, input, select, label, .menu-list, dialog, .topbar')) return;
+  state.selected.clear();
+  updateSelectionBar();
+});
 
 (async function start() {
   state.settings = { ...state.settings, ...((await db.getSetting('app')) || {}) };

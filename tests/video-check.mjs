@@ -46,6 +46,9 @@ try {
   await page.goto(base + '#/edit/' + v.id);
   await page.waitForSelector('[data-tab=video]');
   await page.waitForTimeout(800);
+  await page.click('[data-tab=links]');
+  const cueLink = await page.locator('[data-panel=links] [data-video-cue]').count();
+  check(cueLink === 1, 'éditeur, onglet Liens d’une vidéo : bouton « ▶ Lien « Vidéo » »');
   await page.click('[data-tab=video]');
   await page.check('[name=videoLoop]');
   await page.$eval('[name=videoPoster]', (i) => {

@@ -49,3 +49,4 @@
 .ps-video { position: absolute; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 12px; background: rgba(10,16,35,.7); color: #fff; font-size: 13px; }
 .ps-video[hidden] { display: none; }
 .ps-player.stereo .ps-video { display: none; }
+.ps-video-time { display: inline-block; min-width: 9.5em; text-align: center; font-variant-numeric: tabular-nums; }

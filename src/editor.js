@@ -160,7 +160,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
         </section>
         <section data-panel="links" hidden>
           <p class="note">Cliquez un lien sur l’image pour le retrouver ici ; <b>Ctrl + glisser</b> pour le déplacer. ${manualButton('liens')}</p>
-          <div class="tools"><button class="btn primary small" data-add-link ${others.length ? '' : 'disabled'}>➕ Ajouter un lien</button></div>
+          <div class="tools"><button class="btn primary small" data-add-link ${others.length ? '' : 'disabled'}>➕ Ajouter un lien</button>${photo.kind === 'video' ? '<button class="btn small" data-video-cue title="Le lien « ▶ Vidéo » lance la vidéo ; touchez ensuite l’image à l’endroit voulu">▶ Lien « Vidéo »</button>' : ''}</div>
           ${others.length ? '' : '<p class="note">Importez d’autres photos pour pouvoir créer des liens.</p>'}
           <div class="links-list"></div>
         </section>
@@ -252,8 +252,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       if (s) html += `<div class="ed-hot-label" style="left:${s.x / dpr}px;top:${s.y / dpr}px">→ ${escapeHtml(h.label || (t ? t.name : '?'))}</div>`;
     });
     html += roomMarkers(frame, dpr);
-    // Bouton « ▶ Vidéo » (onglet Vidéo ouvert).
-    if (p.video && !$('[data-panel=video]').hidden) {
+    // Bouton « ▶ Vidéo » (onglets Vidéo et Liens).
+    if (p.video && (!$('[data-panel=video]').hidden || !$('[data-panel=links]').hidden)) {
       const c = p.video.cue || { yaw: 0, pitch: -12 };
       const sc = renderer.project(dirFromLonLat(c.yaw * DEG, c.pitch * DEG), frame);
       if (sc) html += `<div class="ed-video-cue" style="left:${sc.x / dpr}px;top:${sc.y / dpr}px">▶ Vidéo</div>`;
@@ -1041,13 +1041,15 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       }
       hint('');
     });
-    $('[data-video-cue]').addEventListener('click', () => {
-      stopTool();
-      placing = { kind: 'video-cue' };
-      if (controller.mode === 'flat') setView('persp');
-      hint('Touchez l’endroit où placer le bouton « ▶ Vidéo ». <button class="btn small" data-place-cancel>Annuler</button>');
-      bindPlaceCancel();
-    });
+    container.querySelectorAll('[data-video-cue]').forEach((b) =>
+      b.addEventListener('click', () => {
+        stopTool();
+        placing = { kind: 'video-cue' };
+        if (controller.mode === 'flat') setView('persp');
+        hint('Touchez l’endroit où placer le lien « ▶ Vidéo ». <button class="btn small" data-place-cancel>Annuler</button>');
+        bindPlaceCancel();
+      })
+    );
   }
 
   // ---------- relief (profondeur par IA) ----------
@@ -1188,6 +1190,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
   function setNorth(h) {
     snapshot();
     setLevel(withCap(p.params, levelToViewTilt(p.params, 0).cap + h));
+    p.params.northSet = true; // indicateur « N » de la bibliothèque
     const shift = h * DEG;
     if (controller.mode === 'flat') controller.flatCx = 0.5;
     controller.yaw -= shift;

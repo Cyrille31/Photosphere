@@ -1456,7 +1456,7 @@ export async function openPlan(container, { photos, onOpen, onRename }) {
         // La pièce tourne de dDeg (sens horaire) : ce que la photo voyait au cap β est maintenant au cap
         // β + dDeg ; on corrige son nord en conséquence (liens et coins restent sur les mêmes points).
         const lvl = withCap(pr, levelToViewTilt(pr, 0).cap - dDeg);
-        const next = { yaw: wrapDeg(lvl.yaw), pitch: lvl.pitch, roll: lvl.roll };
+        const next = { yaw: wrapDeg(lvl.yaw), pitch: lvl.pitch, roll: lvl.roll, northSet: true };
         // Relief : la carte (et le fond) glissent de dDeg, sans recalcul.
         let relief = cur0.relief;
         if (relief && relief.kind === 'ai' && relief.key === reliefKey(cur0.params)) {
