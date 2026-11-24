@@ -319,3 +319,4 @@ ul.backups li { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,.3); }
 .plan-roompanel .row2 { display: flex; gap: 6px; justify-content: space-between; }
 .ws-block { border: 1px solid rgba(127,140,180,.25); border-radius: 12px; padding: 10px 14px; margin: 10px 0; }
 .ws-block h3 { margin: 2px 0 6px; font-size: 15px; }
+.ed-video-cue { position: absolute; transform: translate(-50%, -50%); padding: 4px 10px; border-radius: 14px; background: rgba(229,72,77,.92); color: #fff; font: 700 13px system-ui, sans-serif; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); pointer-events: none; white-space: nowrap; }

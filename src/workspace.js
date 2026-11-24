@@ -93,7 +93,7 @@ export async function unlink() {
   emit();
 }
 
-const isPhoto = (name) => /\.(jpe?g)$/i.test(name);
+const isPhoto = (name) => /\.(jpe?g|mp4|m4v|mov)$/i.test(name);
 
 // Photos JPEG du dossier (et de ses sous-dossiers, ex. DCIM/100PHOTO) et fichier de réglages.
 export async function listFiles(maxDepth = 3) {

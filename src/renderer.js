@@ -30,6 +30,7 @@ export class PanoRenderer {
   }
 
   async load(src, srcType = 'equirect', params = {}) {
+    this.stopVideo();
     const token = ++this.loadToken;
     const img = await decodeImage(src, this.maxHalf * 2);
     if (token !== this.loadToken) return false;
@@ -42,6 +43,62 @@ export class PanoRenderer {
     this.srcType = srcType;
     this.params = params;
     return true;
+  }
+
+  // Vidéo 360 : chaque image est découpée en deux moitiés (comme une photo) et envoyée à la carte
+  // graphique ; la photo affichée avant (l'affiche) est remise en place à l'arrêt.
+  startVideo(video, srcType, params) {
+    this.stopVideo();
+    const gl = this.gl;
+    const size = Math.min(this.maxHalf, video.videoHeight, Math.round(video.videoWidth / 2));
+    const canvases = [0, 1].map(() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      return c;
+    });
+    const textures = canvases.map((c) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      return t;
+    });
+    this.videoState = { video, canvases, ctx: canvases.map((c) => c.getContext('2d')), lastTime: -1, saved: { source: this.source, srcType: this.srcType, params: this.params } };
+    this.source = { textures, size };
+    this.srcType = srcType;
+    this.params = params;
+    this.updateVideo(true);
+  }
+
+  // Nouvelle image de la vidéo envoyée à la carte graphique ; renvoie vrai si l'image a changé.
+  updateVideo(force = false) {
+    const s = this.videoState;
+    if (!s) return false;
+    const v = s.video;
+    if (v.readyState < 2 || (!force && v.currentTime === s.lastTime)) return false;
+    s.lastTime = v.currentTime;
+    const gl = this.gl, w = v.videoWidth, h = v.videoHeight, size = this.source.size;
+    s.ctx.forEach((ctx, i) => {
+      ctx.drawImage(v, (i * w) / 2, 0, w / 2, h, 0, 0, size, size);
+      gl.bindTexture(gl.TEXTURE_2D, this.source.textures[i]);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, s.canvases[i]);
+    });
+    return true;
+  }
+
+  stopVideo() {
+    const s = this.videoState;
+    if (!s) return;
+    deleteSource(this.gl, this.source);
+    this.source = s.saved.source;
+    this.srcType = s.saved.srcType;
+    this.params = s.saved.params;
+    this.videoState = null;
   }
 
   setParams(params, srcType) {

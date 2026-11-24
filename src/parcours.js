@@ -154,7 +154,8 @@ export function sessionCache(source, maxBytes = defaultCacheBytes()) {
 // Photos de la visite d'après le fichier de réglages (seules celles présentes dans la source).
 export function tourFromSettings(data, has) {
   if (!data || !Array.isArray(data.photos)) throw new Error('Ce fichier n’est pas un fichier de réglages PhotoSphère.');
-  const entries = data.photos.filter((e) => e.file && has(e.file));
+  // Les vidéos ne sont pas encore proposées dans un parcours partagé (étape suivante).
+  const entries = data.photos.filter((e) => e.file && e.kind !== 'video' && has(e.file));
   // Liens vers les photos retirées du plan : plus proposés dans la navigation.
   const ids = new Set(entries.filter((e) => !e.mapHidden).map((e) => key(e.file)));
   return entries.map((e) => {
