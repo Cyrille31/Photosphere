@@ -50,3 +50,4 @@
 .ps-video[hidden] { display: none; }
 .ps-player.stereo .ps-video { display: none; }
 .ps-video-time { display: inline-block; min-width: 9.5em; text-align: center; font-variant-numeric: tabular-nums; }
+.ps-check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }

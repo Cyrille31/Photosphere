@@ -418,7 +418,9 @@ try {
     i.value = 8;
     i.dispatchEvent(new Event('input'));
   });
+  await page.check('.ps-headset [name=swapEyes]');
   const tgt = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));
+  check(tgt.swapEyes === true, 'casque : option « Inverser les images gauche et droite » (relief en louchant) enregistrée');
   check(tgt.targetSize === 1.5 && tgt.targetAppear === 8, `casque : taille des cibles (${tgt.targetSize}°) et distance d’apparition (${tgt.targetAppear}°) réglables`);
   await page.click('.ps-headset [data-preset=v2]');
   const v2 = await page.evaluate(() => JSON.parse(localStorage.getItem('ps-headset')));

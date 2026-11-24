@@ -98,6 +98,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       <label>Relief (effet 3D, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
       <label>Taille des cibles <output></output><input type="range" name="targetSize" min="1" max="5" step="0.1"></label>
       <label>Les cibles apparaissent quand le regard en est à moins de <output></output><input type="range" name="targetAppear" min="4" max="40" step="1"></label>
+      <label class="ps-check"><input type="checkbox" name="swapEyes"> Inverser les images gauche et droite (relief vu en louchant, sans casque)</label>
       <p class="ps-note">Lentilles : les lignes droites doivent rester droites jusqu’au bord. Écartement : chaque œil doit voir le point de visée au centre de sa lentille.</p>
       <div class="ps-presets">
         <button class="ps-btn" data-preset="reset">↺ RAZ (valeurs par défaut)</button>
@@ -622,7 +623,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     if (frame.stereo) {
       reliefHint();
       const eyes = comfortEyes(frame.eyes[0].cam);
-      if (eyes) frame.eyes.forEach((e, k) => Object.assign(e, eyes[k]));
+      // Inversion (vision en louchant) : l'image de l'œil gauche va à droite, et inversement.
+      const swap = !!controller.headset.swapEyes;
+      if (eyes) frame.eyes.forEach((e, k) => Object.assign(e, eyes[swap ? 1 - k : k]));
     }
     renderer.draw({
       ...frame,
@@ -809,12 +812,19 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
 
   const hs = $('.ps-headset');
   const syncHeadset = () => {
-    hs.querySelectorAll('input').forEach((i) => {
+    const sw = hs.querySelector('[name=swapEyes]');
+    if (sw) sw.checked = !!controller.headset.swapEyes;
+    hs.querySelectorAll('input[type=range]').forEach((i) => {
       i.value = controller.headset[i.name];
       i.previousElementSibling.textContent = i.name === 'eyeFov' || i.name === 'targetSize' || i.name === 'targetAppear' ? i.value + '°' : i.name === 'sep' ? i.value + ' %' : i.name === 'relief' ? '× ' + i.value : i.value;
     });
   };
-  hs.querySelectorAll('input').forEach((i) =>
+  hs.querySelector('[name=swapEyes]').addEventListener('change', (e) => {
+    controller.headset.swapEyes = e.target.checked;
+    saveHeadsetSettings(controller.headset);
+    dirty = true;
+  });
+  hs.querySelectorAll('input[type=range]').forEach((i) =>
     i.addEventListener('input', () => {
       controller.headset[i.name] = parseFloat(i.value);
       saveHeadsetSettings(controller.headset);
