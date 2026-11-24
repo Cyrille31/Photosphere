@@ -5,6 +5,7 @@ import { PanoRenderer } from './renderer.js';
 import { autoLevel } from './autolevel.js';
 import { computeDepth } from './depth-ai.js';
 import { reliefKey } from './depth.js';
+import { relevelRelief, reliefTiltChange, RELIEF_RECOMPUTE_DEG, level } from './relevel.js';
 import { remapHotspot, wrapDeg } from './math.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 
@@ -59,11 +60,23 @@ export async function batchAutoLevel(ids, { onProgress = () => {}, isCancelled =
         } else {
           const old = { yaw: params.yaw, pitch: params.pitch, roll: params.roll };
           const next = { yaw: wrapDeg(r.level.yaw), pitch: r.level.pitch, roll: r.level.roll };
-          // Les liens restent sur le même point de la scène ; la photo sera reconvertie.
+          // Le relief tourne avec la photo (pas de nouveau calcul).
+          let relief = p.relief;
+          try {
+            relief = await relevelRelief(p.id, p.relief, p.params, { ...p.params, ...next });
+          } catch (e) {
+            // relief non réutilisable : il faudra le recalculer
+          }
+          // Liens, coins de la pièce et bouton vidéo restent sur le même point de la scène ; la photo
+          // sera reconvertie.
+          const rm = (h) => remapHotspot(h, old, next);
           await db.updatePhoto(p.id, (cur) => ({
             ...cur,
             params: { ...cur.params, ...next },
-            hotspots: (cur.hotspots || []).map((h) => remapHotspot(h, old, next)),
+            hotspots: (cur.hotspots || []).map(rm),
+            ...(cur.room ? { room: { ...cur.room, corners: (cur.room.corners || []).map(rm), ...(cur.room.floor ? { floor: rm(cur.room.floor) } : {}) } } : {}),
+            ...(cur.video && cur.video.cue ? { video: { ...cur.video, cue: rm(cur.video.cue) } } : {}),
+            ...(relief ? { relief } : {}),
             status: 'pending',
           }));
           out.push({ id: p.id, name: p.name, ok: true, message: `redressée de ${r.total.toFixed(1)}°` });
@@ -82,6 +95,12 @@ export async function batchRelief(ids, { onProgress = () => {}, isCancelled = ()
     for (let i = 0; i < ids.length && !isCancelled(); i++) {
       const p = await db.getPhoto(ids[i]);
       if (!p) continue;
+      // Relief à jour (calculé pour ce redressement, ou tourné avec la photo après un redressement de
+      // moins d'un degré) : inutile de le refaire.
+      if (p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) && reliefTiltChange(p) <= RELIEF_RECOMPUTE_DEG) {
+        out.push({ id: p.id, name: p.name, ok: true, skipped: true, message: 'relief à jour, ignoré' });
+        continue;
+      }
       onProgress(i, ids.length, p.name, 'chargement');
       try {
         const params = await loadPhoto(renderer, p);
@@ -90,7 +109,7 @@ export async function batchRelief(ids, { onProgress = () => {}, isCancelled = ()
         await db.putBlob(p.id + ':depthbg', r.bgImage);
         await db.updatePhoto(p.id, (cur) => ({
           ...cur,
-          relief: { kind: 'ai', h: (cur.relief && cur.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(params), floor: r.floorOk },
+          relief: { kind: 'ai', h: (cur.relief && cur.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(params), floor: r.floorOk, basis: level(params) },
         }));
         out.push({ id: p.id, name: p.name, ok: true, message: r.floorOk ? 'relief calculé' : 'relief calculé (sol peu visible : échelle approximative)' });
       } catch (e) {

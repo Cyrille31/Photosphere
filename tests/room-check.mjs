@@ -479,6 +479,56 @@ try {
     check(nHidden === 0 && tour === 0 && nBack === 1 && toPlan, `navigation : lien vers la photo retirée masqué (visionneuse ${nHidden}, parcours ${tour}), revenu une fois remise (${nBack}) ; bouton « Plan » de la visionneuse → plan (${toPlan})`);
   }
 
+  // ---------- redressement dans l'éditeur : le relief tourne avec la photo ----------
+  {
+    // Avant : l'objet proche de la carte de test est repéré (cap où la distance est faible, à l'horizon).
+    const r0 = await page.evaluate(async (id) => {
+      const db = await import('./src/db.js');
+      const { reliefKey, loadDepthImage, depthAt } = await import('./src/depth.js');
+      const { dirFromLonLat } = await import('./src/math.js');
+      const p = await db.getPhoto(id);
+      const m = await loadDepthImage(await db.getBlob(id + ':depth'));
+      let yaw = null;
+      for (let a = -180; a < 180; a += 0.5) if (depthAt(m.depth, dirFromLonLat((a * Math.PI) / 180, 0)) < 1) yaw = yaw ?? a;
+      return { valid: !!p.relief && p.relief.key === reliefKey(p.params), yaw: yaw + 2, params: p.params };
+    }, ids['salon-a.jpg']);
+    await page.goto(base + '#/');
+    await page.goto(base + '#/edit/' + ids['salon-a.jpg']);
+    await page.waitForSelector('.slider input[type=number][name=tiltSide]');
+    await page.waitForTimeout(800);
+    await page.fill('.slider input[type=number][name=tiltSide]', '6');
+    await page.dispatchEvent('.slider input[type=number][name=tiltSide]', 'input');
+    await page.fill('.slider input[type=number][name=tiltForward]', '-4');
+    await page.dispatchEvent('.slider input[type=number][name=tiltForward]', 'input');
+    await page.waitForTimeout(300);
+    await page.click('[data-save]');
+    await page.waitForSelector('.grid');
+    await page.waitForTimeout(500);
+    // Après : l'objet doit être là où le redressement a emmené ce point de la scène.
+    const r1 = await page.evaluate(async ({ id, r0 }) => {
+      const db = await import('./src/db.js');
+      const { reliefKey, loadDepthImage, depthAt } = await import('./src/depth.js');
+      const { dirFromLonLat, remapHotspot } = await import('./src/math.js');
+      const p = await db.getPhoto(id);
+      const m = await loadDepthImage(await db.getBlob(id + ':depth'));
+      const q = remapHotspot({ yaw: r0.yaw, pitch: 0 }, r0.params, p.params);
+      const at = (yaw, pitch) => depthAt(m.depth, dirFromLonLat((yaw * Math.PI) / 180, (pitch * Math.PI) / 180));
+      return { valid: !!p.relief && p.relief.key === reliefKey(p.params), there: at(q.yaw, q.pitch), away: at(q.yaw + 90, q.pitch), params: p.params };
+    }, { id: ids['salon-a.jpg'], r0 });
+    const moved = Math.abs((r1.params.pitch || 0) - (r0.params.pitch || 0)) + Math.abs((r1.params.roll || 0) - (r0.params.roll || 0));
+    // Onglet Relief : le nouveau calcul est conseillé.
+    await page.goto(base + '#/edit/' + ids['salon-a.jpg']);
+    await page.waitForSelector('[data-tab=relief]');
+    await page.waitForTimeout(1500);
+    await page.click('[data-tab=relief]');
+    await page.waitForTimeout(1500);
+    const info = await page.textContent('.relief-info');
+    await page.click('[data-cancel]');
+    await page.waitForSelector('.grid');
+    check(/redressée de [5-9]\.\d°/.test(info) && /Recalculer/.test(info), `onglet Relief : nouveau calcul conseillé après le redressement (« ${info.slice(0, 90)}… »)`);
+    check(r0.valid && r0.yaw !== null && r1.valid && moved > 3 && r1.there < 1 && r1.away > 3, `éditeur : photo redressée (${moved.toFixed(1)}° de changement) → relief conservé et tourné avec elle (objet proche retrouvé à sa nouvelle place : ${r1.there.toFixed(2)} ; à côté : ${r1.away.toFixed(2)})`);
+  }
+
   // ---------- supprimer une pièce ----------
   {
     await page.goto(base + '#/');

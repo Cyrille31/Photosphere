@@ -119,3 +119,16 @@ test('inclinaison de l’écran : textes gardés à l’endroit (téléphone dro
   assert.ok(Math.abs(Math.abs(deg(deviceOrientationMatrix(0, 0, 90, 0))) - 90) < 0.5);
   assert.equal(screenRoll(deviceOrientationMatrix(0, 0, 0, 0)), null);
 });
+
+test('relief : redressement intervenu depuis son calcul (le nord seul ne compte pas)', async () => {
+  const { reliefTiltChange } = await import('../src/relevel.js');
+  const { withCap } = await import('../src/math.js');
+  const basis = { yaw: 10, pitch: 2, roll: -3 };
+  const relief = { kind: 'ai', basis };
+  assert.ok(reliefTiltChange({ relief, params: basis }) < 1e-6);
+  const north = withCap(basis, 77);
+  assert.ok(reliefTiltChange({ relief, params: north }) < 0.01, 'changement de nord seul');
+  const t = reliefTiltChange({ relief, params: { yaw: 10, pitch: 6, roll: -3 } });
+  assert.ok(Math.abs(t - 4) < 0.2, `inclinaison de 4° : ${t}`);
+  assert.equal(reliefTiltChange({ relief: { kind: 'ai' }, params: basis }), 0);
+});
