@@ -8,10 +8,14 @@ export const RELIEF_DIR = 'photosphere-relief';
 export const HEADERS_FILE = '_headers';
 export const HEADERS_CONTENT = '/*\n  Access-Control-Allow-Origin: *\n';
 
-export const reliefNames = (fileName) => ({ depth: `${fileName}.profondeur.png`, bg: `${fileName}.fond.jpg` });
+// poster : pour une vidéo, l'image affichée avant son lancement (une photosphère comme les autres).
+export const reliefNames = (fileName) => ({ depth: `${fileName}.profondeur.png`, bg: `${fileName}.fond.jpg`, poster: `${fileName}.affiche.jpg` });
 
-// Fichier de relief (à ne pas importer comme une photo).
+// Fichiers rangés dans « photosphere-relief » (motif de leur nom).
+export const RELIEF_FILE_RE = /\.(profondeur\.png|fond\.jpe?g|affiche\.jpe?g)$/i;
+
+// Fichier de relief ou affiche de vidéo (à ne pas importer comme une photo).
 export function isReliefFile(f) {
   const path = (f.webkitRelativePath || f.name || '').split('/');
-  return path.includes(RELIEF_DIR) || /\.(profondeur\.png|fond\.jpe?g)$/i.test(f.name || '');
+  return path.includes(RELIEF_DIR) || RELIEF_FILE_RE.test(f.name || '');
 }

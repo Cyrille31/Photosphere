@@ -92,6 +92,35 @@ try {
   // Sans boucle : à la fin, retour à l'image.
   const ended = await page.waitForFunction(() => !document.querySelector('.ps-player').dataset.video, null, { timeout: 15000 }).then(() => true, () => false);
   check(auto && ended, `lancement dès l’arrivée (${auto}), retour à l’image à la fin de la vidéo sans boucle (${ended})`);
+
+  // ---------- parcours partagé : la vidéo vue par un visiteur ----------
+  await db(async (db, id) => db.updatePhoto(id, (cur) => ({ ...cur, video: { ...cur.video, autoplay: false, loop: true } })), v.id);
+  const prep = await page.evaluate(async (id) => {
+    const db = await import('./src/db.js');
+    const { buildSettings } = await import('./src/settings-file.js');
+    const { reliefNames } = await import('./src/relief-files.js');
+    const p = await db.getPhoto(id);
+    const poster = await db.getBlob(id + ':orig');
+    const u = new Uint8Array(await poster.arrayBuffer());
+    let t = '';
+    for (let i = 0; i < u.length; i += 0x8000) t += String.fromCharCode(...u.subarray(i, i + 0x8000));
+    return { json: JSON.stringify(buildSettings(await db.listPhotos(), await db.getPlanDrawing())), poster: btoa(t), posterName: reliefNames(p.fileName).poster };
+  }, v.id);
+  const folder = path.join(shots, 'parcours');
+  fs.rmSync(folder, { recursive: true, force: true });
+  fs.mkdirSync(path.join(folder, 'photosphere-relief'), { recursive: true });
+  fs.writeFileSync(path.join(folder, 'photosphere.json'), prep.json);
+  fs.copyFileSync(file, path.join(folder, '360_1044.MP4'));
+  fs.writeFileSync(path.join(folder, 'photosphere-relief', prep.posterName), Buffer.from(prep.poster, 'base64'));
+  await page.goto(base + '#/parcours');
+  await page.waitForSelector('.parcours-page');
+  await page.locator('input[type=file][multiple]:not([accept]):not([webkitdirectory])').setInputFiles([path.join(folder, 'photosphere.json'), path.join(folder, '360_1044.MP4'), path.join(folder, 'photosphere-relief', prep.posterName)]);
+  await page.waitForSelector('.ps-player canvas', { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  const pl = await page.$$eval('.ps-labels > *', (l) => l.map((x) => x.textContent));
+  await page.evaluate(() => [...document.querySelectorAll('.ps-label')].find((b) => /Vidéo/.test(b.textContent)).click());
+  const played = await page.waitForFunction(() => document.querySelector('.ps-player').dataset.video === 'playing', null, { timeout: 15000 }).then(() => true, () => false);
+  check(prep.json.includes('"kind":"video"') && pl.includes('▶ Vidéo') && played, `parcours partagé : la vidéo apparaît avec son image et son bouton « ▶ Vidéo », et se lance (${played})`);
 } catch (e) {
   failures++;
   console.error(e);

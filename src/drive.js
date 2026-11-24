@@ -22,17 +22,24 @@ export function parcoursLink(folderId, base = location.origin + location.pathnam
 }
 
 export const DIRECT = 'https://lh3.googleusercontent.com/d/';
-async function direct(id) {
+// size : taille attendue (liste du dossier) ; un fichier d'une autre taille (miniature au lieu d'une
+// vidéo, par exemple) est refusé, et l'API prend le relais.
+async function direct(id, size = 0) {
   let last;
   for (const wait of [0, 1500, 4000]) {
     if (wait) await new Promise((r) => setTimeout(r, wait));
     try {
       const res = await fetch(`${DIRECT}${encodeURIComponent(id)}=d`);
-      if (res.ok) return await res.blob();
+      if (res.ok) {
+        const b = await res.blob();
+        if (size && b.size !== +size) throw Object.assign(new Error('fichier différent de l’original'), { final: true });
+        return b;
+      }
       last = new Error(`erreur ${res.status}`);
       if (res.status === 404 || res.status === 403) break;
     } catch (e) {
       last = e;
+      if (e.final) break;
     }
   }
   throw last || new Error('réseau indisponible');
@@ -114,7 +121,7 @@ export async function driveSource(link, key = storedKey() || GOOGLE_API_KEY) {
       // soumis au freinage des téléchargements anonymes de l'API Drive. En cas d'échec, l'API prend le relais.
       try {
         if (/\.json$/i.test(n)) throw new Error('pas une image'); // servi seulement par l'API
-        return await direct(f.id);
+        return await direct(f.id, f.size);
       } catch (e) {
         return (await call(`${API}/${f.id}?alt=media&supportsAllDrives=true`, key, 2)).blob();
       }
