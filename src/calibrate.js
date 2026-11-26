@@ -38,11 +38,19 @@ function ringDirections(thetasDeg, nAz) {
 }
 
 // Vignettage mesuré sur la Gear 360 (SM-C200) : la lumière baisse vers le bord de chaque objectif,
-// log V(θ) = -(P·t² + Q·t⁸) avec t = θ / 90° (profil confirmé par les assemblages Samsung). Sur les
-// valeurs JPEG (gamma ≈ 2,2), le gain vaut g = exp((P·t² + Q·t⁸) / 2,2) et s'applique comme
-// y = 1 - (1 - x)^g : plein effet dans les ombres, sans saturer les tons clairs (ciel).
+// log V(θ) = -(P·t² + Q·t⁸) avec t = θ / 90°. Sur les valeurs JPEG (gamma ≈ 2,2), le gain vaut
+// g = exp(s·(P·t² + Q·t⁸) / 2,2), s étant la force mesurée sur chaque photo (fitVignette). Il s'applique
+// en proportion (y = x·g, comme la lumière), adouci seulement près du blanc (vignetteTone) pour ne pas
+// brûler fenêtres et ciel. L'ancienne formule y = 1 - (1 - x)^g corrigeait trop peu les tons clairs :
+// une traînée plus sombre restait le long de la jonction sur les plafonds blancs.
 export const VIGNETTE_P = 0.38;
 export const VIGNETTE_Q = 0.42;
+
+export const VIGNETTE_KNEE = 0.88;
+export function vignetteTone(x, g) {
+  const y = x * g, k = VIGNETTE_KNEE;
+  return y <= k ? y : k + (1 - k) * (1 - Math.exp(-(y - k) / (1 - k)));
+}
 
 function vignetteGain(theta, strength) {
   if (!strength) return 1;
@@ -64,8 +72,8 @@ function sampleBoth(A, B, lensA, kA, lensB, kB, dirs, vignette = 0) {
     if (vignette) {
       const ga = vignetteGain(tf - disp / 2, vignette), gb = vignetteGain(Math.PI - tf - disp / 2, vignette);
       for (let c = 0; c < 3; c++) {
-        ca[i * 3 + c] = 255 * (1 - (1 - Math.min(1, Math.max(0, ca[i * 3 + c] / 255))) ** ga);
-        cb[i * 3 + c] = 255 * (1 - (1 - Math.min(1, Math.max(0, cb[i * 3 + c] / 255))) ** gb);
+        ca[i * 3 + c] = 255 * vignetteTone(Math.min(1, Math.max(0, ca[i * 3 + c] / 255)), ga);
+        cb[i * 3 + c] = 255 * vignetteTone(Math.min(1, Math.max(0, cb[i * 3 + c] / 255)), gb);
       }
     }
   }
@@ -176,19 +184,62 @@ export function seamGains(A, B, params, disparity, twist) {
   return { a, b };
 }
 
+// Force du vignettage mesurée sur la photo, sans dépendre de ce qu'elle montre : dans la bande où les
+// deux objectifs se recouvrent, un même point est vu par l'un à 90° - α de son axe et par l'autre à
+// 90° + α. Le rapport des deux (pris dans les deux sens, ce qui élimine l'écart d'exposition) ne
+// dépend que du vignettage : d = (s / 2,2)·(F(90° + α) - F(90° - α)) / 2… d'où s, pour α de 2 à 7°.
+export function fitVignette(A, B, params, disparity, twist) {
+  const fovHalf = (params.fov / 2) * DEG;
+  const lensA = { ...params.lensA, rot: (params.lensA.rot || 0) * DEG };
+  const lensB = { ...params.lensB, rot: (params.lensB.rot || 0) * DEG };
+  const kA = params.lensA.r / fovHalf, kB = params.lensB.r / fovHalf;
+  const F = (th) => {
+    const t2 = (th / (Math.PI / 2)) ** 2;
+    return VIGNETTE_P * t2 + VIGNETTE_Q * t2 ** 4;
+  };
+  const luma = (c, i) => (c[i * 3] + c[i * 3 + 1] + c[i * 3 + 2]) / 3;
+  const est = [];
+  for (let a = 2; a <= 7; a++) {
+    if (90 + a > params.fov / 2 - 0.5) break;
+    const ring = (t) => (disparity ? withDisparity(ringDirections([t], 720), disparity, twist) : ringDirections([t], 720));
+    const inner = ring(90 - a), outer = ring(90 + a);
+    const [ai, bo] = sampleBoth(A, B, lensA, kA, lensB, kB, inner, 0); // A à 90-α, B à 90+α
+    const [ao, bi] = sampleBoth(A, B, lensA, kA, lensB, kB, outer, 0); // A à 90+α, B à 90-α
+    const ds = [];
+    for (let i = 0; i < inner.length; i++) {
+      const v = [luma(ai, i), luma(bo, i), luma(ao, i), luma(bi, i)];
+      if (Math.min(...v) < 20 || Math.max(...v) > 235) continue;
+      ds.push((Math.log(v[0] / v[1]) - Math.log(v[2] / v[3])) / 2);
+    }
+    if (ds.length < 60) continue;
+    ds.sort((x, y) => x - y);
+    const d = ds[ds.length >> 1];
+    const dF = F((90 - a) * DEG) - F((90 + a) * DEG);
+    est.push((-2.2 * d) / dF);
+  }
+  if (!est.length) return params.vignette ?? 1;
+  est.sort((x, y) => x - y);
+  return +Math.min(2.5, Math.max(0.5, est[est.length >> 1])).toFixed(3);
+}
+
 // Calibrage complet à partir des deux moitiés (RGB flottant).
 export function autoCalibrate(A, B, start) {
-  const lenses = fitLenses(A, B, start);
-  const params = { ...start, ...lenses };
+  // Vignettage estimé d'abord (objectifs à leur réglage de départ) : un vignettage mal compensé
+  // fausserait l'ajustement des objectifs. Puis affiné une fois les objectifs et la couture connus.
+  const v0 = fitVignette(A, B, start, null, null);
+  const lenses = fitLenses(A, B, { ...start, vignette: v0 });
+  let params = { ...start, ...lenses, vignette: v0 };
   const { disparity, twist } = seamDisparity(A, B, params);
+  const vignette = fitVignette(A, B, params, disparity, twist);
+  params = { ...params, vignette };
   const gains = seamGains(A, B, params, disparity, twist);
   const seam = seamPath(A, B, params, gains, disparity, twist);
-  return { ...lenses, blend: 1, gains, disparity, twist, seam, calibVersion: CALIB_VERSION };
+  return { ...lenses, blend: 1, vignette, gains, disparity, twist, seam, calibVersion: CALIB_VERSION };
 }
 
 // Résolution des tracés le long de la couture (tranches de 2°), identique dans le shader.
 export const SEAM_BINS = 180;
-export const CALIB_VERSION = 5;
+export const CALIB_VERSION = 6;
 
 // Couture optimale : pour chaque tranche d'azimut, on décale la couture (±5°) vers l'endroit où les
 // deux objectifs concordent le mieux, avec un tracé régulier (programmation dynamique). Les objets
