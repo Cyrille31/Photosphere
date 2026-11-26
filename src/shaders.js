@@ -116,6 +116,7 @@ uniform vec4 uHot[${MAX_HOTSPOTS}];   // direction (xyz) et opacité (w) des lie
 uniform int uHotCount;
 uniform int uHotSel;
 uniform float uHotSize;
+uniform float uHotScale[${MAX_HOTSPOTS}]; // taille propre à chaque cible (plus petite quand elle est loin)
 uniform float uDwell;
 uniform float uReticle;
 uniform float uHotRing; // rayon intérieur du cercle des cibles (fraction de leur taille)
@@ -270,7 +271,7 @@ void main() {
     vec3 h = uHot[i].xyz;
     float alpha = uHot[i].w;
     float ang = acos(clamp(dot(dir, h), -1.0, 1.0));
-    float s = uHotSize * (i == uHotSel ? 1.25 : 1.0);
+    float s = uHotSize * uHotScale[i] * (i == uHotSel ? 1.25 : 1.0);
     if (alpha > 0.003 && ang < s * 1.45) {
       float aa = max(pixAng * 1.5, 1e-5);
       float disc = 1.0 - smoothstep(s - aa, s, ang);

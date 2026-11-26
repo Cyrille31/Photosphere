@@ -60,7 +60,7 @@ const MANUAL = `
 
 <section id="man-liens"><h3>Liens entre photos</h3>
 <ul>
-  <li>Un lien est une pastille que l’on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo. Dans la visionneuse, elle n’apparaît qu’à l’approche de la souris ou du regard ; la souris devient une flèche qui montre le lien le plus proche.</li>
+  <li>Un lien est une pastille que l’on touche (ou que l’on fixe du regard dans le casque) pour passer à une autre photo. Dans la visionneuse, elle n’apparaît qu’à l’approche de la souris ou du regard, et elle est d’autant plus petite que ce qu’elle désigne est loin (d’après le relief s’il est calculé, sinon d’après la distance des deux photos sur le plan) ; la souris devient une flèche qui montre le lien le plus proche.</li>
   <li><b>➕ Ajouter un lien</b>, touchez l’endroit (porte, couloir…), choisissez la photo dans les vignettes (Ctrl + molette : taille ; recherche par nom). Le lien retour peut être créé dans l’autre photo.</li>
   <li><b>Cliquez un lien sur l’image</b> : il est sélectionné (orange) et la liste défile pour l’afficher en haut.</li>
   <li><b>Double-cliquez un lien</b> (sur l’image, ou sur son pavé dans la liste) : la photo liée s’ouvre dans l’éditeur, orientée comme à l’arrivée dans la visite (les modifications en cours sont enregistrées).</li>

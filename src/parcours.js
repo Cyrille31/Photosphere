@@ -158,6 +158,13 @@ export function tourFromSettings(data, has) {
   const entries = data.photos.filter((e) => e.file && has(e.file) && (e.kind !== 'video' || has(reliefNames(e.file).poster)));
   // Liens vers les photos retirées du plan : plus proposés dans la navigation.
   const ids = new Set(entries.filter((e) => !e.mapHidden).map((e) => key(e.file)));
+  // Distance (m) entre deux photos placées sur le plan (taille des cibles).
+  const ppm = (data.plan && data.plan.pxPerM) || 50;
+  const byFile = new Map(entries.map((e) => [key(e.file), e]));
+  const distTo = (e, t) => {
+    const q = byFile.get(key(t));
+    return e.mapPlaced && q && q.mapPlaced && e.mapPos && q.mapPos ? Math.hypot(q.mapPos.x - e.mapPos.x, q.mapPos.y - e.mapPos.y) / ppm : 0;
+  };
   return entries.map((e) => {
     const params = { yaw: 0, pitch: 0, roll: 0, ...JSON.parse(JSON.stringify(DEFAULT_LENS_PARAMS)), ...(e.params || {}) };
     const rn = reliefNames(e.file);
@@ -168,7 +175,7 @@ export function tourFromSettings(data, has) {
       name: e.name || e.file,
       srcType: e.srcType || 'fisheye',
       params,
-      hotspots: (e.hotspots || []).filter((h) => ids.has(key(h.target))).map((h) => ({ target: key(h.target), yaw: h.yaw, pitch: h.pitch, label: h.label || '', ...(h.arrive ? { arrive: h.arrive } : {}) })),
+      hotspots: (e.hotspots || []).filter((h) => ids.has(key(h.target))).map((h) => ({ target: key(h.target), yaw: h.yaw, pitch: h.pitch, label: h.label || '', dist: distTo(e, h.target), ...(h.arrive ? { arrive: h.arrive } : {}) })),
       relief,
       reliefKey: reliefKey(params),
       reliefFiles: relief ? { depth: rn.depth, bg: has(rn.bg) ? rn.bg : null } : null,

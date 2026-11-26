@@ -107,8 +107,10 @@ export class PanoRenderer {
   }
 
   // hotspots : [{ yaw, pitch }] en degrés (repère de sortie).
+  // h.scale (facultatif) : taille relative de la cible (1 par défaut).
   setHotspots(list) {
     this.hotspots = list.slice(0, MAX_HOTSPOTS).map((h) => dirFromLonLat(h.yaw * DEG, h.pitch * DEG));
+    this.hotScales = list.slice(0, MAX_HOTSPOTS).map((h) => (h.scale > 0 ? h.scale : 1));
   }
 
   resize() {
@@ -148,12 +150,15 @@ export class PanoRenderer {
       flatHot[i * 4 + 3] = frame.hotAlpha ? frame.hotAlpha[i] ?? 1 : 1;
     });
     gl.uniform4fv(u.uHot, flatHot);
+    const scales = new Float32Array(MAX_HOTSPOTS).fill(1);
+    (this.hotScales || []).forEach((v, i) => (scales[i] = v));
+    gl.uniform1fv(u.uHotScale, scales);
     gl.uniform1i(u.uHotCount, this.hotspots.length);
     gl.uniform1i(u.uHotSel, frame.hotSel ?? -1);
     gl.uniform1f(u.uHotSize, frame.hotSize || 0.07);
     gl.uniform1f(u.uDwell, frame.dwell || 0);
     gl.uniform1f(u.uReticle, frame.reticle || 0);
-    gl.uniform1f(u.uHotRing, frame.hotRing || 0.72);
+    gl.uniform1f(u.uHotRing, frame.hotRing || 0.84);
     const rd = frame.retDir || [0, 0];
     gl.uniform2f(u.uRetDir, rd[0], rd[1]);
     gl.uniform1f(u.uGrid, frame.grid ? 1 : 0);
