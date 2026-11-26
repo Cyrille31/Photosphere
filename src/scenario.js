@@ -5,7 +5,7 @@
 // Les photos sont désignées par leur nom de fichier : le scénario se rejoue aussi dans un parcours partagé.
 
 export const scenarioFileKey = (n) => String(n || '').toLowerCase();
-const wrapDeg = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
+const scnWrap = (a) => ((((a + 180) % 360) + 360) % 360) - 180;
 
 // Enregistreur : sample(t en s, fichier, cap, site en degrés) à chaque image ; finish() → scénario.
 export function createRecorder() {
@@ -17,7 +17,7 @@ export function createRecorder() {
     return i;
   };
   const push = (t, fi, y, p) => {
-    steps.push([Math.round(t * 10), fi, Math.round(wrapDeg(y) * 10), Math.round(p * 10)]);
+    steps.push([Math.round(t * 10), fi, Math.round(scnWrap(y) * 10), Math.round(p * 10)]);
     last = { t, fi, y, p };
   };
   return {
@@ -25,7 +25,7 @@ export function createRecorder() {
       if (!file) return;
       const fi = fileIndex(file);
       if (!last || fi !== last.fi) return push(t, fi, yaw, pitch);
-      const moved = Math.abs(wrapDeg(yaw - last.y)) > 0.6 || Math.abs(pitch - last.p) > 0.6;
+      const moved = Math.abs(scnWrap(yaw - last.y)) > 0.6 || Math.abs(pitch - last.p) > 0.6;
       if (!moved || t - last.t < 0.1) return;
       // Reprise après une pause : la vue est restée immobile jusqu'ici (pas un lent glissement).
       if (t - last.t > 0.3) push(t - 0.1, fi, last.y, last.p);
@@ -54,7 +54,7 @@ export function scenarioAt(s, t) {
   let yaw = a[2] / 10, pitch = a[3] / 10;
   if (b && b[1] === a[1] && b[0] > a[0]) {
     const k = Math.min(1, Math.max(0, (tt - a[0]) / (b[0] - a[0])));
-    yaw = wrapDeg(yaw + wrapDeg(b[2] / 10 - yaw) * k);
+    yaw = scnWrap(yaw + scnWrap(b[2] / 10 - yaw) * k);
     pitch += (b[3] / 10 - pitch) * k;
   }
   return { file: s.files[a[1]], yaw, pitch, index: i };
