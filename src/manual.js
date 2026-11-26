@@ -56,7 +56,7 @@ const MANUAL = `
 </ul></section>
 
 <section id="man-objectifs"><h3>Objectifs (assemblage)</h3>
-<p>Le calibrage automatique est fait à l’import : il aligne les deux objectifs sur la couture et égalise leur exposition. Relancez « 🎯 Calibrage automatique » après une modification. Si la couture reste visible, ajustez à la main le rayon et la rotation de chaque objectif. Les objets très proches de la caméra (la main) restent légèrement dédoublés : c’est la parallaxe entre les deux objectifs. « ⭐ Calibrage par défaut » mémorise les valeurs pour les prochains imports de cet appareil.</p></section>
+<p>Le calibrage automatique est fait à l’import : il aligne les deux objectifs sur la couture, égalise leur exposition et <b>mesure l’assombrissement du bord des objectifs</b> (vignettage) sur chaque photo, d’après la bande où les deux objectifs voient la même chose : plus de traînée sombre le long de la jonction, même sur un plafond blanc. Relancez « 🎯 Calibrage automatique » après une modification. Si la couture reste visible, ajustez à la main le rayon et la rotation de chaque objectif. Les objets très proches de la caméra (la main) restent légèrement dédoublés : c’est la parallaxe entre les deux objectifs. « ⭐ Calibrage par défaut » mémorise les valeurs pour les prochains imports de cet appareil.</p></section>
 
 <section id="man-liens"><h3>Liens entre photos</h3>
 <ul>

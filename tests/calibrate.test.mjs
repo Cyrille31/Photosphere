@@ -4,6 +4,8 @@ import { autoCalibrate, VIGNETTE_P, VIGNETTE_Q } from '../src/calibrate.js';
 import { DEFAULT_LENS_PARAMS } from '../src/gl-source.js';
 
 const DEG = Math.PI / 180;
+// Force du vignettage de la caméra simulée (1 = profil intégré ; la Gear 360 de la photo d'exemple : 1,36).
+const VIG = 1.36;
 
 // Scène texturée (fonction de la direction) vue par un double fisheye équidistant.
 function scene(d) {
@@ -27,10 +29,10 @@ function renderHalf(S, lens, fov, back, gain) {
       const a = Math.atan2(-dy, dx) - lens.rot * DEG;
       const st = Math.sin(th);
       const d = back ? [-st * Math.cos(a), st * Math.sin(a), -Math.cos(th)] : [st * Math.cos(a), st * Math.sin(a), Math.cos(th)];
-      // Vignettage de la caméra (inverse de la correction : x = 1 - (1 - y)^(1/g)).
+      // Vignettage de la caméra, de force VIG (la lumière baisse en proportion vers le bord).
       const t2 = (th / (Math.PI / 2)) ** 2;
-      const g = Math.exp((VIGNETTE_P * t2 + VIGNETTE_Q * t2 ** 4) / 2.2);
-      data.set(scene(d).map((v) => 255 * (1 - (1 - Math.min(255, v * gain) / 255) ** (1 / g))), (py * S + px) * 3);
+      const g = Math.exp((VIG * (VIGNETTE_P * t2 + VIGNETTE_Q * t2 ** 4)) / 2.2);
+      data.set(scene(d).map((v) => (Math.min(255, v * gain) * 0.8) / g), (py * S + px) * 3);
     }
   }
   return { size: S, data };
@@ -53,4 +55,6 @@ test('le calibrage automatique retrouve le décalage des objectifs et l’écart
   const gb = r.gains.b.flat().reduce((s, v) => s + v, 0) / 108;
   assert.ok(Math.abs(ga - Math.sqrt(1.25)) < 0.03, 'gain A ' + ga);
   assert.ok(Math.abs(gb - 1 / Math.sqrt(1.25)) < 0.03, 'gain B ' + gb);
+  // Force du vignettage retrouvée d'après la bande où les deux objectifs se recouvrent.
+  assert.ok(Math.abs(r.vignette - VIG) < 0.08, 'vignettage ' + r.vignette);
 });

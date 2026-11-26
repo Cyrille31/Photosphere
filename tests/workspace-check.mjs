@@ -79,8 +79,8 @@ try {
   let f = await readFolder();
   check(f.json && f.json.photos.length === 2, 'photosphere.json écrit automatiquement dans le dossier');
 
-  // Renommage : la photo et son fichier. Le stockage simulé refuse les noms accentués : c'est
-  // l'occasion de vérifier qu'un renommage impossible laisse le fichier d'origine intact.
+  // Renommage : la photo et son fichier. Un nom déjà pris par un autre fichier du dossier rend le
+  // renommage impossible : le fichier d'origine doit rester intact.
   const rename = async (name) => {
     await page.locator('.card .card-title').first().click();
     await page.fill('.rename-input', name);
@@ -88,7 +88,7 @@ try {
     await page.waitForTimeout(2500);
     return (await page.locator('.toast').allTextContents()).join(' | ');
   };
-  let msg = await rename('Salon côté jardin');
+  let msg = await rename('SAM_0002');
   f = await readFolder();
   check(msg.includes('Fichier non renommé') && f.names.includes('SAM_0001.JPG') && f.names.filter((n) => n !== '_headers').length === 3 && f.names.includes('_headers'), `renommage impossible : message affiché, fichier d’origine intact (${f.names.join(', ')})`);
   await page.waitForTimeout(4000);

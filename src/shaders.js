@@ -22,6 +22,11 @@ uniform vec3 uGainA[36];    // correction d'exposition le long de la couture (pa
 uniform vec3 uGainB[36];
 uniform sampler2D uSeamTex; // par tranche d'azimut : R = décalage de la couture, G = parallaxe, B = décalage le long de la couture (radians)
 
+// Correction du vignettage : proportionnelle, adoucie au-dessus de 0,88 (même courbe que calibrate.js).
+vec3 vignetteTone(vec3 y) {
+  const float K = 0.88;
+  return mix(y, K + (1.0 - K) * (1.0 - exp(-(y - K) / (1.0 - K))), step(K, y));
+}
 vec2 lensUv(vec4 lens, vec2 p, float theta, float extraRot) {
   float r = lens.z * theta / uFovHalf;
   float a = atan(p.y, p.x) + lens.w + extraRot;
@@ -70,12 +75,12 @@ vec4 sampleSource(vec3 dOut, float pixAng) {
   float ta = tfs / (PI * 0.5), tb2 = tbs / (PI * 0.5);
   ta *= ta;
   tb2 *= tb2;
-  // Gain qui agit pleinement dans les ombres et tend doucement vers le blanc sans saturer
-  // (comme le logiciel Samsung) : y = 1 - (1 - x)^g.
+  // Gain proportionnel (comme la lumière), adouci seulement près du blanc pour ne pas brûler les
+  // fenêtres (voir vignetteTone dans calibrate.js).
   float va = exp((uVignette.x * ta + uVignette.y * ta * ta * ta * ta) / 2.2);
   float vb = exp((uVignette.x * tb2 + uVignette.y * tb2 * tb2 * tb2 * tb2) / 2.2);
-  cf.rgb = 1.0 - pow(1.0 - clamp(cf.rgb, 0.0, 1.0), vec3(va));
-  cb.rgb = 1.0 - pow(1.0 - clamp(cb.rgb, 0.0, 1.0), vec3(vb));
+  cf.rgb = vignetteTone(clamp(cf.rgb, 0.0, 1.0) * va);
+  cb.rgb = vignetteTone(clamp(cb.rgb, 0.0, 1.0) * vb);
   cf.rgb *= mix(vec3(1.0), ga, ra);
   cb.rgb *= mix(vec3(1.0), gb, rb);
   return mix(cb, cf, wf);
