@@ -161,6 +161,13 @@ export class PanoRenderer {
     gl.uniform1f(u.uHotRing, frame.hotRing || 0.84);
     const rd = frame.retDir || [0, 0];
     gl.uniform2f(u.uRetDir, rd[0], rd[1]);
+    gl.uniform1f(u.uRetOut, frame.retOut ? 1 : 0);
+    // frame.retMini : [[x, y, hors de la pièce (0 / 1)]…], 8 au plus.
+    const mini = (frame.retMini || []).slice(0, 8);
+    const flatMini = new Float32Array(24);
+    mini.forEach((m, i) => flatMini.set([m[0], m[1], m[2] ? 1 : 0], i * 3));
+    gl.uniform3fv(u.uRetMini, flatMini);
+    gl.uniform1i(u.uRetMiniN, mini.length);
     gl.uniform1f(u.uGrid, frame.grid ? 1 : 0);
     this.bindRelief();
     gl.uniform1f(u.uDepthView, frame.depthView ? 1 : 0);
@@ -177,6 +184,7 @@ export class PanoRenderer {
       gl.uniform2f(u.uDistort, d[0], d[1]);
       const e = (this.depth && eye.offset) || [0, 0, 0];
       gl.uniform3f(u.uEye, e[0], e[1], e[2]);
+      gl.uniform1f(u.uRetTan, eye.retTan || 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     gl.disable(gl.SCISSOR_TEST);

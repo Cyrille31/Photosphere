@@ -420,6 +420,13 @@ export function guessRoomName(name, word = ROOM_WORD) {
   return out.join(' ').replace(/_+/g, ' ').trim();
 }
 
+// Pièce d'une photo, pour comparer : nom en minuscules (celui donné, sinon celui que propose le nom de
+// la photo), « #none » pour une photo hors de toute pièce, '' si inconnue.
+export function roomKey(room, photoName) {
+  if (room && room.none) return '#none';
+  return ((room && room.name) || guessRoomName(photoName)).trim().toLowerCase();
+}
+
 // Vecteur (x : est, z : nord) de la photo → vecteur du plan (x à droite, y vers le bas), le nord du plan
 // étant tourné de `northDeg` (sens horaire depuis le haut).
 export function toPlan([x, z], northDeg = 0) {

@@ -92,11 +92,13 @@ export const putBlob = (key, blob) => tx('blobs', 'readwrite', (s) => s.put(blob
 export const getSetting = (key) => tx('settings', 'readonly', (s) => s.get(key));
 export const putSetting = (key, v) => tx('settings', 'readwrite', (s) => s.put(v, key));
 
+// scenarios : scénarios de visite enregistrés dans la visionneuse (voir scenario.js).
+const PLAN_KEYS = ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM', 'start', 'startYaw', 'scenarios'];
 // Dessin du plan (traits des pièces, textes) : { lines: [{ x1, y1, x2, y2 }], texts: [{ x, y, text, size }] }.
 export async function getPlanDrawing() {
   const d = await getSetting('planDrawing');
   const extra = {};
-  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM', 'start', 'startYaw']) if (d && d[k] != null) extra[k] = d[k];
+  for (const k of PLAN_KEYS) if (d && d[k] != null) extra[k] = d[k];
   return { lines: (d && d.lines) || [], texts: (d && d.texts) || [], ...extra };
 }
 export async function putPlanDrawing(d) {
@@ -104,7 +106,7 @@ export async function putPlanDrawing(d) {
   // plan (degrés) ; compass : position de la flèche nord-sud ;
   // pxPerM : échelle du plan (pixels par mètre) ; start : photo de départ du parcours (id).
   const extra = {};
-  for (const k of ['ceilingH', 'rooms', 'north', 'compass', 'pxPerM', 'start', 'startYaw']) if (d[k] != null) extra[k] = d[k];
+  for (const k of PLAN_KEYS) if (d[k] != null) extra[k] = d[k];
   await putSetting('planDrawing', { lines: d.lines || [], texts: d.texts || [], ...extra });
   notify();
 }

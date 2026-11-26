@@ -5,7 +5,7 @@ import { decodeImage } from './gl-source.js';
 import { reliefKey } from './depth.js';
 
 // Modules de la visionneuse, concaténés dans la page exportée (pas d'import possible en file://).
-const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'depth.js', 'player.js'];
+const PLAYER_MODULES = ['math.js', 'shaders.js', 'gl-source.js', 'renderer.js', 'controls.js', 'depth.js', 'scenario.js', 'player.js'];
 
 export async function bundlePlayer() {
   const sources = await Promise.all(PLAYER_MODULES.map((m) => fetch(new URL(m, import.meta.url)).then((r) => r.text())));

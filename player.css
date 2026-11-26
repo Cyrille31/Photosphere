@@ -51,3 +51,13 @@
 .ps-player.stereo .ps-video { display: none; }
 .ps-video-time { display: inline-block; min-width: 9.5em; text-align: center; font-variant-numeric: tabular-nums; }
 .ps-check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
+/* Scénarios : barre d'enregistrement / de lecture, panneau */
+.ps-scnbar { position: absolute; left: 50%; top: calc(62px + env(safe-area-inset-top)); transform: translateX(-50%); display: flex; gap: 10px; align-items: center; padding: 6px 8px 6px 14px; border-radius: 12px; background: rgba(10,16,35,.75); color: #fff; font-size: 14px; font-variant-numeric: tabular-nums; }
+.ps-scnbar[hidden] { display: none; }
+.ps-player[data-scenario="recording"] .ps-scn-text { color: #ff8a80; }
+.ps-player.stereo .ps-scnbar { display: none; }
+.ps-scn-item { display: flex; align-items: center; gap: 6px; }
+.ps-scn-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-scn-name small { opacity: .7; margin-left: 4px; }
+.ps-scn-share input { width: 100%; font-size: 12px; }
+.ps-scn-share[hidden] { display: none; }

@@ -17,7 +17,8 @@ import { signIn, syncToDrive, clientId } from './drive-sync.js';
 import { RELIEF_DIR, reliefNames, HEADERS_FILE, HEADERS_CONTENT } from './relief-files.js';
 import { createZip } from './zip.js';
 import { isSettingsFile, readSettingsFile, applySettings, settingsBlob, SETTINGS_FILE_NAME, buildSettings, settingsSignature, settingsSummary, backupNow, backupData, listBackups } from './settings-file.js';
-import { setRoomWord } from './room.js';
+import { setRoomWord, roomKey } from './room.js';
+import { encodeScenario, decodeScenario } from './scenario.js';
 import { aboutLine } from './version.js';
 import { levelToViewTilt } from './math.js';
 
@@ -277,12 +278,22 @@ const pickProject = fileInput({ accept: '.zip,application/zip' }, async (files) 
 // Parcours partagé : dossier (PC) ou fichiers (smartphone) choisis sur l'appareil, ou dossier Google
 // Drive partagé ; rien n'est importé.
 const openParcoursFiles = (files) => files.length && startParcours(async () => filesSource(files));
-async function startParcours(makeSource) {
+// Lien de visite qui joue un scénario : celui du parcours suivi de « &sc=<scénario> ».
+const scenarioUrl = async (base, s) => `${base}&sc=${await encodeScenario(s)}`;
+// base : lien de visite du parcours (dossier Drive, adresse web), pour envoyer un scénario ;
+// scenario / scenarioName : scénario à jouer dès l'ouverture.
+async function startParcours(makeSource, { base = null, scenario = null, scenarioName = null } = {}) {
   let wait = null;
   try {
     wait = setTimeout(() => toast('Ouverture du parcours…', false, 15000), 400);
     const source = await makeSource();
     const parcours = await openParcours(document.body, source, {
+      scenario,
+      scenarioName,
+      scenarioLink: async (s) => {
+        if (!base) throw new Error('Ce parcours a été ouvert depuis des fichiers de l’appareil : pas de lien à envoyer. Ouvrez-le par son lien (Google Drive ou adresse web) pour envoyer un scénario.');
+        return scenarioUrl(base, s);
+      },
       onExit: () => {
         active = null;
         // On revient à la page du parcours (déjà à cette adresse : on la réaffiche).
@@ -1075,6 +1086,7 @@ async function photoSources(photos) {
       srcType: out ? 'equirect' : p.srcType,
       params: out ? {} : p.params,
       hotspots: (p.hotspots || []).filter((h) => !hidden.has(h.target)).map((h) => ({ ...h, dist: distTo(p, h) })),
+      roomKey: roomKey(p.room, p.name),
       relief: p.relief || null,
       reliefKey: reliefKey(p.params),
       depthSrc,
@@ -1098,10 +1110,23 @@ async function openViewer(id, gen = routeGen) {
     return;
   }
   try {
+    const plan = await db.getPlanDrawing();
     const player = createPlayer(document.body, {
       photos: list,
       startId: id,
       title: 'PhotoSphère',
+      // Scénarios : rangés avec le plan (donc dans photosphere.json, copié sur Google Drive).
+      scenarios: plan.scenarios || [],
+      onScenarios: async (scenarios) => {
+        const d = await db.getPlanDrawing();
+        await db.putPlanDrawing({ ...d, scenarios });
+      },
+      scenarioLink: async (s) => {
+        const gd = (await db.getSetting('drive-sync')) || {};
+        const folder = driveFolderId(gd.link || '');
+        if (!folder) throw new Error('Pour envoyer un scénario, indiquez d’abord le dossier Google Drive du parcours (bouton « Dossier de travail », copie sur Google Drive), puis synchronisez.');
+        return scenarioUrl(parcoursLink(folder), s);
+      },
       initialView: state.lastView,
       onExit: () => (location.hash = state.origin === 'plan' ? '#/plan' : '#/'),
       onPlan: () => (location.hash = '#/plan'),
@@ -1250,8 +1275,8 @@ function openParcoursView() {
   linkInput.addEventListener('keydown', (e) => e.key === 'Enter' && app.querySelector('[data-parcours-drive]').click());
   app.querySelector('[data-parcours-drive]').addEventListener('click', () => {
     const v = linkInput.value;
-    if (driveFolderId(v)) return startParcours(() => driveSource(v));
-    if (webUrl(v)) return startParcours(() => webSource(webUrl(v)));
+    if (driveFolderId(v)) return startParcours(() => driveSource(v), { base: parcoursLink(driveFolderId(v)) });
+    if (webUrl(v)) return startParcours(() => webSource(webUrl(v)), { base: `${location.origin + location.pathname}#/parcours?url=${encodeURIComponent(webUrl(v))}` });
     toast('Collez le lien d’un dossier Google Drive, ou l’adresse web du dossier publié.', true);
   });
   app.querySelector('[data-copy-link]').addEventListener('click', async () => {
@@ -1316,8 +1341,12 @@ async function route() {
     openParcoursView();
     // Lien de visite : #/parcours?drive=<dossier> ouvre directement le parcours.
     const q = new URLSearchParams(location.hash.split('?')[1] || '');
-    if (q.get('drive')) startParcours(() => driveSource(q.get('drive')));
-    else if (q.get('url')) startParcours(() => webSource(q.get('url')));
+    // &sc=<scénario> : scénario reçu, joué dès l'ouverture ; &scenario=<nom> : celui du parcours.
+    let scenario = null;
+    if (q.get('sc')) scenario = await decodeScenario(q.get('sc')).catch(() => (toast('Le scénario du lien est illisible : la visite s’ouvre sans lui.', true), null));
+    const opts = { scenario, scenarioName: q.get('scenario') };
+    if (q.get('drive')) startParcours(() => driveSource(q.get('drive')), { ...opts, base: parcoursLink(q.get('drive')) });
+    else if (q.get('url')) startParcours(() => webSource(q.get('url')), { ...opts, base: `${location.origin + location.pathname}#/parcours?url=${encodeURIComponent(q.get('url'))}` });
     return;
   }
   state.origin = 'library';

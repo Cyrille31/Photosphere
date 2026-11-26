@@ -21,7 +21,7 @@ export function buildSettings(photos, plan = null) {
     exportedAt: new Date().toISOString(),
     // Photo de départ du parcours (choisie sur le plan), désignée par son nom de fichier.
     ...(plan && plan.start && byId.has(plan.start) ? { start: byId.get(plan.start).fileName, ...(plan.startYaw != null ? { startYaw: plan.startYaw } : {}) } : {}),
-    ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH || (plan.rooms || []).length || plan.north || plan.pxPerM) ? { plan: withoutStart(plan) } : {}),
+    ...(plan && (plan.lines.length || plan.texts.length || plan.ceilingH || (plan.rooms || []).length || plan.north || plan.pxPerM || (plan.scenarios || []).length) ? { plan: withoutStart(plan) } : {}),
     // Ordre de prise de vue (puis nom) : un parcours partagé commence par la première photo prise.
     photos: [...photos].sort((a, b) => (a.takenAt || 0) - (b.takenAt || 0) || String(a.name).localeCompare(String(b.name))).map((p) => ({
       file: p.fileName,
