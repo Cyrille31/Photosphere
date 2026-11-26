@@ -11,6 +11,7 @@ const SECTIONS = [
   ['liens', 'Liens entre photos'],
   ['relief', 'Relief (effet 3D dans le casque)'],
   ['visionneuse', 'Visionneuse et casque VR'],
+  ['scenario', 'Scénarios de visite'],
   ['plan', 'Plan'],
   ['piece', 'Plan des pièces'],
   ['video', 'Vidéos 360'],
@@ -82,11 +83,18 @@ const MANUAL = `
 
 <section id="man-visionneuse"><h3>Visionneuse et casque VR</h3>
 <ul>
-  <li><b>👆 Tactile</b> : doigt ou souris (molette : zoom). <b>📱 Bout de bras</b> : bougez le téléphone. <b>🥽 Casque</b> : écran partagé pour casque type Cardboard ; fixez un lien 1,5 s pour y aller, ou appuyez sur le bouton du casque. Un appui à <b>gauche</b> ou à <b>droite</b> de l’écran (boutons latéraux de certains casques) tourne la vue de 30° de ce côté, comme en tournant la tête ; une télécommande Bluetooth fait de même avec ses flèches (Entrée : ouvrir le lien regardé). Une petite flèche accolée au rond de visée montre où se trouve le lien le plus proche. Sur smartphone, les cibles sont plus petites et leurs noms restent à l’endroit, même téléphone penché ou à l’envers ; les noms s’affichent sans le numéro de prise de vue du début (« 360_0891 salon_1 2 » → « salon_1 2 »), dans le casque comme ailleurs. <b>WebXR</b> si le navigateur le permet.</li>
+  <li><b>👆 Tactile</b> : doigt ou souris (molette : zoom). <b>📱 Bout de bras</b> : bougez le téléphone. <b>🥽 Casque</b> : écran partagé pour casque type Cardboard ; fixez un lien 1,5 s pour y aller, ou appuyez sur le bouton du casque. Un appui à <b>gauche</b> ou à <b>droite</b> de l’écran (boutons latéraux de certains casques) tourne la vue de 30° de ce côté, comme en tournant la tête ; une télécommande Bluetooth fait de même avec ses flèches (Entrée : ouvrir le lien regardé). Une petite flèche accolée au rond de visée montre où se trouve le lien le plus proche, et des <b>mini-flèches</b> montrent les autres liens (leur nombre et leur direction) ; les flèches vers un lien qui mène dans <b>une autre pièce</b> sont <b>jaune orangé</b> (pièce indiquée dans l’éditeur, onglet Pièce, ou proposée d’après le nom de la photo). Avec le relief, le rond de visée et ses flèches paraissent <b>à la distance de la cible</b> désignée. En arrivant sur une photo, les cibles sont visibles mais <b>inactives 1,5 s</b> (atténuées) : on ne repart pas aussitôt vers une autre photo. Sur smartphone, les cibles sont plus petites et leurs noms restent à l’endroit, même téléphone penché ou à l’envers ; les noms s’affichent sans le numéro de prise de vue du début (« 360_0891 salon_1 2 » → « salon_1 2 »), dans le casque comme ailleurs. <b>WebXR</b> si le navigateur le permet.</li>
   <li><b>Réglages du casque</b> (⚙) : champ de vision ; correction des lentilles k1 / k2 (préréglages Cardboard v1 / v2, RAZ) — les lignes droites doivent rester droites jusqu’au bord ; écartement des centres des deux images — chaque œil doit voir le point de visée au centre de sa lentille ; intensité du relief ; <b>inverser les images gauche et droite</b> (pour voir le relief en louchant sur l’écran du téléphone, sans casque : prenez aussi « Sans correction » pour les lentilles) ; <b>taille des cibles</b> et <b>distance d’apparition</b> (par défaut, petites et visibles seulement quand le regard en est à moins de 11°, le champ de vision étant étroit).</li>
   <li>« ✏ Éditer » ouvre l’éditeur sur la photo affichée ; « 🗺 Plan » revient directement au plan ; ☰ : liste des photos avec recherche.</li>
 </ul></section>
 
+<section id="man-scenario"><h3>Scénarios de visite</h3>
+<ul>
+  <li>Dans la visionneuse, <b>🎞 Scénarios</b> → <b>⏺ Enregistrer un scénario</b> : déplacez-vous (vue, liens), puis <b>⏹ Terminer</b> et donnez-lui un nom. Les photos parcourues et la direction du regard sont enregistrées (les temps de chargement ne comptent pas).</li>
+  <li><b>▶</b> rejoue le scénario : les photos s’enchaînent comme enregistré, et en tactile la vue suit l’enregistrement (au bout de bras et dans le casque, la tête reste libre : seules les photos changent, orientées comme à l’enregistrement ; les cibles ne s’ouvrent pas au regard pendant la lecture). Toucher la vue (ou ⏹ Reprendre la main, ou le bouton du casque) arrête la lecture ; à la fin, on <b>continue librement</b>.</li>
+  <li><b>🔗</b> donne le lien à envoyer : il ouvre le parcours partagé et joue le scénario dès l’ouverture. Depuis la bibliothèque, il faut avoir indiqué le dossier Google Drive du parcours (Dossier de travail, copie sur Google Drive) et l’avoir synchronisé ; un visiteur d’un parcours ouvert par son lien peut aussi enregistrer et envoyer ses propres scénarios.</li>
+  <li>Les scénarios sont rangés avec le plan, donc dans <code>photosphere.json</code> : un parcours partagé les propose aussi dans 🎞 Scénarios.</li>
+</ul></section>
 <section id="man-plan"><h3>Plan</h3>
 <ul>
   <li>Nord en haut. Photos en sphères (Ctrl + glisser : les faire tourner) ou en rectangles ; chaque lien part de son point de contact dans la photo, que l’on peut faire glisser.</li>

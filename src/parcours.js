@@ -8,6 +8,7 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { reliefKey } from './depth.js';
 import { reliefNames, RELIEF_DIR, RELIEF_FILE_RE } from './relief-files.js';
 import { SETTINGS_FILE_NAME } from './settings-file.js';
+import { roomKey } from './room.js';
 
 const key = (n) => String(n || '').toLowerCase();
 
@@ -173,6 +174,7 @@ export function tourFromSettings(data, has) {
       id: key(e.file),
       file: e.file,
       name: e.name || e.file,
+      roomKey: roomKey(e.room, e.name || e.file),
       srcType: e.srcType || 'fisheye',
       params,
       hotspots: (e.hotspots || []).filter((h) => ids.has(key(h.target))).map((h) => ({ target: key(h.target), yaw: h.yaw, pitch: h.pitch, label: h.label || '', dist: distTo(e, h.target), ...(h.arrive ? { arrive: h.arrive } : {}) })),
@@ -186,7 +188,9 @@ export function tourFromSettings(data, has) {
 }
 
 // Ouvre la visite. Renvoie { dispose, cache, photos }.
-export async function openParcours(container, source, { onExit, title } = {}) {
+// scenario : scénario à jouer dès l'ouverture (lien reçu) ; scenarioName : celui du fichier de réglages
+// qui porte ce nom ; scenarioLink(s) → lien à envoyer.
+export async function openParcours(container, source, { onExit, title, scenario, scenarioName, scenarioLink } = {}) {
   if (!source.has(SETTINGS_FILE_NAME)) throw new Error(`Le fichier « ${SETTINGS_FILE_NAME} » est absent : choisissez-le avec les photos.`);
   let data;
   try {
@@ -211,9 +215,14 @@ export async function openParcours(container, source, { onExit, title } = {}) {
   // du parcours ; les photos y sont rangées dans l'ordre de prise de vue), sinon la première.
   const start = (data.start && byId.get(key(data.start))) || photos.find((p) => p.hotspots.length) || photos[0];
   let disposed = false;
+  const scenarios = (data.plan && Array.isArray(data.plan.scenarios) && data.plan.scenarios) || [];
+  const auto = scenario || (scenarioName ? scenarios.find((s) => s.name === scenarioName) : null);
   const player = createPlayer(container, {
     photos,
     startId: start.id,
+    scenarios,
+    ...(auto ? { autoScenario: auto } : {}),
+    ...(scenarioLink ? { scenarioLink } : {}),
     // Sens du regard en entrant (choisi sur le plan, flèche autour de la photo de départ).
     ...(data.startYaw != null && start === byId.get(key(data.start)) ? { initialView: { yaw: (data.startYaw * Math.PI) / 180, pitch: 0 } } : {}),
     title: title || data.title || 'Parcours',

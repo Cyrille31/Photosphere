@@ -121,6 +121,10 @@ uniform float uDwell;
 uniform float uReticle;
 uniform float uHotRing; // rayon intérieur du cercle des cibles (fraction de leur taille)
 uniform vec2 uRetDir; // direction (écran, y vers le haut) du lien le plus proche ; (0, 0) : aucune flèche
+uniform float uRetOut; // 1 : ce lien mène hors de la pièce (autre couleur)
+uniform vec3 uRetMini[8]; // mini-flèches vers les autres liens : direction (xy), hors de la pièce (z)
+uniform int uRetMiniN;
+uniform float uRetTan; // décalage horizontal du rond de visée (espace tangente) : il paraît à la distance de la cible
 uniform float uGrid;
 // Relief : carte de profondeur équirectangulaire (R : distance, G : distance du fond caché derrière les
 // objets proches, en hauteurs d'objectif), couleurs de ce fond, position de l'œil.
@@ -291,11 +295,26 @@ void main() {
   }
 
   if (uReticle > 0.0 && uViewMode == 0) {
-    vec2 px = (t0 / uProj.xz) * uVp.zw * 0.5;
+    vec2 px = ((t0 - vec2(uRetTan, 0.0)) / uProj.xz) * uVp.zw * 0.5;
     float d = length(px);
     float rr = uReticle;
     float ring = smoothstep(rr * 0.74, rr * 0.82, d) * (1.0 - smoothstep(rr * 0.9, rr, d));
     col = mix(col, vec3(1.0), ring * 0.9);
+    vec3 outCol = vec3(1.0, 0.78, 0.18); // liens vers une autre pièce : jaune orangé
+    // Mini-flèches : une par autre lien (leur nombre et leur direction), juste autour du rond.
+    for (int k = 0; k < 8; k++) {
+      if (k >= uRetMiniN) break;
+      vec2 mu = normalize(uRetMini[k].xy);
+      vec2 mv = vec2(-mu.y, mu.x);
+      float ma = dot(px, mu), mb = abs(dot(px, mv));
+      float m0 = rr * 1.1, m1 = rr * 1.5;
+      float mw = (m1 - ma) * 0.55;
+      float mt = smoothstep(m0 - 1.0, m0, ma) * (1.0 - smoothstep(m1 - 1.0, m1, ma)) * (1.0 - smoothstep(mw - 1.0, mw, mb));
+      float mo = mw + 1.5;
+      float me = smoothstep(m0 - 2.5, m0 - 1.5, ma) * (1.0 - smoothstep(m1 + 1.0, m1 + 2.0, ma)) * (1.0 - smoothstep(mo - 1.0, mo, mb));
+      col = mix(col, vec3(0.0), me * 0.45);
+      col = mix(col, mix(vec3(1.0), outCol, uRetMini[k].z), mt * 0.85);
+    }
     // Flèche accolée au rond de visée, tournée vers le lien le plus proche (comme le curseur sur PC).
     if (dot(uRetDir, uRetDir) > 0.0) {
       vec2 u = normalize(uRetDir);
@@ -307,7 +326,7 @@ void main() {
       float wo = wd + 2.0;
       float edge = smoothstep(r0 - 3.0, r0 - 2.0, a) * (1.0 - smoothstep(r1 + 1.5, r1 + 2.5, a)) * (1.0 - smoothstep(wo - 1.0, wo, b));
       col = mix(col, vec3(0.0), edge * 0.55);
-      col = mix(col, vec3(1.0), tri);
+      col = mix(col, mix(vec3(1.0), outCol, uRetOut), tri);
     }
   }
 

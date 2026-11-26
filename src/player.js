@@ -3,6 +3,7 @@ import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
 import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt } from './depth.js';
+import { createRecorder, scenarioAt, scenarioDuration, scenarioFor, scenarioFileKey } from './scenario.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
@@ -10,6 +11,10 @@ const DWELL_MS = 1600;
 const HOT_NEAR = 10, HOT_FAR = 32, HOT_FADE_MS = 160;
 const EYE_HALF_GAP = 0.032; // demi-écart des yeux (m)
 const DEFAULT_CAMERA_HEIGHT = 1.6;
+// En arrivant sur une photo, les cibles sont visibles mais ne s'ouvrent pas au regard pendant ce temps
+// (pour ne pas repartir aussitôt vers une autre photo).
+const ARRIVE_LOCK_MS = 1500;
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -50,8 +55,15 @@ export function displayName(name) {
   return words.join(' ') || String(name || '');
 }
 
-export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf }) {
+// photo.roomKey : pièce de la photo (nom en minuscules, « #none » hors de toute pièce) : les flèches vers
+// une autre pièce ont une autre couleur.
+// scenarios : scénarios de visite (voir scenario.js) ; onScenarios(liste) : les enregistre ;
+// scenarioLink(scénario) → Promise<lien à envoyer> ; autoScenario : scénario joué dès l'ouverture.
+export function createPlayer(container, { photos, startId, onExit, onEdit, onPlan, title, initialView, onShow, maxHalf, scenarios = [], onScenarios, scenarioLink, autoScenario }) {
   const byId = new Map(photos.map((p) => [p.id, p]));
+  const fileOf = (p) => p.fileName || p.file || p.id;
+  const byFile = new Map(photos.map((p) => [scenarioFileKey(fileOf(p)), p]));
+  const otherRoom = (a, b) => !!(a && b && a.roomKey && b.roomKey && a.roomKey !== b.roomKey);
   const root = el('div', 'ps-player');
   root.innerHTML = `
     <canvas class="ps-canvas"></canvas>
@@ -67,8 +79,10 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       <div class="ps-title"></div>
       ${onPlan ? '<button class="ps-btn ps-plan" title="Ouvrir le plan">🗺<span>Plan</span></button>' : ''}
       ${onEdit ? '<button class="ps-btn ps-edit" title="Redresser cette photo ou y ajouter des liens">✏<span>Éditer</span></button>' : ''}
+      <button class="ps-btn ps-scn-btn" title="Scénarios : enregistrer un déplacement, le rejouer, l’envoyer">🎞<span>Scénarios</span></button>
       <button class="ps-btn ps-list-btn" title="Liste des photos">☰</button>
     </div>
+    <div class="ps-scnbar" hidden><span class="ps-scn-text"></span><button class="ps-btn ps-scn-stop"></button></div>
     <div class="ps-video" hidden>
       <button class="ps-btn ps-video-play" title="Pause / lecture">⏸</button>
       <button class="ps-btn ps-video-stop" title="Arrêter la vidéo (retour à l’image)">⏹</button>
@@ -84,6 +98,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     <button class="ps-btn ps-exit-vr" title="Quitter le casque">✕</button>
     <button class="ps-btn ps-vr-settings" title="Réglages du casque">⚙</button>
     <div class="ps-panel ps-list" hidden></div>
+    <div class="ps-panel ps-scn" hidden></div>
     <div class="ps-panel ps-headset" hidden>
       <h3>Réglages du casque</h3>
       <label>Champ de vision par œil <output></output><input type="range" name="eyeFov" min="60" max="120" step="1"></label>
@@ -166,7 +181,19 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     if (d == null && h.dist > 0) d = h.dist;
     return d ? Math.min(1.15, Math.max(0.45, TARGET_REF_M / d)) : 1;
   }
+  // Distance (m) de ce que désigne la cible : par le relief, sinon d'après le plan.
+  function targetDist(photo, h) {
+    if (photo.depthMaps && hasRelief(photo) && photo.relief && photo.relief.h) {
+      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * photo.relief.h;
+      if (v > 0.2 && v < 200) return v;
+    }
+    return h.dist > 0 ? h.dist : null;
+  }
+  let hotInfo = []; // par cible : { dist (m ou null), out (mène dans une autre pièce) }
   function placeHotspots(photo) {
+    hotInfo = hotspotsOf(photo).map((h) => ({ dist: targetDist(photo, h), out: !h.video && otherRoom(photo, byId.get(h.target)) }));
+    root.dataset.hotOut = hotInfo.map((x) => (x.out ? 1 : 0)).join(','); // (lisible par les tests)
+    root.dataset.hotDist = hotInfo.map((x) => (x.dist ? x.dist.toFixed(2) : '')).join(',');
     const list = hotspotsOf(photo).map((h) => ({ ...h, scale: targetScale(photo, h) }));
     renderer.setHotspots(list);
     root.dataset.hotScales = list.map((h) => h.scale.toFixed(2)).join(','); // (lisible par les tests)
@@ -254,7 +281,20 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   $('.ps-video-stop').addEventListener('click', () => stopVideo());
 
   // arrive : vue d'arrivée réglée sur le lien suivi ({ yaw, pitch } en degrés), sinon on garde la vue.
-  async function go(id, keepView = true, arrive = null) {
+  // Pendant un changement de photo (fondu, chargement), l'horloge de l'enregistrement s'arrête : le
+  // scénario ne garde pas ces attentes (la lecture attend le chargement de son côté).
+  let going = 0;
+  async function go(...args) {
+    const g0 = performance.now();
+    going++;
+    try {
+      return await goInner(...args);
+    } finally {
+      going--;
+      if (rec) rec.t0 += performance.now() - g0;
+    }
+  }
+  async function goInner(id, keepView = true, arrive = null) {
     const photo = byId.get(id);
     if (!photo) return;
     stopVideo(false);
@@ -317,6 +357,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     hotAlpha = [];
     sel = -1;
     dwell = 0;
+    arrivedAt = performance.now();
     $('.ps-title').textContent = displayName(photo.name);
     buildLabels();
     dirty = true;
@@ -346,6 +387,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   function follow(i) {
     const h = hotspotsOf(current)[i];
     if (!h) return;
+    if (play) stopPlayback('Vous avez repris la main : continuez librement.');
     if (h.video) return playVideo(current);
     let arrive = h.arrive || null;
     if (!arrive) {
@@ -379,6 +421,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
 
   function onTap(x, y) {
     if (!current) return;
+    if (play) return stopPlayback('Vous avez repris la main : continuez librement.');
     if (controller.stereo) {
       // Casque : un appui à gauche ou à droite de l'écran (boutons latéraux de certains casques) tourne
       // la vue ; au milieu (bouton type Cardboard), il ouvre le lien regardé.
@@ -450,10 +493,12 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     const inHeadset = controller.stereo || !!xrSession;
     const far = inHeadset ? controller.headset.targetAppear ?? 11 : HOT_FAR;
     const near = inHeadset ? far * 0.3 : HOT_NEAR;
+    // Visée au regard, juste après l'arrivée : cibles atténuées (inactives).
+    const dim = (inHeadset || controller.mode === 'gyro') && (arriving(now) || play) ? 0.5 : 1;
     hotAlpha = dirs.map((d, i) => {
       const ang = Math.acos(Math.max(-1, Math.min(1, vecDot(d, ref)))) / DEG;
       const x = Math.min(1, Math.max(0, (far - ang) / (far - near)));
-      const target = i === sel ? 1 : x * x * (3 - 2 * x);
+      const target = i === sel ? 1 : x * x * (3 - 2 * x) * dim;
       const cur = hotAlpha[i] ?? 0;
       const next = cur + (target - cur) * k;
       if (Math.abs(target - next) > 0.01) moving = true;
@@ -516,21 +561,45 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
 
   // Casque / visée au regard : direction, vue du centre de l'écran, du lien le plus proche du regard
   // (pas de flèche quand le regard est déjà sur un lien).
-  function reticleDir(frame) {
+  // En plus : mini-flèches vers les autres liens (leur nombre et leur direction) ; les flèches vers une
+  // autre pièce sont jaune orangé. target : indice du lien désigné (visé, sinon celui de la flèche).
+  function reticleInfo(frame) {
     const dirs = hotDirs();
-    if (!dirs.length || sel >= 0) return null;
     const gaze = controller.gazeDir();
-    if (!gaze) return null;
-    let best = 0, bestAng = Infinity;
-    dirs.forEach((d, i) => {
-      const a = Math.acos(Math.max(-1, Math.min(1, vecDot(d, gaze))));
-      if (a < bestAng) (bestAng = a), (best = i);
-    });
-    const c = mat3Apply(mat3Transpose(frame.eyes[0].cam), dirs[best]);
-    const n = Math.hypot(c[0], c[1]);
-    root.dataset.retDir = n > 1e-6 ? ((Math.atan2(c[1], c[0]) * 180) / Math.PI).toFixed(1) : '';
-    return n > 1e-6 ? [c[0] / n, c[1] / n] : [1, 0];
+    if (!dirs.length || !gaze) {
+      root.dataset.retDir = '';
+      root.dataset.retMini = '0';
+      return { dir: null, target: -1, mini: [] };
+    }
+    const angs = dirs.map((d) => Math.acos(Math.max(-1, Math.min(1, vecDot(d, gaze)))));
+    let best = 0;
+    angs.forEach((a, i) => a < angs[best] && (best = i));
+    const camT = mat3Transpose(frame.eyes[0].cam);
+    const screen = (d) => {
+      const c = mat3Apply(camT, d);
+      const n = Math.hypot(c[0], c[1]);
+      return n > 1e-6 ? [c[0] / n, c[1] / n] : null;
+    };
+    const main = sel >= 0 ? -1 : best;
+    const mini = dirs
+      .map((d, i) => ({ i, a: angs[i] }))
+      .filter((x) => x.i !== main && x.i !== sel)
+      .sort((x, y) => x.a - y.a)
+      .slice(0, 8)
+      .map((x) => {
+        const s = screen(dirs[x.i]);
+        return s && [s[0], s[1], hotInfo[x.i] && hotInfo[x.i].out ? 1 : 0];
+      })
+      .filter(Boolean);
+    root.dataset.retMini = String(mini.length);
+    root.dataset.retMiniOut = String(mini.filter((m) => m[2]).length);
+    let dir = null;
+    if (main >= 0) dir = screen(dirs[main]) || [1, 0];
+    root.dataset.retDir = dir ? ((Math.atan2(dir[1], dir[0]) * 180) / Math.PI).toFixed(1) : '';
+    return { dir, out: main >= 0 && !!(hotInfo[main] && hotInfo[main].out), target: sel >= 0 ? sel : best, mini };
   }
+  let arrivedAt = 0;
+  const arriving = (now) => now - arrivedAt < ARRIVE_LOCK_MS;
   function updateGaze(now) {
     const useGaze = controller.stereo || controller.mode === 'gyro' || xrSession;
     if (!useGaze || !current) {
@@ -541,6 +610,16 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     }
     const gaze = xrSession ? xrGaze : controller.gazeDir();
     if (!gaze) return;
+    // Juste arrivé, ou scénario en cours : cibles visibles mais inactives.
+    if (arriving(now) || play) {
+      if (sel !== -1) dirty = true;
+      sel = -1;
+      dwell = 0;
+      root.querySelectorAll('.ps-eye-labels span').forEach((s) => (s.textContent = ''));
+      root.dataset.locked = '1';
+      return;
+    }
+    delete root.dataset.locked;
     // Casque : le regard « attrape » une cible un peu au-delà de sa taille (réglable).
     const i = nearestHotspot(gaze, controller.stereo || xrSession ? Math.max(3, 1.8 * (controller.headset.targetSize ?? 2.2)) * DEG : 0.11);
     if (i !== sel) {
@@ -601,7 +680,10 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     if (!r || !k || !renderer.depth) return false;
     const h = r.h || DEFAULT_CAMERA_HEIGHT;
     const c = stereoComfort(renderer.depth, cam, EYE_HALF_GAP / h, { budgetDeg: 1.2 * k });
-    if (comfort.dg === null) Object.assign(comfort, c);
+    if (comfort.dg === null) {
+      Object.assign(comfort, c);
+      dirty = true; // (le rond de visée se place à l'image suivante)
+    }
     else {
       const ndg = Math.exp(Math.log(comfort.dg) + 0.15 * (Math.log(c.dg) - Math.log(comfort.dg)));
       const nh = comfort.half + 0.15 * (c.half - comfort.half);
@@ -613,8 +695,27 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     root.dataset.eyeGap = (2 * comfort.half * h * 100).toFixed(2);
     return true;
   }
-  // Deux yeux (Cardboard) : décalés de ±demi-écart et tournés vers le point regardé.
-  function comfortEyes(cam) {
+  // Distance (en hauteurs d'objectif) où paraît le rond de visée : celle de la cible désignée, lissée.
+  let retD = null;
+  function reticleDepth(target) {
+    const r = current && current.relief;
+    const h = (r && r.h) || DEFAULT_CAMERA_HEIGHT;
+    const info = target >= 0 ? hotInfo[target] : null;
+    const want = info && info.dist ? Math.max(0.3, info.dist / h) : comfort.dg;
+    if (!want) return null;
+    if (retD === null) retD = want;
+    else {
+      const n = Math.exp(Math.log(retD) + 0.2 * (Math.log(want) - Math.log(retD)));
+      if (Math.abs(n / retD - 1) > 1e-3) dirty = true;
+      retD = n;
+    }
+    root.dataset.reticleDist = (retD * h).toFixed(2);
+    return retD;
+  }
+  // Deux yeux (Cardboard) : décalés de ±demi-écart et tournés vers le point regardé. retTan : décalage du
+  // rond de visée dans chaque œil pour qu'il paraisse à la distance D de la cible (et non à celle où les
+  // yeux convergent).
+  function comfortEyes(cam, D = null) {
     if (!updateComfort(cam)) return null;
     const right = [cam[0], cam[3], cam[6]], up = [cam[1], cam[4], cam[7]], fwd = [cam[2], cam[5], cam[8]];
     return [-1, 1].map((sg) => {
@@ -622,7 +723,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       const f = vecNormalize(fwd.map((v, i) => v * comfort.dg - e[i]));
       const rr = vecNormalize(vecCross(up, f));
       const uu = vecCross(f, rr);
-      return { offset: e, cam: [rr[0], uu[0], f[0], rr[1], uu[1], f[1], rr[2], uu[2], f[2]] };
+      const retTan = D ? sg * comfort.half * (1 / comfort.dg - 1 / D) : 0;
+      return { offset: e, retTan, cam: [rr[0], uu[0], f[0], rr[1], uu[1], f[1], rr[2], uu[2], f[2]] };
     });
   }
 
@@ -635,14 +737,17 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       const el = videoOn.el;
       $('.ps-video-time').textContent = `${el.currentTime.toFixed(1)} / ${(el.duration || 0).toFixed(1)} s`;
     }
+    scenarioTick(now);
     if (xrSession) return;
     updateGaze(now);
     if (!dirty && controller.mode !== 'gyro') return;
     dirty = false;
     const frame = controller.frame();
+    const aim = controller.stereo || controller.mode === 'gyro';
+    const ret = aim ? reticleInfo(frame) : null;
     if (frame.stereo) {
       reliefHint();
-      const eyes = comfortEyes(frame.eyes[0].cam);
+      const eyes = comfortEyes(frame.eyes[0].cam, renderer.depth && comfort.dg ? reticleDepth(ret.target) : null);
       // Inversion (vision en louchant) : l'image de l'œil gauche va à droite, et inversement.
       const swap = !!controller.headset.swapEyes;
       if (eyes) frame.eyes.forEach((e, k) => Object.assign(e, eyes[swap ? 1 - k : k]));
@@ -656,7 +761,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       hotSize: controller.stereo ? (controller.headset.targetSize ?? 2.2) * DEG : controller.mode === 'gyro' ? 0.055 : 0.07,
       hotRing: controller.stereo || controller.mode === 'gyro' ? 0.92 : 0.86,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
-      retDir: controller.stereo || controller.mode === 'gyro' ? reticleDir(frame) : null,
+      retDir: ret ? ret.dir : null,
+      retOut: ret ? ret.out : false,
+      retMini: ret ? ret.mini : null,
     });
     placeLabels(frame);
     updateCursor(frame);
@@ -774,6 +881,179 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     }
   }
 
+  // ---------- scénarios ----------
+  // Enregistrement : photo affichée et direction du regard, à chaque image. Lecture : les photos
+  // s'enchaînent comme enregistré ; en tactile, la vue suit aussi l'enregistrement (au gyroscope et au
+  // casque, chacun garde la tête libre : seules les photos changent, orientées comme à l'enregistrement).
+  // Toucher l'écran (ou ⏹) rend la main ; à la fin, on continue librement.
+  const scnList = scenarios.slice();
+  let rec = null; // { r, t0 }
+  let play = null; // { s, t, last, waiting }
+  const scnBar = $('.ps-scnbar');
+  const viewNow = () => {
+    const m = controller.camMatrix();
+    return { yaw: headingOf(m) / DEG, pitch: Math.asin(Math.max(-1, Math.min(1, m[5]))) / DEG };
+  };
+  function showBar(text, stopLabel) {
+    scnBar.hidden = false;
+    $('.ps-scn-text').textContent = text;
+    $('.ps-scn-stop').textContent = stopLabel;
+  }
+  function startRecording() {
+    if (play) stopPlayback(null);
+    rec = { r: createRecorder(), t0: performance.now() };
+    root.dataset.scenario = 'recording';
+    showBar('⏺ Enregistrement 0:00', '⏹ Terminer');
+    toast('Enregistrement du scénario : déplacez-vous (vue, liens) ; ⏹ pour terminer.', 4000);
+  }
+  function stopRecording() {
+    if (!rec) return;
+    const t = (performance.now() - rec.t0) / 1000;
+    const r = rec.r;
+    rec = null;
+    scnBar.hidden = true;
+    delete root.dataset.scenario;
+    if (t < 1) return toast('Scénario trop court : rien n’est gardé.');
+    const name = window.prompt('Nom du scénario :', `Scénario ${scnList.length + 1}`);
+    if (name === null) return toast('Scénario abandonné.');
+    const s = r.finish(name.trim() || `Scénario ${scnList.length + 1}`, t);
+    scnList.push(s);
+    if (onScenarios) onScenarios(scnList.slice());
+    toast(`Scénario « ${s.name} » enregistré (${fmtTime(scenarioDuration(s))}). Envoyez-le depuis 🎞 Scénarios.`, 5000);
+    renderScenarios();
+  }
+  function startPlayback(s0) {
+    const s = scenarioFor(s0, (f) => byFile.has(scenarioFileKey(f)));
+    if (!s) return toast('Ce scénario passe par des photos absentes de cette visite.');
+    if (rec) stopRecording();
+    stopVideo();
+    play = { s, t: 0, last: performance.now(), waiting: false, dur: scenarioDuration(s), first: true };
+    root.dataset.scenario = 'playing';
+    showBar('▶ ' + s.name, '⏹ Reprendre la main');
+    $('.ps-scn').hidden = true;
+  }
+  function stopPlayback(msg) {
+    if (!play) return;
+    play = null;
+    scnBar.hidden = true;
+    delete root.dataset.scenario;
+    // Les cibles restent un instant inactives : on ne part pas aussitôt vers une autre photo.
+    arrivedAt = performance.now();
+    if (msg) toast(msg, 4000);
+    dirty = true;
+  }
+  function scenarioTick(now) {
+    if (rec && current && !going) {
+      const t = (now - rec.t0) / 1000;
+      const v = viewNow();
+      rec.r.sample(t, fileOf(current), v.yaw, v.pitch);
+      $('.ps-scn-text').textContent = '⏺ Enregistrement ' + fmtTime(t);
+    }
+    if (!play) return;
+    if (play.waiting) {
+      play.last = now;
+      return;
+    }
+    play.t += Math.max(0, now - play.last) / 1000;
+    play.last = now;
+    if (play.t >= play.dur) return stopPlayback('Fin du scénario : continuez librement.');
+    const at = scenarioAt(play.s, play.t);
+    const photo = byFile.get(scenarioFileKey(at.file));
+    if (photo !== current) {
+      play.waiting = true;
+      const p = play;
+      go(photo.id, true, { yaw: at.yaw, pitch: at.pitch }).then(() => {
+        if (play !== p) return;
+        if (current !== photo) return stopPlayback('Le scénario s’arrête : une photo n’a pas pu être chargée.');
+        p.waiting = false;
+        p.first = false;
+        p.last = performance.now();
+      });
+      return;
+    }
+    // Au gyroscope / au casque, la tête reste libre.
+    if (controller.mode !== 'gyro' && !controller.stereo) {
+      controller.yaw = at.yaw * DEG;
+      controller.pitch = at.pitch * DEG;
+      dirty = true;
+    }
+    $('.ps-scn-text').textContent = `▶ ${play.s.name} ${fmtTime(play.t)} / ${fmtTime(play.dur)}`;
+  }
+  // Toucher la vue (souris, doigt, molette, clavier) pendant la lecture : on reprend la main.
+  const takeOver = () => play && stopPlayback('Vous avez repris la main : continuez librement.');
+  canvas.addEventListener('pointerdown', () => !controller.stereo && takeOver());
+  canvas.addEventListener('wheel', takeOver, { passive: true });
+  $('.ps-scn-stop').addEventListener('click', () => (rec ? stopRecording() : takeOver()));
+
+  const scnPanel = $('.ps-scn');
+  function renderScenarios() {
+    scnPanel.innerHTML = `<h3>Scénarios de visite</h3>
+      <p class="ps-note">Enregistrez un déplacement (photos parcourues, direction du regard), puis rejouez-le ou envoyez-le. Pendant la lecture, touchez l’écran pour reprendre la main ; à la fin, vous continuez librement.</p>`;
+    const recBtn = el('button', 'ps-btn ps-scn-rec', rec ? '⏹ Terminer l’enregistrement' : '⏺ Enregistrer un scénario');
+    recBtn.addEventListener('click', () => {
+      scnPanel.hidden = true;
+      if (rec) stopRecording();
+      else startRecording();
+    });
+    scnPanel.appendChild(recBtn);
+    if (!scnList.length) scnPanel.appendChild(el('p', 'ps-note', 'Aucun scénario pour l’instant.'));
+    const share = el('div', 'ps-scn-share');
+    share.hidden = true;
+    scnList.forEach((s, i) => {
+      const row = el('div', 'ps-scn-item');
+      row.appendChild(el('span', 'ps-scn-name', `${s.name.replace(/</g, '&lt;')} <small>${fmtTime(scenarioDuration(s))}</small>`));
+      const bPlay = el('button', 'ps-btn ps-scn-play', '▶');
+      bPlay.title = 'Lire ce scénario';
+      bPlay.addEventListener('click', () => startPlayback(s));
+      row.appendChild(bPlay);
+      if (scenarioLink) {
+        const bSend = el('button', 'ps-btn ps-scn-send', '🔗');
+        bSend.title = 'Lien à envoyer : ouvre la visite et joue ce scénario';
+        bSend.addEventListener('click', async () => {
+          let link;
+          try {
+            link = await scenarioLink(s);
+          } catch (e) {
+            return toast(e.message, 6000);
+          }
+          share.hidden = false;
+          share.innerHTML = '<label>Lien à envoyer<input type="text" readonly></label>';
+          const inp = share.querySelector('input');
+          inp.value = link;
+          inp.select();
+          try {
+            if (navigator.share && matchMedia('(pointer: coarse)').matches) await navigator.share({ title: s.name, url: link });
+            else {
+              await navigator.clipboard.writeText(link);
+              toast('Lien copié : collez-le dans un message.');
+            }
+          } catch (e) {
+            // partage annulé ou presse-papiers indisponible : le lien reste affiché
+          }
+        });
+        row.appendChild(bSend);
+      }
+      const bDel = el('button', 'ps-btn ps-scn-del', '🗑');
+      bDel.title = 'Supprimer ce scénario';
+      bDel.addEventListener('click', () => {
+        if (!window.confirm(`Supprimer le scénario « ${s.name} » ?`)) return;
+        scnList.splice(i, 1);
+        if (onScenarios) onScenarios(scnList.slice());
+        renderScenarios();
+      });
+      row.appendChild(bDel);
+      scnPanel.appendChild(row);
+    });
+    scnPanel.appendChild(share);
+    const close = el('button', 'ps-btn ps-close-panel', 'Fermer');
+    close.addEventListener('click', () => (scnPanel.hidden = true));
+    scnPanel.appendChild(close);
+  }
+  $('.ps-scn-btn').addEventListener('click', () => {
+    renderScenarios();
+    scnPanel.hidden = !scnPanel.hidden;
+  });
+
   // --- Interface ---
   root.querySelectorAll('.ps-mode').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
   $('.ps-fs').addEventListener('click', () => {
@@ -888,6 +1168,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (e.target.closest && e.target.closest('input, select, textarea')) return;
+    takeOver();
     if (!current || photos.length < 2) return;
     e.preventDefault();
     const i = photos.findIndex((x) => x.id === current.id);
@@ -896,10 +1177,20 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   window.addEventListener('keydown', onKey);
   setActive('touch');
   raf = requestAnimationFrame(loop);
-  go(startId && byId.has(startId) ? startId : photos[0] && photos[0].id, false);
+  // Scénario joué dès l'ouverture (lien reçu) : on commence par sa première photo.
+  const auto = autoScenario ? scenarioFor(autoScenario, (f) => byFile.has(scenarioFileKey(f))) : null;
+  const first = auto ? byFile.get(scenarioFileKey(scenarioAt(auto, 0).file)) : null;
+  const v0 = auto ? scenarioAt(auto, 0) : null;
+  go(first ? first.id : startId && byId.has(startId) ? startId : photos[0] && photos[0].id, false, first ? { yaw: v0.yaw, pitch: v0.pitch } : null).then(() => {
+    if (auto && !disposed) startPlayback(auto);
+  });
 
   return {
     go,
+    playScenario: (s) => startPlayback(s),
+    get scenarios() {
+      return scnList.slice();
+    },
     dispose() {
       disposed = true;
       stopVideo(false);
