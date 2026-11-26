@@ -2,7 +2,7 @@
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
-import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort } from './depth.js';
+import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt } from './depth.js';
 
 const DWELL_MS = 1600;
 // Les cibles des liens n'apparaissent qu'à l'approche de la souris (ou du regard) : pleinement
@@ -153,13 +153,32 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     return list;
   }
 
+  // Taille d'une cible selon sa distance : par le relief (distance réelle de ce qu'elle désigne) s'il
+  // est là, sinon par l'écart des deux photos sur le plan (h.dist, en mètres). 1 à 2,5 m ; plus petite
+  // au-delà, en proportion (jusqu'à 45 %).
+  const TARGET_REF_M = 2.5;
+  function targetScale(photo, h) {
+    let d = null;
+    if (photo.depthMaps && hasRelief(photo) && photo.relief && photo.relief.h) {
+      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * photo.relief.h;
+      if (v > 0.2 && v < 200) d = v;
+    }
+    if (d == null && h.dist > 0) d = h.dist;
+    return d ? Math.min(1.15, Math.max(0.45, TARGET_REF_M / d)) : 1;
+  }
+  function placeHotspots(photo) {
+    const list = hotspotsOf(photo).map((h) => ({ ...h, scale: targetScale(photo, h) }));
+    renderer.setHotspots(list);
+    root.dataset.hotScales = list.map((h) => h.scale.toFixed(2)).join(','); // (lisible par les tests)
+  }
+
   // ---------- vidéos ----------
   // photo.video : { src (URL, Blob ou fonction), srcType, params, loop, autoplay }. Avant le lancement, la
   // photo affichée est l'image choisie de la vidéo (une photosphère comme les autres).
   let videoOn = null; // { photo, el }
   const videoBar = $('.ps-video');
   function refreshHotspots() {
-    renderer.setHotspots(hotspotsOf(current));
+    placeHotspots(current);
     hotAlpha = [];
     sel = -1;
     dwell = 0;
@@ -294,7 +313,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       delete q.depthMaps;
       delete q.depthBgImage;
     }
-    renderer.setHotspots(hotspotsOf(photo));
+    placeHotspots(photo);
     hotAlpha = [];
     sel = -1;
     dwell = 0;
@@ -558,6 +577,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       if (photo.depthBgSrc && !photo.depthBgImage) photo.depthBgImage = await get(photo.depthBgSrc).then(loadImageBitmap).catch(() => null);
       if (reliefFor === photo.id) {
         renderer.setDepth(photo.depthMaps.depth, photo.depthMaps.bg);
+        if (current === photo) placeHotspots(photo);
         renderer.setBackgroundColor(photo.depthBgImage || null);
         dirty = true;
       }
@@ -634,7 +654,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       dwell,
       // Smartphone (bout de bras, casque) : cibles plus petites, au cercle plus fin.
       hotSize: controller.stereo ? (controller.headset.targetSize ?? 2.2) * DEG : controller.mode === 'gyro' ? 0.055 : 0.07,
-      hotRing: controller.stereo || controller.mode === 'gyro' ? 0.86 : 0.72,
+      hotRing: controller.stereo || controller.mode === 'gyro' ? 0.92 : 0.86,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
       retDir: controller.stereo || controller.mode === 'gyro' ? reticleDir(frame) : null,
     });

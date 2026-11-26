@@ -969,7 +969,7 @@ async function exportTourDialog() {
         d.close();
         const b = busy('Création de la visite');
         try {
-          const blob = await exportTourHtml(ready, { title, startId, startYaw: startId === planD.start && planD.startYaw != null ? planD.startYaw : null, maxWidth, onProgress: b.update });
+          const blob = await exportTourHtml(ready, { title, startId, startYaw: startId === planD.start && planD.startYaw != null ? planD.startYaw : null, maxWidth, pxPerM: planD.pxPerM || 50, onProgress: b.update });
           download(blob, title.replace(/[\\/:*?"<>|]+/g, '_') + '.html');
         } catch (e) {
           toast(e.message, true);
@@ -1048,6 +1048,13 @@ async function photoSources(photos) {
   const list = [];
   // Photos retirées du plan : on ne propose plus de liens vers elles dans la navigation.
   const hidden = new Set(photos.filter((p) => p.mapHidden).map((p) => p.id));
+  // Distance (m) entre deux photos placées sur le plan : la cible d'un lien lointain est plus petite.
+  const ppm = (await db.getPlanDrawing()).pxPerM || 50;
+  const byId = new Map(photos.map((p) => [p.id, p]));
+  const distTo = (p, h) => {
+    const q = byId.get(h.target);
+    return p.mapPlaced && q && q.mapPlaced && p.mapPos && q.mapPos ? Math.hypot(q.mapPos.x - p.mapPos.x, q.mapPos.y - p.mapPos.y) / ppm : 0;
+  };
   for (const p of photos) {
     const out = p.status === 'done' ? await db.getBlob(p.id + ':out') : null;
     const blob = out || (await db.getBlob(p.id + ':orig'));
@@ -1067,7 +1074,7 @@ async function photoSources(photos) {
       src: url,
       srcType: out ? 'equirect' : p.srcType,
       params: out ? {} : p.params,
-      hotspots: (p.hotspots || []).filter((h) => !hidden.has(h.target)),
+      hotspots: (p.hotspots || []).filter((h) => !hidden.has(h.target)).map((h) => ({ ...h, dist: distTo(p, h) })),
       relief: p.relief || null,
       reliefKey: reliefKey(p.params),
       depthSrc,

@@ -54,7 +54,13 @@ async function depthItem(p) {
 }
 
 // Visite autonome : un seul fichier .html qui s'ouvre sur n'importe quel smartphone ou ordinateur.
-export async function exportTourHtml(photos, { title, startId, startYaw = null, maxWidth = 4096, onProgress }) {
+export async function exportTourHtml(photos, { title, startId, startYaw = null, maxWidth = 4096, pxPerM = 50, onProgress }) {
+  // Distance (m) entre deux photos placées sur le plan : la cible d'un lien lointain est plus petite.
+  const byId = new Map(photos.map((p) => [p.id, p]));
+  const distTo = (p, t) => {
+    const q = byId.get(t);
+    return p.mapPlaced && q && q.mapPlaced && p.mapPos && q.mapPos ? Math.hypot(q.mapPos.x - p.mapPos.x, q.mapPos.y - p.mapPos.y) / pxPerM : 0;
+  };
   const { code, css } = await bundlePlayer();
   const items = [];
   for (let i = 0; i < photos.length; i++) {
@@ -67,7 +73,7 @@ export async function exportTourHtml(photos, { title, startId, startYaw = null, 
       id: p.id,
       name: p.name,
       src: await blobToDataUrl(small),
-      hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label, arrive }) => ({ target, yaw, pitch, label, arrive })),
+      hotspots: (p.hotspots || []).map(({ target, yaw, pitch, label, arrive }) => ({ target, yaw, pitch, label, arrive, dist: distTo(p, target) })),
       ...(await depthItem(p)),
     });
   }

@@ -309,6 +309,18 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.badge.ok').length === 2, null, { timeout: 180000 });
 
   console.log('Visionneuse');
+  // Les deux photos placées à 10 m l'une de l'autre sur le plan : la cible du lien est plus petite.
+  await page.evaluate(async () => {
+    const db = await import('./src/db.js');
+    const ps = await db.listPhotos();
+    for (const [i, p] of ps.entries()) await db.updatePhoto(p.id, (cur) => ({ ...cur, mapPlaced: true, mapPos: { x: i * 500, y: 0 } }));
+  });
+  await page.goto(base + '#/view/' + result.id);
+  await page.waitForSelector('.ps-player canvas');
+  await page.waitForTimeout(1000);
+  const scales = await page.evaluate(() => document.querySelector('.ps-player').dataset.hotScales);
+  check(scales === '0.45', `visionneuse : cible d’un lien vers une photo à 10 m réduite (taille ${scales})`);
+  await page.goto(base + '#/');
   await page.goto(base + '#/view/' + result.id);
   await page.waitForSelector('.ps-player canvas');
   await page.waitForTimeout(1500);
