@@ -121,8 +121,10 @@ uniform float uDwell;
 uniform float uReticle;
 uniform float uHotRing; // rayon intérieur du cercle des cibles (fraction de leur taille)
 uniform vec2 uRetDir; // direction (écran, y vers le haut) du lien le plus proche ; (0, 0) : aucune flèche
-uniform float uRetOut; // 1 : ce lien mène hors de la pièce (autre couleur)
-uniform vec3 uRetMini[8]; // mini-flèches vers les autres liens : direction (xy), hors de la pièce (z)
+uniform vec3 uRetCol; // couleur de la flèche (celle de la cible : blanc dans la pièce, couleur de l'autre pièce)
+uniform vec2 uRetMini[8]; // flèches de couleur vers les autres pièces : direction
+uniform vec3 uRetMiniCol[8];
+uniform vec4 uHotColor[${MAX_HOTSPOTS}]; // couleur de chaque cible (rgb) ; w = 1 : lien vers une autre pièce
 uniform int uRetMiniN;
 uniform float uRetTan; // décalage horizontal du rond de visée (espace tangente) : il paraît à la distance de la cible
 uniform float uGrid;
@@ -281,9 +283,11 @@ void main() {
       float disc = 1.0 - smoothstep(s - aa, s, ang);
       float ring = disc * smoothstep(s * uHotRing - aa, s * uHotRing, ang);
       float dot0 = 1.0 - smoothstep(s * 0.22 - aa, s * 0.22, ang);
-      vec3 accent = i == uHotSel ? vec3(1.0, 0.62, 0.15) : vec3(0.25, 0.8, 1.0);
+      // Cible de la couleur de sa flèche : blanche dans la pièce, de la couleur de l'autre pièce sinon.
+      vec4 hc = uHotColor[i];
+      vec3 accent = hc.w > 0.5 ? hc.rgb : (i == uHotSel ? vec3(1.0, 0.62, 0.15) : vec3(0.25, 0.8, 1.0));
       col = mix(col, accent * 0.35, disc * 0.45 * alpha);
-      col = mix(col, vec3(1.0), clamp(ring * 0.95 + dot0, 0.0, 1.0) * alpha);
+      col = mix(col, hc.w > 0.5 ? hc.rgb : vec3(1.0), clamp(ring * 0.95 + dot0, 0.0, 1.0) * alpha);
       if (i == uHotSel && uDwell > 0.0) {
         vec3 t1 = normalize(cross(vec3(0.0, 1.0, 0.0), h) + vec3(1e-6, 0.0, 0.0));
         vec3 t2 = cross(h, t1);
@@ -300,33 +304,37 @@ void main() {
     float rr = uReticle;
     float ring = smoothstep(rr * 0.74, rr * 0.82, d) * (1.0 - smoothstep(rr * 0.9, rr, d));
     col = mix(col, vec3(1.0), ring * 0.9);
-    vec3 outCol = vec3(1.0, 0.78, 0.18); // liens vers une autre pièce : jaune orangé
-    // Mini-flèches : une par autre lien (leur nombre et leur direction), juste autour du rond.
+    // Flèches de couleur : une par autre pièce où mène un lien, juste autour du rond.
     for (int k = 0; k < 8; k++) {
       if (k >= uRetMiniN) break;
-      vec2 mu = normalize(uRetMini[k].xy);
+      vec2 mu = normalize(uRetMini[k]);
       vec2 mv = vec2(-mu.y, mu.x);
       float ma = dot(px, mu), mb = abs(dot(px, mv));
-      float m0 = rr * 1.1, m1 = rr * 1.5;
-      float mw = (m1 - ma) * 0.55;
+      float m0 = rr * 1.1, m1 = rr * 1.7;
+      float mw = (m1 - ma) * 0.6;
       float mt = smoothstep(m0 - 1.0, m0, ma) * (1.0 - smoothstep(m1 - 1.0, m1, ma)) * (1.0 - smoothstep(mw - 1.0, mw, mb));
       float mo = mw + 1.5;
       float me = smoothstep(m0 - 2.5, m0 - 1.5, ma) * (1.0 - smoothstep(m1 + 1.0, m1 + 2.0, ma)) * (1.0 - smoothstep(mo - 1.0, mo, mb));
       col = mix(col, vec3(0.0), me * 0.45);
-      col = mix(col, mix(vec3(1.0), outCol, uRetMini[k].z), mt * 0.85);
+      col = mix(col, uRetMiniCol[k], mt);
     }
     // Flèche accolée au rond de visée, tournée vers le lien le plus proche (comme le curseur sur PC).
     if (dot(uRetDir, uRetDir) > 0.0) {
       vec2 u = normalize(uRetDir);
       vec2 v = vec2(-u.y, u.x);
       float a = dot(px, u), b = abs(dot(px, v));
-      float r0 = rr * 1.15, r1 = rr * 1.75;
-      float wd = (r1 - a) * 0.55;
+      // Grande flèche bien visible : longue et large, cernée de noir, avec un léger halo sombre.
+      float r0 = rr * 1.12, r1 = rr * 2.35;
+      float ow = max(2.0, rr * 0.22);
+      float wd = (r1 - a) * 0.62;
       float tri = smoothstep(r0 - 1.0, r0, a) * (1.0 - smoothstep(r1 - 1.0, r1, a)) * (1.0 - smoothstep(wd - 1.0, wd, b));
-      float wo = wd + 2.0;
-      float edge = smoothstep(r0 - 3.0, r0 - 2.0, a) * (1.0 - smoothstep(r1 + 1.5, r1 + 2.5, a)) * (1.0 - smoothstep(wo - 1.0, wo, b));
-      col = mix(col, vec3(0.0), edge * 0.55);
-      col = mix(col, mix(vec3(1.0), outCol, uRetOut), tri);
+      float wo = wd + ow;
+      float edge = smoothstep(r0 - ow - 1.0, r0 - ow, a) * (1.0 - smoothstep(r1 + ow, r1 + ow + 1.0, a)) * (1.0 - smoothstep(wo - 1.0, wo, b));
+      float wh = wd + ow * 3.0;
+      float halo = smoothstep(r0 - ow * 3.0, r0 - ow, a) * (1.0 - smoothstep(r1 + ow, r1 + ow * 3.0, a)) * (1.0 - smoothstep(wo, wh, b));
+      col = mix(col, vec3(0.0), halo * 0.3);
+      col = mix(col, vec3(0.0), edge * 0.8);
+      col = mix(col, uRetCol, tri);
     }
   }
 
