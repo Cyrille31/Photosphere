@@ -81,16 +81,20 @@ try {
     const by = Object.fromEntries(ps.map((p) => [p.fileName.split(' ')[0], p]));
     const [a, b, c] = [by['360_0001'], by['360_0002'], by['360_0003']];
     const w = 512, h = 256, depth = new Float32Array(w * h);
-    for (let r = 0; r < h; r++) for (let x = 0; x < w; x++) depth[r * w + x] = 2 + (3 * x) / w;
+    // Porte vers salon 2 (cap 90°, ±7° × ±12°) : derrière, le relief voit 2,5 fois plus loin.
+    for (let r = 0; r < h; r++) for (let x = 0; x < w; x++) {
+      const lon = ((x + 0.5) / w - 0.5) * 360, lat = 90 - ((r + 0.5) / h) * 180;
+      depth[r * w + x] = (2 + (3 * x) / w) * (Math.abs(lon - 90) < 7 && Math.abs(lat) < 12 ? 2.5 : 1);
+    }
     const cv = document.createElement('canvas');
     cv.width = w;
     cv.height = h;
     const g = cv.getContext('2d');
     g.putImageData(new ImageData(encodeDepth(depth), w, h), 0, 0);
     await db.putBlob(a.id + ':depth', await new Promise((r) => cv.toBlob(r, 'image/png')));
-    await db.putPhoto({ ...a, room: { name: 'Salon' }, relief: { kind: 'ai', h: 1.6, key: reliefKey(a.params) }, hotspots: [{ id: 'h1', target: b.id, yaw: 90, pitch: 0, label: '' }, { id: 'h2', target: c.id, yaw: -90, pitch: 0, label: '' }, { id: 'h5', target: b.id, yaw: 150, pitch: 0, label: '' }] });
-    await db.putPhoto({ ...b, room: { name: 'Salon' }, hotspots: [{ id: 'h3', target: a.id, yaw: -90, pitch: 0, label: '' }] });
-    await db.putPhoto({ ...c, room: { name: 'Cuisine' }, hotspots: [{ id: 'h4', target: a.id, yaw: 90, pitch: 0, label: '' }] });
+    await db.putPhoto({ ...a, mapPlaced: true, mapPos: { x: 0, y: 0 }, room: { name: 'Salon' }, relief: { kind: 'ai', h: 1.6, key: reliefKey(a.params) }, hotspots: [{ id: 'h1', target: b.id, yaw: 90, pitch: 0, label: '' }, { id: 'h2', target: c.id, yaw: -90, pitch: 0, label: '' }, { id: 'h5', target: b.id, yaw: 150, pitch: 0, label: '' }] });
+    await db.putPhoto({ ...b, mapPlaced: true, mapPos: { x: 250, y: 0 }, room: { name: 'Salon' }, hotspots: [{ id: 'h3', target: a.id, yaw: -90, pitch: 0, label: '' }] });
+    await db.putPhoto({ ...c, mapPlaced: true, mapPos: { x: -150, y: 0 }, room: { name: 'Cuisine' }, hotspots: [{ id: 'h4', target: a.id, yaw: 90, pitch: 0, label: '' }] });
     return { a: a.id, b: b.id, c: c.id };
   });
 
@@ -111,7 +115,7 @@ try {
   const rdist = +(await ds('reticleDist'));
   const conv = +(await ds('convergence'));
   const mini = +(await ds('retMini'));
-  check(hd.length === 3 && hd.every((d) => d > 2.5 && d < 8.5) && rdist <= conv * 1.03 && (Math.abs(rdist / conv - 1) < 0.03 || hd.some((d) => Math.abs(rdist / d - 1) < 0.06)), `casque : rond de visée à la plus courte distance entre l’objet regardé (${conv} m) et la cible désignée (cibles à ${hd.join(' et ')} m) : ${rdist} m`);
+  check(hd.length === 3 && hd.every((d) => d > 2.5 && d < 8.5) && Math.abs(hd[0] - 5) < 0.05 && Math.abs(hd[1] - 3) < 0.05 && rdist <= conv * 1.03 && (Math.abs(rdist / conv - 1) < 0.03 || hd.some((d) => Math.abs(rdist / d - 1) < 0.06)), `casque : rond de visée à la plus courte distance entre l’objet regardé (${conv} m) et la cible désignée (cibles à ${hd.join(' et ')} m ; à l’endroit où les autres photos ont été prises : 5 m et 3 m sur le plan, même derrière une porte où le relief voit 2,5 fois plus loin) : ${rdist} m`);
   const col0 = await ds('retColor');
   // Une seule flèche de couleur par autre pièce, aucune vers les autres liens de la pièce.
   check((await ds('retDir')) !== '' && col0 === '' && mini === 1, `casque : grande flèche blanche vers le lien du salon le plus proche, une seule flèche de couleur (vers la cuisine) : ${mini}`);

@@ -113,6 +113,8 @@ export class PanoRenderer {
     this.hotScales = list.slice(0, MAX_HOTSPOTS).map((h) => (h.scale > 0 ? h.scale : 1));
     // h.color (facultatif) : [r, g, b] de 0 à 1, cible d'un lien vers une autre pièce.
     this.hotColors = list.slice(0, MAX_HOTSPOTS).map((h) => h.color || null);
+    // h.depth (facultatif) : distance de la cible en hauteurs d'objectif (relief : vue à cette distance).
+    this.hotDepths = list.slice(0, MAX_HOTSPOTS).map((h) => (h.depth > 0 ? h.depth : 0));
   }
 
   resize() {
@@ -158,6 +160,9 @@ export class PanoRenderer {
     const colors = new Float32Array(MAX_HOTSPOTS * 4);
     (this.hotColors || []).forEach((c, i) => c && colors.set([c[0], c[1], c[2], 1], i * 4));
     gl.uniform4fv(u.uHotColor, colors);
+    const depths = new Float32Array(MAX_HOTSPOTS);
+    (this.hotDepths || []).forEach((v, i) => (depths[i] = v));
+    gl.uniform1fv(u.uHotDepth, depths);
     gl.uniform1i(u.uHotCount, this.hotspots.length);
     gl.uniform1i(u.uHotSel, frame.hotSel ?? -1);
     gl.uniform1f(u.uHotSize, frame.hotSize || 0.07);

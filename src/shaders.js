@@ -124,7 +124,8 @@ uniform vec2 uRetDir; // direction (écran, y vers le haut) du lien le plus proc
 uniform vec3 uRetCol; // couleur de la flèche (celle de la cible : blanc dans la pièce, couleur de l'autre pièce)
 uniform vec2 uRetMini[8]; // flèches de couleur vers les autres pièces : direction
 uniform vec3 uRetMiniCol[8];
-uniform vec4 uHotColor[${MAX_HOTSPOTS}]; // couleur de chaque cible (rgb) ; w = 1 : lien vers une autre pièce
+uniform vec4 uHotColor[${MAX_HOTSPOTS}];
+uniform float uHotDepth[${MAX_HOTSPOTS}]; // distance de la cible (hauteurs d'objectif) ; 0 : posée sur le décor // couleur de chaque cible (rgb) ; w = 1 : lien vers une autre pièce
 uniform int uRetMiniN;
 uniform float uRetTan; // décalage horizontal du rond de visée (espace tangente) : il paraît à la distance de la cible
 uniform float uGrid;
@@ -243,7 +244,9 @@ void main() {
   bool useBg = false;
   vec3 dir2 = dir;
   float w2 = 0.0;
-  if (uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0) dir = reliefDir(uEye, dir, dir2, w2, useBg);
+  vec3 ray = dir; // rayon de l'œil (avant le relief)
+  bool reliefOn = uViewMode == 0 && uRelief.x > 0.5 && dot(uEye, uEye) > 0.0;
+  if (reliefOn) dir = reliefDir(uEye, dir, dir2, w2, useBg);
   vec3 col = sampleSource(dir, pixAng).rgb;
   if (w2 > 0.0) col = mix(col, useBg ? textureLod(uBgTex, eqUv(dir2), 0.0).rgb : sampleSource(dir2, pixAng).rgb, w2);
 
@@ -276,7 +279,13 @@ void main() {
     if (i >= uHotCount) break;
     vec3 h = uHot[i].xyz;
     float alpha = uHot[i].w;
-    float ang = acos(clamp(dot(dir, h), -1.0, 1.0));
+    // Relief : la cible est vue à sa propre distance (là où l'autre photo a été prise), depuis l'œil.
+    vec3 dv = dir;
+    if (reliefOn && uHotDepth[i] > 0.0) {
+      h = normalize(uHotDepth[i] * h - uEye);
+      dv = ray;
+    }
+    float ang = acos(clamp(dot(dv, h), -1.0, 1.0));
     float s = uHotSize * uHotScale[i] * (i == uHotSel ? 1.25 : 1.0);
     if (alpha > 0.003 && ang < s * 1.45) {
       float aa = max(pixAng * 1.5, 1e-5);
@@ -291,7 +300,7 @@ void main() {
       if (i == uHotSel && uDwell > 0.0) {
         vec3 t1 = normalize(cross(vec3(0.0, 1.0, 0.0), h) + vec3(1e-6, 0.0, 0.0));
         vec3 t2 = cross(h, t1);
-        float a = atan(dot(dir, t2), dot(dir, t1)) / (2.0 * PI) + 0.5;
+        float a = atan(dot(dv, t2), dot(dv, t1)) / (2.0 * PI) + 0.5;
         float arc = step(s * 1.1, ang) * (1.0 - step(s * 1.4, ang)) * step(a, uDwell);
         col = mix(col, accent, arc * alpha);
       }
