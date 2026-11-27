@@ -1,7 +1,7 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
-import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
+import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
 import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt } from './depth.js';
 import { createRecorder, scenarioAt, scenarioDuration, scenarioFor, scenarioFileKey } from './scenario.js';
 
@@ -123,7 +123,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
         <button class="ps-btn" data-preset="none">Sans correction</button>
       </div>
       <label>Écartement des centres des deux images <output></output><input type="range" name="sep" min="30" max="70" step="0.5"></label>
-      <label>Relief (effet 3D : × 1 = distances réelles, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
+      <label>Relief (effet 3D, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
       <label>Taille des cibles <output></output><input type="range" name="targetSize" min="1" max="5" step="0.1"></label>
       <label>Les cibles apparaissent quand le regard en est à moins de <output></output><input type="range" name="targetAppear" min="4" max="40" step="1"></label>
       <label class="ps-check"><input type="checkbox" name="swapEyes"> Inverser les images gauche et droite (relief vu en louchant, sans casque)</label>
@@ -697,16 +697,17 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     reliefHintFor = current.id;
     if ((controller.headset.relief ?? 1) > 0) toast('Pas de relief pour cette photo : calculez-le dans l’éditeur (onglet « Relief »).');
   }
-  // Relief à la vraie distance : yeux parallèles, écart réel des yeux (× réglage « Relief »), réduit
-  // seulement devant un objet très proche (voir stereoComfort). Lissé dans le temps. (Avant la 1.57,
-  // les yeux convergeaient sur le point regardé, qui paraissait alors à l'infini : trop loin.)
+  // Confort : la distance regardée est sans décalage entre les deux yeux (comme quand les yeux
+  // convergent), et l'écart des yeux est réduit si besoin pour que le décalage entre les deux images
+  // reste supportable sur tout ce qui est visible. Lissé dans le temps. (La 1.57 essayait des yeux
+  // parallèles : ce n'était pas mieux, retour à la convergence.)
   const comfort = { dg: null, half: 0 };
   function updateComfort(cam) {
     const r = current && current.relief;
     const k = controller.headset.relief ?? 1;
     if (!r || !k || !renderer.depth) return false;
     const h = r.h || DEFAULT_CAMERA_HEIGHT;
-    const c = stereoComfort(renderer.depth, cam, (EYE_HALF_GAP * k) / h);
+    const c = stereoComfort(renderer.depth, cam, EYE_HALF_GAP / h, { budgetDeg: 1.2 * k });
     if (comfort.dg === null) {
       Object.assign(comfort, c);
       dirty = true; // (le rond de visée se place à l'image suivante)
@@ -722,13 +723,15 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     root.dataset.eyeGap = (2 * comfort.half * h * 100).toFixed(2);
     return true;
   }
-  // Distance (en hauteurs d'objectif) où paraît le rond de visée : celle de la cible désignée, lissée.
+  // Distance (en hauteurs d'objectif) où paraît le rond de visée : la plus courte entre celle de l'objet
+  // regardé (sous le rond) et celle de la cible désignée par la flèche (ou visée). Lissée.
   let retD = null;
   function reticleDepth(target) {
     const r = current && current.relief;
     const h = (r && r.h) || DEFAULT_CAMERA_HEIGHT;
     const info = target >= 0 ? hotInfo[target] : null;
-    const want = info && info.dist ? Math.max(0.3, info.dist / h) : comfort.dg;
+    const under = comfort.dg;
+    const want = info && info.dist ? Math.max(0.3, Math.min(under || Infinity, info.dist / h)) : under;
     if (!want) return null;
     if (retD === null) retD = want;
     else {
@@ -739,15 +742,18 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     root.dataset.reticleDist = (retD * h).toFixed(2);
     return retD;
   }
-  // Deux yeux (Cardboard) : décalés de ±demi-écart, regard parallèle. retTan : décalage du rond de visée
-  // dans chaque œil pour qu'il paraisse à la distance D de la cible (sinon il paraîtrait à l'infini).
+  // Deux yeux (Cardboard) : décalés de ±demi-écart et tournés vers le point regardé. retTan : décalage du
+  // rond de visée dans chaque œil pour qu'il paraisse à la distance D (et non à celle du point regardé).
   function comfortEyes(cam, D = null) {
     if (!updateComfort(cam)) return null;
-    const right = [cam[0], cam[3], cam[6]];
+    const right = [cam[0], cam[3], cam[6]], up = [cam[1], cam[4], cam[7]], fwd = [cam[2], cam[5], cam[8]];
     return [-1, 1].map((sg) => {
       const e = right.map((v) => v * sg * comfort.half);
-      const retTan = D ? (-sg * comfort.half) / D : 0;
-      return { offset: e, retTan, cam: cam.slice() };
+      const f = vecNormalize(fwd.map((v, i) => v * comfort.dg - e[i]));
+      const rr = vecNormalize(vecCross(up, f));
+      const uu = vecCross(f, rr);
+      const retTan = D ? sg * comfort.half * (1 / comfort.dg - 1 / D) : 0;
+      return { offset: e, retTan, cam: [rr[0], uu[0], f[0], rr[1], uu[1], f[1], rr[2], uu[2], f[2]] };
     });
   }
 

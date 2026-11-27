@@ -92,7 +92,7 @@ test('relief : fond reconstitué derrière un objet proche (distance et couleurs
   assert.ok(rgba[c * 4 + 2] > 150 && rgba[c * 4] < 80, 'couleur reconstituée ' + Array.from(rgba.subarray(c * 4, c * 4 + 3)));
 });
 
-test('relief : vraie distance (yeux parallèles), écart des images plafonné devant un objet très proche', async () => {
+test('relief : confort, convergence sur le point regardé et écart des images plafonné', async () => {
   const { stereoComfort } = await import('../src/depth.js');
   const { cameraMatrix } = await import('../src/math.js');
   const w = 256, h = 128;
@@ -103,14 +103,10 @@ test('relief : vraie distance (yeux parallèles), écart des images plafonné de
   // Objet très proche au centre de la vue (0,2), fond à 3 : l'écart est réduit pour rester confortable.
   const near = new Float32Array(far);
   for (let y = 50; y < 78; y++) for (let x = 110; x < 146; x++) near[y * w + x] = 0.2;
-  const b = stereoComfort(near, cam, 0.02, { w, h, maxDeg: 6 });
-  assert.ok(Math.abs(b.dg - 0.2) < 1e-6, 'distance regardée : l’objet');
-  const disp = (2 * b.half) / 0.2;
-  assert.ok(b.half < 0.02 && Math.abs(disp - 6 * (Math.PI / 180)) < 1e-6, `écart plafonné (${(disp * 180 / Math.PI).toFixed(2)}°)`);
-  // Objet à 1 hauteur : écart réel conservé (vraie distance).
-  const mid = new Float32Array(far);
-  for (let y = 50; y < 78; y++) for (let x = 110; x < 146; x++) mid[y * w + x] = 1;
-  assert.ok(Math.abs(stereoComfort(mid, cam, 0.02, { w, h }).half - 0.02) < 1e-9, 'objet à distance normale : écart réel');
+  const b = stereoComfort(near, cam, 0.02, { w, h, budgetDeg: 1.2 });
+  assert.ok(Math.abs(b.dg - 0.2) < 1e-6, 'convergence sur l’objet regardé');
+  const disp = 2 * b.half * (1 / b.dg - 1 / 3);
+  assert.ok(b.half < 0.02 && disp <= 1.2 * (Math.PI / 180) + 1e-9, `écart plafonné (${(disp * 180 / Math.PI).toFixed(2)}°)`);
 });
 
 test('relief : contours de la carte alignés sur ceux de la photo (pas de marches)', async () => {
