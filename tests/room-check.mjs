@@ -151,6 +151,43 @@ try {
   const saved = await db(async (db) => (await db.listPhotos()).map((p) => p.room && p.room.corners.length));
   check(saved.every((n) => n === 4), 'coins de la pièce enregistrés avec chaque photo');
 
+  // ---------- relief calé sur la pièce ----------
+  {
+    // Relief de test faux d'un facteur 0,8 (mêmes murs, sol et plafond, distances trop courtes) et une
+    // fenêtre (au loin) : le bouton 📐 doit retrouver l'échelle ≈ 1,25.
+    await page.evaluate(async (id) => {
+      const db = await import('./src/db.js');
+      const { reliefKey } = await import('./src/depth.js');
+      const { depthToPng } = await import('./src/depth-ai.js');
+      const W = 2048, H = 1024, depth = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const lon = ((x + 0.5) / W - 0.5) * 2 * Math.PI, lat = (0.5 - (y + 0.5) / H) * Math.PI;
+        const d = [Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)];
+        let t = Math.min(d[0] > 0 ? 3 / d[0] : -2 / d[0], d[2] > 0 ? 4 / d[2] : -1.6 / d[2], d[1] < 0 ? -1 / d[1] : d[1] > 0 ? 0.7 / d[1] : Infinity);
+        if (lon > 0.2 && lon < 0.7 && Math.abs(lat) < 0.25) t *= 5;
+        depth[y * W + x] = t * 0.8;
+      }
+      await db.putBlob(id + ':depth', await depthToPng(depth));
+      await db.updatePhoto(id, (cur) => ({ ...cur, relief: { kind: 'ai', h: 1.6, key: reliefKey(cur.params) } }));
+    }, ids['salon-a.jpg']);
+    await page.goto(base + '#/');
+    await page.goto(base + '#/edit/' + ids['salon-a.jpg']);
+    await page.waitForSelector('[data-tab=relief]');
+    await page.waitForTimeout(1200);
+    await page.click('[data-tab=relief]');
+    await page.waitForTimeout(600);
+    await page.click('[data-relief-room]');
+    await page.waitForTimeout(300);
+    const info = await page.textContent('.relief-info');
+    await page.click('[data-tab=room]');
+    const roomTxt = await page.textContent('.room-info');
+    await page.click('[data-save]');
+    await page.waitForSelector('.grid');
+    const rel = await db(async (db, id) => (await db.getPhoto(id)).relief, ids['salon-a.jpg']);
+    check(rel.scale && Math.abs(rel.scale / 1.25 - 1) < 0.1 && /calées sur la pièce/.test(info) && /pièce : [\d.]+ m/.test(info), `relief : distances calées sur la pièce (× ${rel.scale}, attendu ≈ 1,25 ; ${Math.round(rel.scaleAgree * 100)} % des points d’accord) — « ${info.slice(0, 120)}… »`);
+    check(/2\.72 m<\/b> sous plafond|2\.72 m sous plafond/.test(roomTxt), `onglet Pièce : hauteur sous plafond affichée avec les dimensions (« ${roomTxt.slice(0, 60)}… »)`);
+  }
+
   // ---------- plan : placer les pièces ----------
   await page.goto(base + '#/plan');
   await page.waitForSelector('.plan-node');

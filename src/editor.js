@@ -6,8 +6,8 @@ import { DEFAULT_LENS_PARAMS } from './gl-source.js';
 import { calibrateFromBlob } from './importer.js';
 import { DEG, dirFromLonLat, lonLatFromDir, upFromHorizon, upFromVerticals, applyUpCorrection, remapHotspot, wrapDeg, levelToViewTilt, viewTiltToLevel, withCap, cameraMatrix, levelMatrix, mat3Apply, vecDot } from './math.js';
 import { autoLevel } from './autolevel.js';
-import { edgeMap, fitCeilingRect, cornersFromFit, rectFromPoints, rectDistance, cornerXZ, photoRoom, guessRoomName } from './room.js';
-import { reliefKey, depthAt, loadDepthImage, loadImageBitmap } from './depth.js';
+import { edgeMap, fitCeilingRect, cornersFromFit, rectFromPoints, rectDistance, cornerXZ, photoRoom, guessRoomName, reliefWithRoomScale, roomBoxDistance } from './room.js';
+import { reliefKey, depthAt, loadDepthImage, loadImageBitmap, reliefMeters } from './depth.js';
 import { computeDepth } from './depth-ai.js';
 import { toast, escapeHtml, dialog } from './ui.js';
 import { manualButton, bindManualButtons } from './manual.js';
@@ -159,6 +159,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
           <label class="slider relief-slider"><span>Hauteur de l’objectif au-dessus du sol (m)</span>
             <input type="range" name="reliefH" min="0.3" max="2.5" step="0.05">
             <input type="number" name="reliefH" min="0.3" max="2.5" step="0.05"></label>
+          <div class="tools"><button class="btn small" data-relief-room title="Ajuste l’échelle des distances de l’IA pour que murs, sol et plafond tombent sur la pièce de l’onglet Pièce (coins du plafond, hauteur sous plafond). Fait aussi automatiquement à l’enregistrement.">📐 Caler les distances sur la pièce</button></div>
           <p class="note relief-info"></p>
           
         </section>
@@ -772,7 +773,7 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     if (document.activeElement !== cam) cam.value = +(r ? r.camH : p.room.camH || defaultCamH()).toFixed(2);
     const n = p.room.corners.length;
     $('.room-info').innerHTML = r
-      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b> ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. La ligne rouge relie les coins du plafond, la bleue ceux du sol : elles doivent suivre les jonctions avec les murs. Faites glisser un coin rouge, ou un coin bleu (le rouge suit, à la verticale), pour les corriger. Le plan utilise le rectangle le plus proche.`
+      ? `Pièce de <b>${r.rect.w.toFixed(2)} × ${r.rect.l.toFixed(2)} m</b>, <b>${ceilingH.toFixed(2)} m</b> sous plafond ; appareil à ${r.camH.toFixed(2)} m du sol${p.room.floor ? ' (d’après le coin au sol)' : ''}. La ligne rouge relie les coins du plafond, la bleue ceux du sol : elles doivent suivre les jonctions avec les murs. Faites glisser un coin rouge, ou un coin bleu (le rouge suit, à la verticale), pour les corriger. Le plan utilise le rectangle le plus proche.`
       : n
         ? `${n} coin(s) sur 4.`
         : 'Aucun coin pour l’instant.';
@@ -1155,10 +1156,34 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
     let txt = r.floor === false ? 'Sol peu visible : l’échelle des distances est approximative.' : 'Échelle déduite du sol.';
     const tilt = reliefTiltChange(p);
     if (tilt > RELIEF_RECOMPUTE_DEG) txt = `⚠ La photo a été redressée de ${tilt.toFixed(1)}° depuis le calcul du relief : il a tourné avec elle, mais un nouveau calcul (« Recalculer le relief ») serait un peu meilleur. ` + txt;
-    if (controller.mode !== 'flat') txt += ` Au centre de la vue : ${(depthAt(depthMaps.depth, controller.gazeDir()) * r.h).toFixed(2)} m.`;
+    const pr = roomInfo();
+    if (r.scale) txt = `Distances calées sur la pièce (× ${r.scale.toFixed(2).replace('.', ',')} ; ${Math.round((r.scaleAgree || 0) * 100)} % des murs, sol et plafond d’accord${r.scaleAgree < 0.25 ? ' : peu, vérifiez les coins de la pièce' : ''}).`;
+    else if (pr) txt += ' Les distances seront calées sur la pièce à l’enregistrement.';
+    if (controller.mode !== 'flat') {
+      const g = controller.gazeDir();
+      txt += ` Au centre de la vue : ${(depthAt(depthMaps.depth, g) * reliefMeters(r)).toFixed(2)} m`;
+      if (pr) {
+        const b = roomBoxDistance(pr, g);
+        if (Number.isFinite(b)) txt += ` (pièce : ${b.toFixed(2)} m)`;
+      }
+      txt += '.';
+    }
     info.textContent = txt;
   }
   $('[data-depth-compute]').addEventListener('click', computeNow);
+  // Échelle du relief d'après la pièce (onglet Pièce).
+  function calibrateRelief(quiet) {
+    if (!currentRelief()) return quiet ? false : toast('Calculez d’abord le relief.', true);
+    const cal = reliefWithRoomScale(p, depthMaps.depth, ceilingH);
+    if (!cal) return quiet ? false : toast('Indiquez d’abord la pièce (onglet Pièce : 4 coins du plafond et hauteur sous plafond).', true);
+    const changed = !p.relief.scale || Math.abs(cal.scale / p.relief.scale - 1) > 0.002;
+    p.relief = cal;
+    if (changed) dirty = true;
+    updateReliefInfo();
+    if (!quiet) toast(`Distances du relief × ${cal.scale.toFixed(2).replace('.', ',')} pour coller à la pièce.`);
+    return true;
+  }
+  $('[data-relief-room]').addEventListener('click', () => calibrateRelief(false));
   $('[data-depth-view]').addEventListener('change', (e) => {
     depthView = e.target.checked;
     redraw();
@@ -1325,6 +1350,8 @@ export async function openEditor(container, photo, { photos, onDone, onNavigate,
       posterBlob = null;
     }
     const imageChanged = cur.srcType !== p.srcType || JSON.stringify(cur.params) !== JSON.stringify(p.params);
+    // Relief à jour et pièce définie : ses distances sont calées sur la pièce.
+    calibrateRelief(true);
     // Redressement modifié : le relief tourne avec la photo, sans être recalculé (sauf s'il vient
     // d'être recalculé dans cette séance).
     if (p.relief && !depthPng && imageChanged) {

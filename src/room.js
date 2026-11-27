@@ -2,7 +2,7 @@
 // murs en ignorant meubles et personnes (dans chaque direction, le point le plus lointain dans la
 // bande de hauteur où l'on voit les murs), puis on ajuste un quadrilatère (le sol). Les distances sont
 // en hauteurs d'objectif (sol à y = -1 sous la caméra). Fonctions pures, testables hors navigateur.
-import { mapWidth } from './depth.js';
+import { mapWidth, depthAt } from './depth.js';
 
 const DEG = Math.PI / 180;
 const BINS = 360;
@@ -399,6 +399,63 @@ export function photoRoom(room, ceilingH, defaultCamH = 1.6) {
   camH = camH || defaultCamH;
   const Hc = Math.max(0.3, ceilingH - camH);
   return { rect: { cx: unit.cx * Hc, cz: unit.cz * Hc, phi: unit.phi, w: unit.w * Hc, l: unit.l * Hc }, camH, Hc };
+}
+
+// Distance (m) de l'appareil au mur, au sol ou au plafond de la pièce `pr` (photoRoom) dans la direction
+// unitaire d (x : est, y : haut, z : nord).
+export function roomBoxDistance(pr, d) {
+  const hz = Math.hypot(d[0], d[2]);
+  let t = hz > 1e-6 ? rectDistance(pr.rect, Math.atan2(d[0], d[2])) / hz : Infinity;
+  if (d[1] > 1e-6) t = Math.min(t, pr.Hc / d[1]);
+  if (d[1] < -1e-6) t = Math.min(t, pr.camH / -d[1]);
+  return t;
+}
+
+// Échelle du relief d'après la pièce : rapport entre la distance prévue par la pièce (murs, sol, plafond)
+// et celle de l'IA (carte en hauteurs d'objectif × h mètres), dans de nombreuses directions. Les points
+// vus au travers des portes et fenêtres (plus loin que la pièce) et les meubles (plus près) s'écartent du
+// rapport commun : on retient le plus fréquent (pic de l'histogramme des logarithmes), puis la médiane
+// des points qui s'en approchent. Renvoie { scale, agree (part des points d'accord), n } ou null.
+export function reliefScaleFromRoom(depth, pr, h) {
+  if (!pr || !depth || !(h > 0)) return null;
+  const logs = [];
+  for (let lat = -70; lat <= 70; lat += 5) {
+    const step = 4 / Math.max(0.3, Math.cos(lat * DEG));
+    for (let lon = -180; lon < 180; lon += step) {
+      const c = Math.cos(lat * DEG);
+      const d = [c * Math.sin(lon * DEG), Math.sin(lat * DEG), c * Math.cos(lon * DEG)];
+      const box = roomBoxDistance(pr, d), ai = depthAt(depth, d) * h;
+      if (Number.isFinite(box) && box > 0.2 && ai > 0.05) logs.push(Math.log(box / ai));
+    }
+  }
+  if (logs.length < 50) return null;
+  const BIN = 0.04, lo = -2.5, nb = Math.round(5 / BIN);
+  const hist = new Float64Array(nb);
+  for (const v of logs) {
+    const b = Math.floor((v - lo) / BIN);
+    if (b >= 0 && b < nb) hist[b]++;
+  }
+  let best = 0, bestV = -1;
+  for (let b = 0; b < nb; b++) {
+    let s = 0;
+    for (let k = -2; k <= 2; k++) s += hist[b + k] || 0;
+    if (s > bestV) (bestV = s), (best = b);
+  }
+  const peak = lo + (best + 0.5) * BIN;
+  const near = logs.filter((v) => Math.abs(v - peak) < 0.15).sort((a, b) => a - b);
+  if (near.length < 20) return null;
+  return { scale: Math.exp(near[near.length >> 1]), agree: near.length / logs.length, n: logs.length };
+}
+
+// Relief de la photo p calé sur sa pièce (coins du plafond, hauteur sous plafond commune) : relief avec
+// scale (et scaleAgree, part des points d'accord), ou null si la pièce n'est pas définie.
+export function reliefWithRoomScale(p, depth, ceilingH) {
+  if (!p.relief || !p.room || p.room.none) return null;
+  const h = p.relief.h || 1.6;
+  const pr = photoRoom({ ...p.room, camH: p.room.camH || null }, ceilingH || 2.8, h);
+  const res = pr && reliefScaleFromRoom(depth, pr, h);
+  if (!res) return null;
+  return { ...p.relief, scale: +res.scale.toFixed(3), scaleAgree: +res.agree.toFixed(2) };
 }
 
 // Nom de pièce proposé d'après le nom de la photo : les mots à partir du n° `word` (réglage, 2 par

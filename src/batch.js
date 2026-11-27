@@ -4,7 +4,8 @@ import * as db from './db.js';
 import { PanoRenderer } from './renderer.js';
 import { autoLevel } from './autolevel.js';
 import { computeDepth } from './depth-ai.js';
-import { reliefKey } from './depth.js';
+import { reliefKey, loadDepthImage } from './depth.js';
+import { reliefWithRoomScale } from './room.js';
 import { relevelRelief, reliefTiltChange, RELIEF_RECOMPUTE_DEG, level } from './relevel.js';
 import { remapHotspot, wrapDeg } from './math.js';
 import { DEFAULT_LENS_PARAMS } from './gl-source.js';
@@ -89,6 +90,18 @@ export async function batchAutoLevel(ids, { onProgress = () => {}, isCancelled =
   return out;
 }
 
+// Relief calé sur la pièce de la photo (voir reliefWithRoomScale), ou null.
+async function roomScale(p, depth = null) {
+  if (!p.room || p.room.none || !(p.room.corners || []).length) return null;
+  if (!depth) {
+    const blob = await db.getBlob(p.id + ':depth');
+    if (!blob) return null;
+    depth = (await loadDepthImage(blob)).depth;
+  }
+  return reliefWithRoomScale(p, depth, (await db.getPlanDrawing()).ceilingH);
+}
+const scaleNote = (cal) => (cal ? ` ; distances calées sur la pièce (× ${cal.scale.toFixed(2).replace('.', ',')}, ${Math.round(cal.scaleAgree * 100)} % des points d’accord)` : '');
+
 export async function batchRelief(ids, { onProgress = () => {}, isCancelled = () => false } = {}) {
   const out = [];
   await withRenderer(async (renderer) => {
@@ -98,7 +111,10 @@ export async function batchRelief(ids, { onProgress = () => {}, isCancelled = ()
       // Relief à jour (calculé pour ce redressement, ou tourné avec la photo après un redressement de
       // moins d'un degré) : inutile de le refaire.
       if (p.relief && p.relief.kind === 'ai' && p.relief.key === reliefKey(p.params) && reliefTiltChange(p) <= RELIEF_RECOMPUTE_DEG) {
-        out.push({ id: p.id, name: p.name, ok: true, skipped: true, message: 'relief à jour, ignoré' });
+        // Seules les distances sont recalées sur la pièce (si elle est définie).
+        const cal = await roomScale(p).catch(() => null);
+        if (cal) await db.updatePhoto(p.id, (cur) => ({ ...cur, relief: cal }));
+        out.push({ id: p.id, name: p.name, ok: true, skipped: !cal, message: 'relief à jour, ignoré' + scaleNote(cal) });
         continue;
       }
       onProgress(i, ids.length, p.name, 'chargement');
@@ -107,11 +123,10 @@ export async function batchRelief(ids, { onProgress = () => {}, isCancelled = ()
         const r = await computeDepth(renderer, (txt) => onProgress(i, ids.length, p.name, txt));
         await db.putBlob(p.id + ':depth', r.png);
         await db.putBlob(p.id + ':depthbg', r.bgImage);
-        await db.updatePhoto(p.id, (cur) => ({
-          ...cur,
-          relief: { kind: 'ai', h: (cur.relief && cur.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(params), floor: r.floorOk, basis: level(params) },
-        }));
-        out.push({ id: p.id, name: p.name, ok: true, message: r.floorOk ? 'relief calculé' : 'relief calculé (sol peu visible : échelle approximative)' });
+        const relief = { kind: 'ai', h: (p.relief && p.relief.h) || DEFAULT_CAMERA_HEIGHT, key: reliefKey(params), floor: r.floorOk, basis: level(params) };
+        const cal = await roomScale({ ...p, relief }, r.depth).catch(() => null);
+        await db.updatePhoto(p.id, (cur) => ({ ...cur, relief: cal || relief }));
+        out.push({ id: p.id, name: p.name, ok: true, message: (r.floorOk || cal ? 'relief calculé' : 'relief calculé (sol peu visible : échelle approximative)') + scaleNote(cal) });
       } catch (e) {
         out.push({ id: p.id, name: p.name, ok: false, message: e.message });
         // Moteur ou modèle indisponible (pas de connexion…) : inutile d'insister photo par photo.

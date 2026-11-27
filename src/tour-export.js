@@ -50,7 +50,7 @@ async function depthItem(p) {
   const b = await db.getBlob(p.id + ':depth');
   if (!b) return {};
   const bg = await db.getBlob(p.id + ':depthbg');
-  return { relief: { h: p.relief.h, key: p.relief.key }, reliefKey: p.relief.key, depthSrc: await blobToDataUrl(b), ...(bg ? { depthBgSrc: await blobToDataUrl(bg) } : {}) };
+  return { relief: { h: p.relief.h, key: p.relief.key, ...(p.relief.scale ? { scale: p.relief.scale } : {}) }, reliefKey: p.relief.key, depthSrc: await blobToDataUrl(b), ...(bg ? { depthBgSrc: await blobToDataUrl(bg) } : {}) };
 }
 
 // Visite autonome : un seul fichier .html qui s'ouvre sur n'importe quel smartphone ou ordinateur.
