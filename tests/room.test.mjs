@@ -75,3 +75,21 @@ test('pièce : une photo marquée « pas dans une pièce » est laissée de côt
   assert.equal(r.rooms.length, 1);
   assert.ok(r.positions.has('a') && !r.positions.has('b'));
 });
+
+test('relief calé sur la pièce : échelle retrouvée malgré une fenêtre et des meubles', async () => {
+  const { roomBoxDistance, reliefScaleFromRoom } = await import('../src/room.js');
+  const pr = { rect: { cx: 0.5, cz: -0.3, phi: 0.2, w: 4, l: 5 }, camH: 1.5, Hc: 1.2 };
+  const W = 512, H = 256, h = 1.6, wrong = 0.7;
+  const depth = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const lon = ((x + 0.5) / W - 0.5) * 2 * Math.PI, lat = (0.5 - (y + 0.5) / H) * Math.PI;
+    const d = [Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)];
+    let m = roomBoxDistance(pr, d) * wrong;
+    if (lon > 0.3 && lon < 0.9 && Math.abs(lat) < 0.3) m *= 4; // fenêtre : dehors, bien plus loin
+    if (lon < -1 && lon > -1.8 && lat < 0) m *= 0.5; // meuble devant le mur
+    depth[y * W + x] = m / h;
+  }
+  const r = reliefScaleFromRoom(depth, pr, h);
+  assert.ok(Math.abs(r.scale * wrong - 1) < 0.03, `échelle ${r.scale.toFixed(3)} (attendue ${(1 / wrong).toFixed(3)})`);
+  assert.ok(r.agree > 0.6, `points d'accord ${r.agree}`);
+});

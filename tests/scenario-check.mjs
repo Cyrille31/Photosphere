@@ -116,8 +116,8 @@ try {
   // Une seule flèche de couleur par autre pièce, aucune vers les autres liens de la pièce.
   check((await ds('retDir')) !== '' && col0 === '' && mini === 1, `casque : grande flèche blanche vers le lien du salon le plus proche, une seule flèche de couleur (vers la cuisine) : ${mini}`);
   await page.screenshot({ path: path.join(shots, '01-casque-fleches.png') });
-  // Regard vers l'ouest : la grande flèche désigne la cuisine, de la couleur de la cuisine ; plus de flèche de couleur.
-  for (let k = 0; k < 3; k++) {
+  // Regard à 60° à l'ouest (sans viser la cible) : la grande flèche désigne la cuisine, de la couleur de la cuisine ; plus de flèche de couleur.
+  for (let k = 0; k < 2; k++) {
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(450);
   }

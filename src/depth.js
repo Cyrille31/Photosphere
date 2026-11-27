@@ -614,6 +614,10 @@ export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 7
   return { dg, half };
 }
 
+// Mètres par unité de la carte de profondeur : hauteur de l'objectif × échelle calée sur la pièce
+// (relief.scale, voir reliefScaleFromRoom dans room.js), ou null.
+export const reliefMeters = (relief) => (relief && relief.h ? relief.h * (relief.scale || 1) : null);
+
 // Distance (en hauteurs d'objectif) lue dans la carte pour une direction d (unitaire, y en haut).
 export function depthAt(depth, d, w = mapWidth(depth), h = mapWidth(depth) / 2) {
   const u = Math.atan2(d[0], d[2]) / (2 * Math.PI) + 0.5;

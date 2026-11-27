@@ -2,7 +2,7 @@
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
 import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
-import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt } from './depth.js';
+import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt, reliefMeters } from './depth.js';
 import { createRecorder, scenarioAt, scenarioDuration, scenarioFor, scenarioFileKey } from './scenario.js';
 
 const DWELL_MS = 1600;
@@ -187,8 +187,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   const TARGET_REF_M = 2.5;
   function targetScale(photo, h) {
     let d = null;
-    if (photo.depthMaps && hasRelief(photo) && photo.relief && photo.relief.h) {
-      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * photo.relief.h;
+    if (photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief)) {
+      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * reliefMeters(photo.relief);
       if (v > 0.2 && v < 200) d = v;
     }
     if (d == null && h.dist > 0) d = h.dist;
@@ -196,8 +196,8 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   }
   // Distance (m) de ce que désigne la cible : par le relief, sinon d'après le plan.
   function targetDist(photo, h) {
-    if (photo.depthMaps && hasRelief(photo) && photo.relief && photo.relief.h) {
-      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * photo.relief.h;
+    if (photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief)) {
+      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * reliefMeters(photo.relief);
       if (v > 0.2 && v < 200) return v;
     }
     return h.dist > 0 ? h.dist : null;
@@ -706,7 +706,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     const r = current && current.relief;
     const k = controller.headset.relief ?? 1;
     if (!r || !k || !renderer.depth) return false;
-    const h = r.h || DEFAULT_CAMERA_HEIGHT;
+    const h = reliefMeters(r) || DEFAULT_CAMERA_HEIGHT;
     const c = stereoComfort(renderer.depth, cam, EYE_HALF_GAP / h, { budgetDeg: 1.2 * k });
     if (comfort.dg === null) {
       Object.assign(comfort, c);
@@ -728,7 +728,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   let retD = null;
   function reticleDepth(target) {
     const r = current && current.relief;
-    const h = (r && r.h) || DEFAULT_CAMERA_HEIGHT;
+    const h = reliefMeters(r) || DEFAULT_CAMERA_HEIGHT;
     const info = target >= 0 ? hotInfo[target] : null;
     const under = comfort.dg;
     const want = info && info.dist ? Math.max(0.3, Math.min(under || Infinity, info.dist / h)) : under;
