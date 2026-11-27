@@ -591,12 +591,10 @@ export function fillMasked(rgba, mask, w, h, grow = 3, src = null) {
   return rgba;
 }
 
-// Relief dans le casque, à la vraie distance : les deux yeux regardent parallèlement (comme pour un
-// point à l'infini), chaque point est donc vu avec l'écart entre les deux images qu'il aurait en vrai
-// (2 × demi-écart / distance). dg : distance regardée (pour information) ; half : demi-écart des yeux,
-// réel (eyeHalf, en hauteurs d'objectif) sauf si un objet très proche dans la vue dépasserait `maxDeg`
-// d'écart entre les deux images : il est alors réduit (ce qui éloigne un peu la scène).
-export function stereoComfort(depth, cam, eyeHalf, { maxDeg = 6, fovDeg = 70, w = mapWidth(depth), h = mapWidth(depth) / 2 } = {}) {
+// Confort dans le casque : distance de convergence (point regardé, sans décalage entre les deux yeux)
+// et demi-écart des yeux tel que l'écart entre les deux images, sur ce qui est visible autour du
+// regard, ne dépasse pas `budgetDeg`. eyeHalf : demi-écart réel des yeux (en hauteurs d'objectif).
+export function stereoComfort(depth, cam, eyeHalf, { budgetDeg = 1.2, fovDeg = 70, w = mapWidth(depth), h = mapWidth(depth) / 2 } = {}) {
   const t = Math.tan((fovDeg / 2) * DEG);
   const at = (nx, ny) => {
     const d = mat3Apply(cam, [nx * t, ny * t, 1]);
@@ -610,8 +608,9 @@ export function stereoComfort(depth, cam, eyeHalf, { maxDeg = 6, fovDeg = 70, w 
   const inv = [];
   for (let j = -4; j <= 4; j++) for (let i = -5; i <= 5; i++) inv.push(1 / at(i / 5, j / 4));
   inv.sort((a, b) => a - b);
-  const hi = Math.max(inv[Math.floor(inv.length * 0.97)], 1e-6);
-  const half = Math.min(eyeHalf, (maxDeg * DEG) / 2 / hi);
+  const lo = inv[Math.floor(inv.length * 0.03)], hi = inv[Math.floor(inv.length * 0.97)];
+  const range = Math.max(hi - 1 / dg, 1 / dg - lo, 1e-6);
+  const half = Math.min(eyeHalf, (budgetDeg * DEG) / 2 / range);
   return { dg, half };
 }
 

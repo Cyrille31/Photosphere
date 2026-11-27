@@ -111,7 +111,7 @@ try {
   const rdist = +(await ds('reticleDist'));
   const conv = +(await ds('convergence'));
   const mini = +(await ds('retMini'));
-  check(hd.length === 3 && hd.every((d) => d > 2.5 && d < 8.5) && hd.some((d) => Math.abs(rdist / d - 1) < 0.06), `casque : rond de visée à la distance de la cible désignée (${rdist} m ; cibles à ${hd.join(' et ')} m ; regard à ${conv} m, yeux parallèles)`);
+  check(hd.length === 3 && hd.every((d) => d > 2.5 && d < 8.5) && rdist <= conv * 1.03 && (Math.abs(rdist / conv - 1) < 0.03 || hd.some((d) => Math.abs(rdist / d - 1) < 0.06)), `casque : rond de visée à la plus courte distance entre l’objet regardé (${conv} m) et la cible désignée (cibles à ${hd.join(' et ')} m) : ${rdist} m`);
   const col0 = await ds('retColor');
   // Une seule flèche de couleur par autre pièce, aucune vers les autres liens de la pièce.
   check((await ds('retDir')) !== '' && col0 === '' && mini === 1, `casque : grande flèche blanche vers le lien du salon le plus proche, une seule flèche de couleur (vers la cuisine) : ${mini}`);
