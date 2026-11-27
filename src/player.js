@@ -186,21 +186,20 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   // au-delà, en proportion (jusqu'à 45 %).
   const TARGET_REF_M = 2.5;
   function targetScale(photo, h) {
-    let d = null;
-    if (photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief)) {
-      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * reliefMeters(photo.relief);
-      if (v > 0.2 && v < 200) d = v;
-    }
-    if (d == null && h.dist > 0) d = h.dist;
+    const d = targetDist(photo, h);
     return d ? Math.min(1.15, Math.max(0.45, TARGET_REF_M / d)) : 1;
   }
-  // Distance (m) de ce que désigne la cible : par le relief, sinon d'après le plan.
+  // Distance (m) de la cible : celle de l'endroit où l'autre photo a été prise (écart des deux photos sur
+  // le plan, h.dist), comme si l'on voyait son appareil ; sans plan, celle du décor dans sa direction
+  // (relief).
   function targetDist(photo, h) {
-    if (photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief)) {
-      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * reliefMeters(photo.relief);
+    if (h.dist > 0) return h.dist;
+    const m = photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief);
+    if (m) {
+      const v = depthAt(photo.depthMaps.depth, dirFromLonLat(h.yaw * DEG, h.pitch * DEG)) * m;
       if (v > 0.2 && v < 200) return v;
     }
-    return h.dist > 0 ? h.dist : null;
+    return null;
   }
   // Par cible : { dist (m ou null), room (pièce où mène le lien, si c'en est une autre), color }.
   let hotInfo = [];
@@ -213,7 +212,10 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     root.dataset.hotOut = hotInfo.map((x) => (x.room ? 1 : 0)).join(','); // (lisible par les tests)
     root.dataset.hotRooms = hotInfo.map((x) => x.room || '').join(',');
     root.dataset.hotDist = hotInfo.map((x) => (x.dist ? x.dist.toFixed(2) : '')).join(',');
-    const list = hotspotsOf(photo).map((h, i) => ({ ...h, scale: targetScale(photo, h), color: hotInfo[i].color }));
+    // Avec le relief, la cible est dessinée à sa distance (en hauteurs d'objectif), là où se trouvait
+    // l'appareil de l'autre photo, et non sur le décor (une porte, ou ce qu'on voit au travers).
+    const m = photo.depthMaps && hasRelief(photo) && reliefMeters(photo.relief);
+    const list = hotspotsOf(photo).map((h, i) => ({ ...h, scale: targetScale(photo, h), color: hotInfo[i].color, depth: m && hotInfo[i].dist ? hotInfo[i].dist / m : 0 }));
     renderer.setHotspots(list);
     root.dataset.hotScales = list.map((h) => h.scale.toFixed(2)).join(','); // (lisible par les tests)
   }
@@ -847,7 +849,6 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       if (mode === 'cardboard') {
         controller.stereo = true;
         controller.pitch = 0;
-        toast('Placez le téléphone dans le casque. Fixez un lien pour l’ouvrir, ou appuyez sur le bouton du casque. Toucher l’écran à gauche ou à droite (boutons du casque) fait tourner la vue.', 6000);
       }
       lockScreen(true);
     }
