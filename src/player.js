@@ -1,7 +1,7 @@
 // Visionneuse plein écran : tactile, smartphone à bout de bras (gyroscope), casque VR (Cardboard / WebXR).
 import { PanoRenderer } from './renderer.js';
 import { ViewController, DEFAULT_HEADSET, HEADSET_PRESETS } from './controls.js';
-import { DEG, vecDot, vecCross, vecNormalize, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
+import { DEG, vecDot, mat3Mul, mat3Apply, mat3Transpose, rotY, headingOf, dirFromLonLat, screenRoll } from './math.js';
 import { reliefKey, loadDepthImage, loadImageBitmap, stereoComfort, depthAt } from './depth.js';
 import { createRecorder, scenarioAt, scenarioDuration, scenarioFor, scenarioFileKey } from './scenario.js';
 
@@ -14,6 +14,16 @@ const DEFAULT_CAMERA_HEIGHT = 1.6;
 // En arrivant sur une photo, les cibles sont visibles mais ne s'ouvrent pas au regard pendant ce temps
 // (pour ne pas repartir aussitôt vers une autre photo).
 const ARRIVE_LOCK_MS = 1500;
+const ROOM_COLORS = [
+  [1.0, 0.8, 0.15], // jaune d'or
+  [1.0, 0.4, 0.85], // rose
+  [0.35, 1.0, 0.45], // vert
+  [0.3, 0.85, 1.0], // bleu ciel
+  [1.0, 0.45, 0.35], // corail
+  [0.7, 0.55, 1.0], // mauve
+  [0.75, 1.0, 0.2], // vert anis
+  [1.0, 0.65, 0.2], // orange
+];
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 function el(tag, cls, html) {
@@ -64,6 +74,9 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
   const fileOf = (p) => p.fileName || p.file || p.id;
   const byFile = new Map(photos.map((p) => [scenarioFileKey(fileOf(p)), p]));
   const otherRoom = (a, b) => !!(a && b && a.roomKey && b.roomKey && a.roomKey !== b.roomKey);
+  // Une couleur par pièce (la même partout dans la visite) : les liens vers une autre pièce, leur cible
+  // et leur flèche en prennent la couleur ; ceux de la pièce où l'on est restent blancs.
+  const roomColor = new Map([...new Set(photos.map((p) => p.roomKey).filter(Boolean))].sort().map((k, i) => [k, ROOM_COLORS[i % ROOM_COLORS.length]]));
   const root = el('div', 'ps-player');
   root.innerHTML = `
     <canvas class="ps-canvas"></canvas>
@@ -110,7 +123,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
         <button class="ps-btn" data-preset="none">Sans correction</button>
       </div>
       <label>Écartement des centres des deux images <output></output><input type="range" name="sep" min="30" max="70" step="0.5"></label>
-      <label>Relief (effet 3D, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
+      <label>Relief (effet 3D : × 1 = distances réelles, 0 = aucun) <output></output><input type="range" name="relief" min="0" max="2.5" step="0.1"></label>
       <label>Taille des cibles <output></output><input type="range" name="targetSize" min="1" max="5" step="0.1"></label>
       <label>Les cibles apparaissent quand le regard en est à moins de <output></output><input type="range" name="targetAppear" min="4" max="40" step="1"></label>
       <label class="ps-check"><input type="checkbox" name="swapEyes"> Inverser les images gauche et droite (relief vu en louchant, sans casque)</label>
@@ -189,12 +202,18 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     }
     return h.dist > 0 ? h.dist : null;
   }
-  let hotInfo = []; // par cible : { dist (m ou null), out (mène dans une autre pièce) }
+  // Par cible : { dist (m ou null), room (pièce où mène le lien, si c'en est une autre), color }.
+  let hotInfo = [];
   function placeHotspots(photo) {
-    hotInfo = hotspotsOf(photo).map((h) => ({ dist: targetDist(photo, h), out: !h.video && otherRoom(photo, byId.get(h.target)) }));
-    root.dataset.hotOut = hotInfo.map((x) => (x.out ? 1 : 0)).join(','); // (lisible par les tests)
+    hotInfo = hotspotsOf(photo).map((h) => {
+      const t = byId.get(h.target);
+      const room = !h.video && otherRoom(photo, t) ? t.roomKey : null;
+      return { dist: targetDist(photo, h), room, color: room ? roomColor.get(room) : null };
+    });
+    root.dataset.hotOut = hotInfo.map((x) => (x.room ? 1 : 0)).join(','); // (lisible par les tests)
+    root.dataset.hotRooms = hotInfo.map((x) => x.room || '').join(',');
     root.dataset.hotDist = hotInfo.map((x) => (x.dist ? x.dist.toFixed(2) : '')).join(',');
-    const list = hotspotsOf(photo).map((h) => ({ ...h, scale: targetScale(photo, h) }));
+    const list = hotspotsOf(photo).map((h, i) => ({ ...h, scale: targetScale(photo, h), color: hotInfo[i].color }));
     renderer.setHotspots(list);
     root.dataset.hotScales = list.map((h) => h.scale.toFixed(2)).join(','); // (lisible par les tests)
   }
@@ -581,22 +600,30 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       return n > 1e-6 ? [c[0] / n, c[1] / n] : null;
     };
     const main = sel >= 0 ? -1 : best;
-    const mini = dirs
-      .map((d, i) => ({ i, a: angs[i] }))
-      .filter((x) => x.i !== main && x.i !== sel)
-      .sort((x, y) => x.a - y.a)
+    const target = sel >= 0 ? sel : best;
+    // Une flèche de couleur par autre pièce (vers son lien le plus proche du regard), sauf la pièce où
+    // mène déjà la grande flèche (ou le lien visé).
+    const nearestByRoom = new Map();
+    dirs.forEach((d, i) => {
+      const room = hotInfo[i] && hotInfo[i].room;
+      if (!room || (hotInfo[target] && hotInfo[target].room === room)) return;
+      if (!nearestByRoom.has(room) || angs[i] < angs[nearestByRoom.get(room)]) nearestByRoom.set(room, i);
+    });
+    const mini = [...nearestByRoom.values()]
+      .sort((x, y) => angs[x] - angs[y])
       .slice(0, 8)
-      .map((x) => {
-        const s = screen(dirs[x.i]);
-        return s && [s[0], s[1], hotInfo[x.i] && hotInfo[x.i].out ? 1 : 0];
+      .map((i) => {
+        const s = screen(dirs[i]);
+        return s && [s[0], s[1], hotInfo[i].color];
       })
       .filter(Boolean);
     root.dataset.retMini = String(mini.length);
-    root.dataset.retMiniOut = String(mini.filter((m) => m[2]).length);
     let dir = null;
     if (main >= 0) dir = screen(dirs[main]) || [1, 0];
     root.dataset.retDir = dir ? ((Math.atan2(dir[1], dir[0]) * 180) / Math.PI).toFixed(1) : '';
-    return { dir, out: main >= 0 && !!(hotInfo[main] && hotInfo[main].out), target: sel >= 0 ? sel : best, mini };
+    const color = main >= 0 && hotInfo[main] && hotInfo[main].color;
+    root.dataset.retColor = color ? color.join(',') : '';
+    return { dir, color: color || null, target, mini };
   }
   let arrivedAt = 0;
   const arriving = (now) => now - arrivedAt < ARRIVE_LOCK_MS;
@@ -670,16 +697,16 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     reliefHintFor = current.id;
     if ((controller.headset.relief ?? 1) > 0) toast('Pas de relief pour cette photo : calculez-le dans l’éditeur (onglet « Relief »).');
   }
-  // Confort : la distance regardée est sans décalage entre les deux yeux (comme quand les yeux
-  // convergent), et l'écart des yeux est réduit si besoin pour que le décalage entre les deux images
-  // reste supportable sur tout ce qui est visible. Lissé dans le temps.
+  // Relief à la vraie distance : yeux parallèles, écart réel des yeux (× réglage « Relief »), réduit
+  // seulement devant un objet très proche (voir stereoComfort). Lissé dans le temps. (Avant la 1.57,
+  // les yeux convergeaient sur le point regardé, qui paraissait alors à l'infini : trop loin.)
   const comfort = { dg: null, half: 0 };
   function updateComfort(cam) {
     const r = current && current.relief;
     const k = controller.headset.relief ?? 1;
     if (!r || !k || !renderer.depth) return false;
     const h = r.h || DEFAULT_CAMERA_HEIGHT;
-    const c = stereoComfort(renderer.depth, cam, EYE_HALF_GAP / h, { budgetDeg: 1.2 * k });
+    const c = stereoComfort(renderer.depth, cam, (EYE_HALF_GAP * k) / h);
     if (comfort.dg === null) {
       Object.assign(comfort, c);
       dirty = true; // (le rond de visée se place à l'image suivante)
@@ -712,19 +739,15 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
     root.dataset.reticleDist = (retD * h).toFixed(2);
     return retD;
   }
-  // Deux yeux (Cardboard) : décalés de ±demi-écart et tournés vers le point regardé. retTan : décalage du
-  // rond de visée dans chaque œil pour qu'il paraisse à la distance D de la cible (et non à celle où les
-  // yeux convergent).
+  // Deux yeux (Cardboard) : décalés de ±demi-écart, regard parallèle. retTan : décalage du rond de visée
+  // dans chaque œil pour qu'il paraisse à la distance D de la cible (sinon il paraîtrait à l'infini).
   function comfortEyes(cam, D = null) {
     if (!updateComfort(cam)) return null;
-    const right = [cam[0], cam[3], cam[6]], up = [cam[1], cam[4], cam[7]], fwd = [cam[2], cam[5], cam[8]];
+    const right = [cam[0], cam[3], cam[6]];
     return [-1, 1].map((sg) => {
       const e = right.map((v) => v * sg * comfort.half);
-      const f = vecNormalize(fwd.map((v, i) => v * comfort.dg - e[i]));
-      const rr = vecNormalize(vecCross(up, f));
-      const uu = vecCross(f, rr);
-      const retTan = D ? sg * comfort.half * (1 / comfort.dg - 1 / D) : 0;
-      return { offset: e, retTan, cam: [rr[0], uu[0], f[0], rr[1], uu[1], f[1], rr[2], uu[2], f[2]] };
+      const retTan = D ? (-sg * comfort.half) / D : 0;
+      return { offset: e, retTan, cam: cam.slice() };
     });
   }
 
@@ -762,7 +785,7 @@ export function createPlayer(container, { photos, startId, onExit, onEdit, onPla
       hotRing: controller.stereo || controller.mode === 'gyro' ? 0.92 : 0.86,
       reticle: controller.stereo || controller.mode === 'gyro' ? 9 * (canvas.width / canvas.clientWidth) : 0,
       retDir: ret ? ret.dir : null,
-      retOut: ret ? ret.out : false,
+      retColor: ret ? ret.color : null,
       retMini: ret ? ret.mini : null,
     });
     placeLabels(frame);

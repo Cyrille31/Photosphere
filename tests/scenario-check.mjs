@@ -88,7 +88,7 @@ try {
     const g = cv.getContext('2d');
     g.putImageData(new ImageData(encodeDepth(depth), w, h), 0, 0);
     await db.putBlob(a.id + ':depth', await new Promise((r) => cv.toBlob(r, 'image/png')));
-    await db.putPhoto({ ...a, room: { name: 'Salon' }, relief: { kind: 'ai', h: 1.6, key: reliefKey(a.params) }, hotspots: [{ id: 'h1', target: b.id, yaw: 90, pitch: 0, label: '' }, { id: 'h2', target: c.id, yaw: -90, pitch: 0, label: '' }] });
+    await db.putPhoto({ ...a, room: { name: 'Salon' }, relief: { kind: 'ai', h: 1.6, key: reliefKey(a.params) }, hotspots: [{ id: 'h1', target: b.id, yaw: 90, pitch: 0, label: '' }, { id: 'h2', target: c.id, yaw: -90, pitch: 0, label: '' }, { id: 'h5', target: b.id, yaw: 150, pitch: 0, label: '' }] });
     await db.putPhoto({ ...b, room: { name: 'Salon' }, hotspots: [{ id: 'h3', target: a.id, yaw: -90, pitch: 0, label: '' }] });
     await db.putPhoto({ ...c, room: { name: 'Cuisine' }, hotspots: [{ id: 'h4', target: a.id, yaw: 90, pitch: 0, label: '' }] });
     return { a: a.id, b: b.id, c: c.id };
@@ -99,7 +99,7 @@ try {
   await page.goto(base + '#/view/' + ids.a);
   await page.waitForSelector('.ps-player canvas');
   await page.waitForTimeout(1200);
-  check((await ds('hotOut')) === '0,1', `flèches : le lien vers la cuisine mène hors de la pièce (${await ds('hotOut')}), pas celui vers l’autre photo du salon`);
+  check((await ds('hotOut')) === '0,1,0', `flèches : le lien vers la cuisine mène hors de la pièce (${await ds('hotOut')}), pas celui vers l’autre photo du salon`);
   // Téléphone tenu en paysage (capteurs simulés), regard vers l'est (lien vers salon 2).
   await page.evaluate(() => {
     window.__orient = setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 90, gamma: 0 })), 50);
@@ -111,9 +111,20 @@ try {
   const rdist = +(await ds('reticleDist'));
   const conv = +(await ds('convergence'));
   const mini = +(await ds('retMini'));
-  check(hd.length === 2 && hd.every((d) => d > 2.5 && d < 8.5) && hd.some((d) => Math.abs(rdist / d - 1) < 0.06), `casque : rond de visée à la distance de la cible désignée (${rdist} m ; cibles à ${hd.join(' et ')} m ; yeux convergents à ${conv} m)`);
-  check(mini === 1 && (await ds('retDir')) !== '', `casque : flèche vers le lien le plus proche, et ${mini} mini-flèche vers l’autre`);
+  check(hd.length === 3 && hd.every((d) => d > 2.5 && d < 8.5) && hd.some((d) => Math.abs(rdist / d - 1) < 0.06), `casque : rond de visée à la distance de la cible désignée (${rdist} m ; cibles à ${hd.join(' et ')} m ; regard à ${conv} m, yeux parallèles)`);
+  const col0 = await ds('retColor');
+  // Une seule flèche de couleur par autre pièce, aucune vers les autres liens de la pièce.
+  check((await ds('retDir')) !== '' && col0 === '' && mini === 1, `casque : grande flèche blanche vers le lien du salon le plus proche, une seule flèche de couleur (vers la cuisine) : ${mini}`);
   await page.screenshot({ path: path.join(shots, '01-casque-fleches.png') });
+  // Regard vers l'ouest : la grande flèche désigne la cuisine, de la couleur de la cuisine ; plus de flèche de couleur.
+  for (let k = 0; k < 3; k++) {
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(450);
+  }
+  await page.waitForTimeout(600);
+  const col1 = await ds('retColor'), mini1 = +(await ds('retMini'));
+  check(col1 !== '' && mini1 === 0, `casque : vers la cuisine, grande flèche de la couleur de la cuisine (${col1}), pas d’autre flèche de couleur (${mini1})`);
+  await page.screenshot({ path: path.join(shots, '01b-casque-autre-piece.png') });
   // Arrivée sur une photo : cibles inactives un moment.
   await page.evaluate(() => [...document.querySelectorAll('.ps-label')][0].click());
   const lockedAt = await page.waitForFunction(() => document.querySelector('.ps-player').dataset.locked === '1' && /salon 2/.test(document.querySelector('.ps-title').textContent), null, { timeout: 8000 }).then(() => Date.now(), () => 0);

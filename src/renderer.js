@@ -111,6 +111,8 @@ export class PanoRenderer {
   setHotspots(list) {
     this.hotspots = list.slice(0, MAX_HOTSPOTS).map((h) => dirFromLonLat(h.yaw * DEG, h.pitch * DEG));
     this.hotScales = list.slice(0, MAX_HOTSPOTS).map((h) => (h.scale > 0 ? h.scale : 1));
+    // h.color (facultatif) : [r, g, b] de 0 à 1, cible d'un lien vers une autre pièce.
+    this.hotColors = list.slice(0, MAX_HOTSPOTS).map((h) => h.color || null);
   }
 
   resize() {
@@ -153,6 +155,9 @@ export class PanoRenderer {
     const scales = new Float32Array(MAX_HOTSPOTS).fill(1);
     (this.hotScales || []).forEach((v, i) => (scales[i] = v));
     gl.uniform1fv(u.uHotScale, scales);
+    const colors = new Float32Array(MAX_HOTSPOTS * 4);
+    (this.hotColors || []).forEach((c, i) => c && colors.set([c[0], c[1], c[2], 1], i * 4));
+    gl.uniform4fv(u.uHotColor, colors);
     gl.uniform1i(u.uHotCount, this.hotspots.length);
     gl.uniform1i(u.uHotSel, frame.hotSel ?? -1);
     gl.uniform1f(u.uHotSize, frame.hotSize || 0.07);
@@ -161,12 +166,17 @@ export class PanoRenderer {
     gl.uniform1f(u.uHotRing, frame.hotRing || 0.84);
     const rd = frame.retDir || [0, 0];
     gl.uniform2f(u.uRetDir, rd[0], rd[1]);
-    gl.uniform1f(u.uRetOut, frame.retOut ? 1 : 0);
-    // frame.retMini : [[x, y, hors de la pièce (0 / 1)]…], 8 au plus.
+    const rc = frame.retColor || [1, 1, 1];
+    gl.uniform3f(u.uRetCol, rc[0], rc[1], rc[2]);
+    // frame.retMini : [[x, y, [r, g, b]]…], 8 au plus (flèches de couleur vers les autres pièces).
     const mini = (frame.retMini || []).slice(0, 8);
-    const flatMini = new Float32Array(24);
-    mini.forEach((m, i) => flatMini.set([m[0], m[1], m[2] ? 1 : 0], i * 3));
-    gl.uniform3fv(u.uRetMini, flatMini);
+    const flatMini = new Float32Array(16), flatMiniCol = new Float32Array(24);
+    mini.forEach((m, i) => {
+      flatMini.set([m[0], m[1]], i * 2);
+      flatMiniCol.set(m[2] || [1, 1, 1], i * 3);
+    });
+    gl.uniform2fv(u.uRetMini, flatMini);
+    gl.uniform3fv(u.uRetMiniCol, flatMiniCol);
     gl.uniform1i(u.uRetMiniN, mini.length);
     gl.uniform1f(u.uGrid, frame.grid ? 1 : 0);
     this.bindRelief();
